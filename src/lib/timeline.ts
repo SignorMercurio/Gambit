@@ -37,11 +37,12 @@ export type ErrorEvent = { t: number; error: string; line: number; raw: string; 
 export type TimelineEvent = ParsedEvent | ErrorEvent;
 
 export function parseTime(s: string): number {
-  const parts = s.split(':');
-  if (parts.length === 1) return parseFloat(parts[0]);
-  const m = parseInt(parts[0], 10) || 0;
-  const sec = parseFloat(parts[1]) || 0;
-  return m * 60 + sec;
+  const text = s.trim();
+  const match = text.match(/^(?:(\d+):)?(\d+(?:\.\d+)?)$/);
+  if (!match) return NaN;
+  const minutes = match[1] ? parseInt(match[1], 10) : 0;
+  const seconds = parseFloat(match[2]);
+  return minutes * 60 + seconds;
 }
 
 export function parseScript(text: string): TimelineEvent[] {
@@ -57,6 +58,10 @@ export function parseScript(text: string): TimelineEvent[] {
       continue;
     }
     const t = parseTime(m[1]);
+    if (!Number.isFinite(t)) {
+      events.push({ t: 0, error: `Line ${i + 1}: invalid timestamp`, line: i + 1, raw });
+      continue;
+    }
     const body = m[2].trim();
 
     const hm = body.match(/^highlight\s+(.+)$/i);
@@ -67,11 +72,21 @@ export function parseScript(text: string): TimelineEvent[] {
         pinned = true;
         tokens.pop();
       }
-      events.push({ t, kind: 'highlight', squares: tokens, pinned, line: i + 1, raw });
+      const invalid = tokens.filter((sq) => !/^[a-h][1-8]$/i.test(sq));
+      if (tokens.length === 0 || invalid.length > 0) {
+        const detail = invalid.length > 0 ? `: ${invalid.join(', ')}` : '';
+        events.push({ t, error: `Line ${i + 1}: invalid highlight square${detail}`, line: i + 1, raw });
+        continue;
+      }
+      events.push({ t, kind: 'highlight', squares: tokens.map((sq) => sq.toLowerCase()), pinned, line: i + 1, raw });
       continue;
     }
-    const am = body.match(/^arrow\s+([a-h][1-8])\s*(?:→|->|to)\s*([a-h][1-8])(?:\s+(pin))?\s*$/i);
-    if (am) {
+    if (/^arrow\b/i.test(body)) {
+      const am = body.match(/^arrow\s+([a-h][1-8])\s*(?:→|->|to)\s*([a-h][1-8])(?:\s+(pin))?\s*$/i);
+      if (!am) {
+        events.push({ t, error: `Line ${i + 1}: invalid arrow`, line: i + 1, raw });
+        continue;
+      }
       events.push({
         t,
         kind: 'arrow',

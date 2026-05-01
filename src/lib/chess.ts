@@ -376,6 +376,7 @@ export function parseSAN(san: string, state: GameState): Move | null {
   const pieceLetter = m[1];
   const fromFile = m[2];
   const fromRank = m[3];
+  const wantsCapture = !!m[4];
   const to = m[5];
   const promo = m[7] ? (m[7].toLowerCase() as PieceType) : null;
   const pieceType: PieceType = pieceLetter ? (pieceLetter.toLowerCase() as PieceType) : 'p';
@@ -387,6 +388,9 @@ export function parseSAN(san: string, state: GameState): Move | null {
     if (mv.to[0] !== toIdx.f || mv.to[1] !== toIdx.r) return false;
     if (fromFile && mv.from[0] !== fromFile.charCodeAt(0) - 97) return false;
     if (fromRank && mv.from[1] !== parseInt(fromRank, 10) - 1) return false;
+    // SAN spec: `x` is present iff the move captures. Reject mismatches so
+    // `Nxe4` won't bind a quiet move (and `Ne4` won't bind a capture).
+    if (wantsCapture !== mv.capture) return false;
     if (promo && mv.promotion !== promo) return false;
     if (!promo && mv.promotion && pieceType === 'p') {
       if (mv.promotion !== 'q') return false;

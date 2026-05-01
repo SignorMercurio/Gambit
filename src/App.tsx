@@ -183,6 +183,10 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
   const [showEditor, setShowEditor] = useState(false);
 
+  useEffect(() => {
+    setTime((t) => Math.min(t, duration));
+  }, [duration]);
+
   const editorLabelId = useId();
   const eventsLabelId = useId();
   const replayTabId = useId();
@@ -288,6 +292,7 @@ export default function App() {
             lastMove = null;
             highlights = [];
             arrows = [];
+            lastCapture = null;
             break;
           case 'branch':
             branchStack.push({ positions, chessState, lastMove, highlights, arrows });
