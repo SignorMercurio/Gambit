@@ -1,0 +1,464 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-28T22:00:00.000Z",
+  "title": "Design System: Gambit",
+  "extensions": {
+    "colorMeta": {
+      "studio-steel-blue": {
+        "role": "primary",
+        "displayName": "Studio Steel Blue",
+        "canonical": "oklch(64% 0.10 256)",
+        "tonalRamp": [
+          "oklch(15% 0.06 256)",
+          "oklch(25% 0.08 256)",
+          "oklch(35% 0.09 256)",
+          "oklch(45% 0.10 256)",
+          "oklch(55% 0.10 256)",
+          "oklch(64% 0.10 256)",
+          "oklch(75% 0.08 256)",
+          "oklch(86% 0.05 256)"
+        ]
+      },
+      "deep-set-blue": {
+        "role": "primary",
+        "displayName": "Deep-Set Blue",
+        "canonical": "oklch(48% 0.10 258)",
+        "tonalRamp": [
+          "oklch(15% 0.06 258)",
+          "oklch(22% 0.08 258)",
+          "oklch(30% 0.09 258)",
+          "oklch(38% 0.10 258)",
+          "oklch(48% 0.10 258)",
+          "oklch(58% 0.10 258)",
+          "oklch(70% 0.08 258)",
+          "oklch(85% 0.05 258)"
+        ]
+      },
+      "camera-highlight-blue": {
+        "role": "primary",
+        "displayName": "Camera-Highlight Blue",
+        "canonical": "oklch(72% 0.08 250)",
+        "tonalRamp": [
+          "oklch(20% 0.05 250)",
+          "oklch(30% 0.06 250)",
+          "oklch(40% 0.07 250)",
+          "oklch(52% 0.08 250)",
+          "oklch(62% 0.08 250)",
+          "oklch(72% 0.08 250)",
+          "oklch(82% 0.06 250)",
+          "oklch(92% 0.03 250)"
+        ]
+      },
+      "studio-cream": {
+        "role": "secondary",
+        "displayName": "Studio Cream",
+        "canonical": "oklch(94% 0.02 80)",
+        "tonalRamp": [
+          "oklch(20% 0.012 80)",
+          "oklch(35% 0.014 80)",
+          "oklch(50% 0.016 80)",
+          "oklch(62% 0.018 80)",
+          "oklch(74% 0.02 80)",
+          "oklch(84% 0.02 80)",
+          "oklch(94% 0.02 80)",
+          "oklch(98% 0.012 80)"
+        ]
+      },
+      "markup-amber": {
+        "role": "tertiary",
+        "displayName": "Markup Amber",
+        "canonical": "oklch(89% 0.16 95)",
+        "tonalRamp": [
+          "oklch(20% 0.04 95)",
+          "oklch(32% 0.06 95)",
+          "oklch(45% 0.09 95)",
+          "oklch(58% 0.12 95)",
+          "oklch(70% 0.14 95)",
+          "oklch(80% 0.16 95)",
+          "oklch(89% 0.16 95)",
+          "oklch(96% 0.08 95)"
+        ]
+      },
+      "annotation-persimmon": {
+        "role": "tertiary",
+        "displayName": "Annotation Persimmon",
+        "canonical": "oklch(79% 0.17 65)",
+        "tonalRamp": [
+          "oklch(20% 0.05 65)",
+          "oklch(32% 0.08 65)",
+          "oklch(45% 0.11 65)",
+          "oklch(58% 0.14 65)",
+          "oklch(68% 0.16 65)",
+          "oklch(79% 0.17 65)",
+          "oklch(88% 0.13 65)",
+          "oklch(95% 0.06 65)"
+        ]
+      },
+      "stagewell-black": {
+        "role": "neutral",
+        "displayName": "Stagewell Black",
+        "canonical": "oklch(13% 0.03 268)",
+        "tonalRamp": [
+          "oklch(8% 0.02 268)",
+          "oklch(13% 0.03 268)",
+          "oklch(18% 0.04 268)",
+          "oklch(22% 0.04 268)",
+          "oklch(28% 0.05 268)",
+          "oklch(36% 0.05 268)",
+          "oklch(50% 0.04 268)",
+          "oklch(70% 0.03 268)"
+        ]
+      },
+      "stagewell-indigo": {
+        "role": "neutral",
+        "displayName": "Stagewell Indigo",
+        "canonical": "oklch(18% 0.04 268)",
+        "tonalRamp": [
+          "oklch(10% 0.025 268)",
+          "oklch(14% 0.03 268)",
+          "oklch(18% 0.04 268)",
+          "oklch(24% 0.04 268)",
+          "oklch(32% 0.05 268)",
+          "oklch(45% 0.05 268)",
+          "oklch(60% 0.04 268)",
+          "oklch(80% 0.025 268)"
+        ]
+      },
+      "set-indigo": {
+        "role": "neutral",
+        "displayName": "Set Indigo",
+        "canonical": "oklch(22% 0.04 263)",
+        "tonalRamp": [
+          "oklch(10% 0.025 263)",
+          "oklch(15% 0.03 263)",
+          "oklch(22% 0.04 263)",
+          "oklch(30% 0.045 263)",
+          "oklch(40% 0.05 263)",
+          "oklch(54% 0.045 263)",
+          "oklch(70% 0.035 263)",
+          "oklch(88% 0.02 263)"
+        ]
+      },
+      "backdrop-slate": {
+        "role": "neutral",
+        "displayName": "Backdrop Slate",
+        "canonical": "oklch(28% 0.05 268)",
+        "tonalRamp": [
+          "oklch(12% 0.025 268)",
+          "oklch(18% 0.035 268)",
+          "oklch(24% 0.045 268)",
+          "oklch(28% 0.05 268)",
+          "oklch(38% 0.055 268)",
+          "oklch(52% 0.05 268)",
+          "oklch(70% 0.04 268)",
+          "oklch(88% 0.02 268)"
+        ]
+      },
+      "sodium-chalk": {
+        "role": "neutral",
+        "displayName": "Sodium Chalk",
+        "canonical": "oklch(93% 0.012 261)",
+        "tonalRamp": [
+          "oklch(20% 0.01 261)",
+          "oklch(35% 0.012 261)",
+          "oklch(50% 0.015 261)",
+          "oklch(63% 0.018 261)",
+          "oklch(75% 0.018 261)",
+          "oklch(85% 0.015 261)",
+          "oklch(93% 0.012 261)",
+          "oklch(98% 0.008 261)"
+        ]
+      },
+      "rim-light-pewter": {
+        "role": "neutral",
+        "displayName": "Rim-Light Pewter",
+        "canonical": "oklch(83% 0.025 261)",
+        "tonalRamp": [
+          "oklch(20% 0.02 261)",
+          "oklch(30% 0.025 261)",
+          "oklch(45% 0.03 261)",
+          "oklch(58% 0.03 261)",
+          "oklch(70% 0.03 261)",
+          "oklch(83% 0.025 261)",
+          "oklch(92% 0.018 261)",
+          "oklch(97% 0.01 261)"
+        ]
+      },
+      "foley-slate": {
+        "role": "neutral",
+        "displayName": "Foley Slate",
+        "canonical": "oklch(63% 0.035 263)",
+        "tonalRamp": [
+          "oklch(15% 0.02 263)",
+          "oklch(25% 0.025 263)",
+          "oklch(38% 0.03 263)",
+          "oklch(50% 0.035 263)",
+          "oklch(63% 0.035 263)",
+          "oklch(75% 0.03 263)",
+          "oklch(86% 0.02 263)",
+          "oklch(95% 0.012 263)"
+        ]
+      },
+      "stage-mist": {
+        "role": "neutral",
+        "displayName": "Stage Mist",
+        "canonical": "oklch(50% 0.04 263)",
+        "tonalRamp": [
+          "oklch(15% 0.025 263)",
+          "oklch(25% 0.03 263)",
+          "oklch(38% 0.04 263)",
+          "oklch(50% 0.04 263)",
+          "oklch(62% 0.04 263)",
+          "oklch(75% 0.035 263)",
+          "oklch(86% 0.025 263)",
+          "oklch(96% 0.014 263)"
+        ]
+      },
+      "studio-vermillion": {
+        "role": "error",
+        "displayName": "Studio Vermillion",
+        "canonical": "oklch(58% 0.16 22)",
+        "tonalRamp": [
+          "oklch(20% 0.05 22)",
+          "oklch(32% 0.09 22)",
+          "oklch(45% 0.13 22)",
+          "oklch(58% 0.16 22)",
+          "oklch(68% 0.17 22)",
+          "oklch(78% 0.14 22)",
+          "oklch(88% 0.10 22)",
+          "oklch(96% 0.05 22)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The 'Gambit' wordmark in the header. Single largest label in the UI; nothing competes."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Panel titles ('Events', 'Script'). Tracked, uppercase, small-but-loud."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Tab labels and chrome control labels."
+      },
+      "numeric": {
+        "displayName": "Numeric",
+        "purpose": "Time-readout (mm:ss / mm:ss). Mono so digit width is stable across frames; the readout never reflows during playback."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Script editor textarea and event-list event body. Mono, 1.7 line-height because users read and write here."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Event-kind chips ('MOVE', 'HIGHLIGHT', 'ARROW', 'CLEAR', 'RESET'). Small, tracked, uppercase; the chip's typographic identity matches its color identity."
+      }
+    },
+    "shadows": [
+      {
+        "name": "board-ambient",
+        "value": "0 30px 80px -30px rgba(20, 30, 60, 0.55), 0 8px 24px -10px rgba(20, 30, 60, 0.30), inset 0 0 0 1px rgba(0, 0, 0, 0.05)",
+        "purpose": "The studio floor under the board. Use only on the board."
+      },
+      {
+        "name": "brand-bloom",
+        "value": "0 6px 16px -6px rgba(93, 143, 201, 0.7)",
+        "purpose": "Colored bloom under the single primary-action button. Reserved; do not duplicate across adjacent buttons."
+      },
+      {
+        "name": "scrub-thumb-halo",
+        "value": "0 0 0 4px rgba(93, 143, 201, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4)",
+        "purpose": "Playhead halo on the timeline scrubber. Use only on the scrub thumb."
+      },
+      {
+        "name": "active-row-stripe",
+        "value": "inset 2px 0 0 <kind-color>",
+        "purpose": "Active event row indicator. Color follows the event kind under Five Meanings (#5d8fc9 move, #f0b429 highlight, #f08c2e arrow, #9b9b9b clear, #cf5d5d reset/err). The only side-stripe accent in the system; scoped to .event-row.active."
+      },
+      {
+        "name": "playhead-strand",
+        "value": "linear-gradient(to bottom, rgba(232, 236, 245, 0.55) 0%, rgba(232, 236, 245, 0.55) 30%, rgba(232, 236, 245, 0.18) 100%)",
+        "purpose": "The vertical strand crossing the timeline ruler from above the marker pins through the rail and ticks. A 1px-wide DOM element painted with a top-to-bottom alpha gradient on sodium-chalk. Reads at recording resolution; capped at the rail center by the scrub-thumb."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-piece-slide",
+        "value": "cubic-bezier(0.5, 0, 0.2, 1)",
+        "purpose": "Piece movement easing. Exponential ease-out tuned to land the piece on the destination square without overshoot."
+      },
+      {
+        "name": "ease-state",
+        "value": "ease-out",
+        "purpose": "Default for chrome transitions (hover lifts, opacity fades, color shifts)."
+      },
+      {
+        "name": "duration-piece",
+        "value": "380ms",
+        "purpose": "Piece slide duration. Functional, not decorative; do not shorten below 280ms (illegible) or above 480ms (sluggish)."
+      },
+      {
+        "name": "duration-transform",
+        "value": "220ms",
+        "purpose": "Capture/promotion scale and opacity transitions inside the piece component."
+      },
+      {
+        "name": "duration-arrow-in",
+        "value": "280ms",
+        "purpose": "Arrow draw-in animation (scale 0.7 -> 1, opacity 0 -> 1)."
+      },
+      {
+        "name": "duration-capture-flash",
+        "value": "500ms",
+        "purpose": "Three-stage capture flash on captured-square (radial gradient pop)."
+      },
+      {
+        "name": "duration-chrome",
+        "value": "120ms",
+        "purpose": "Event-row hover transitions and other low-stakes chrome state changes."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "single-column",
+        "value": "1080px",
+        "purpose": "Below this width, .main collapses from board+side-panel to a single column."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Action Button (Play)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary-action button in the chrome. The only gradient surface in the system. 44x44, brand-blue gradient, cream glyph, brand-bloom shadow, scale-on-hover.",
+      "html": "<button class=\"ds-btn-primary\" aria-label=\"Play\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\"><path d=\"M7 5 L19 12 L7 19 Z\" fill=\"currentColor\"/></svg></button>",
+      "css": ".ds-btn-primary { width: 44px; height: 44px; border: 0; border-radius: 10px; background: linear-gradient(135deg, #5d8fc9, #3a64a0); color: #f1ecde; display: grid; place-items: center; cursor: pointer; box-shadow: 0 6px 16px -6px rgba(93, 143, 201, 0.7); transition: transform 100ms ease-out; } .ds-btn-primary:hover { transform: scale(1.04); } .ds-btn-primary:active { transform: scale(0.96); } .ds-btn-primary:focus-visible { outline: 2px solid #7da9dc; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Icon Button (Restart)",
+      "kind": "button",
+      "refersTo": "button-icon-ghost",
+      "description": "Secondary transport action. 36x36, tonal-translucent surface, Rim-Light Pewter glyph. No gradient, no bloom, no scale on hover.",
+      "html": "<button class=\"ds-btn-ghost\" aria-label=\"Restart\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M5 5 v14 M19 5 L8 12 L19 19 Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-btn-ghost { width: 36px; height: 36px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.06); color: #c8d0e6; display: grid; place-items: center; cursor: pointer; transition: background 150ms ease-out, color 150ms ease-out; } .ds-btn-ghost:hover { background: rgba(255, 255, 255, 0.12); color: #e8ecf5; } .ds-btn-ghost:focus-visible { outline: 2px solid #7da9dc; outline-offset: 2px; }"
+    },
+    {
+      "name": "Tab Toggle (Replay / Script)",
+      "kind": "nav",
+      "refersTo": "tab-on",
+      "description": "Right-aligned chip group with two tabs. Active tab uses 10% white tonal lift and Sodium Chalk text; inactive tab is transparent with Foley Pewter text.",
+      "html": "<div class=\"ds-tab-group\" role=\"tablist\"><button class=\"ds-tab ds-tab-on\" role=\"tab\" aria-selected=\"true\">Replay</button><button class=\"ds-tab ds-tab-off\" role=\"tab\" aria-selected=\"false\">Script</button></div>",
+      "css": ".ds-tab-group { display: inline-flex; gap: 6px; padding: 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); } .ds-tab { padding: 8px 16px; border: 0; border-radius: 7px; background: transparent; color: #aab3cf; font-family: 'Plus Jakarta Sans', ui-sans-serif, sans-serif; font-weight: 600; font-size: 13.5px; cursor: pointer; transition: color 150ms ease-out, background 150ms ease-out; } .ds-tab:hover { color: #ffffff; } .ds-tab.ds-tab-on { background: rgba(255, 255, 255, 0.10); color: #e8ecf5; } .ds-tab:focus-visible { outline: 2px solid #7da9dc; outline-offset: 2px; }"
+    },
+    {
+      "name": "Event-Kind Chip (Move)",
+      "kind": "chip",
+      "refersTo": "chip-marker-move",
+      "description": "Tracked uppercase mono chip carrying the event kind. One of five paired bg-alpha + saturated-text combinations (move/highlight/arrow/clear/reset). The chip color and the timeline marker color share the parent hue.",
+      "html": "<span class=\"ds-chip ds-chip-move\">MOVE</span>",
+      "css": ".ds-chip { display: inline-block; padding: 3px 7px; border-radius: 5px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1.1; } .ds-chip-move { background: rgba(93, 143, 201, 0.20); color: #b8d0ec; } .ds-chip-highlight { background: rgba(240, 180, 41, 0.20); color: #f0c869; } .ds-chip-arrow { background: rgba(240, 140, 46, 0.20); color: #f0a86b; } .ds-chip-clear { background: rgba(155, 155, 155, 0.20); color: #c0c0c0; } .ds-chip-reset { background: rgba(207, 93, 93, 0.22); color: #ff9b9b; }"
+    },
+    {
+      "name": "Side Panel",
+      "kind": "card",
+      "refersTo": "panel-surface",
+      "description": "The container for the event list and the script editor. 16px radius, tonal-translucent surface, 8px backdrop blur, fixed 720px height to align with the board column.",
+      "html": "<section class=\"ds-panel\"><header class=\"ds-panel-header\"><h2 class=\"ds-panel-title\">EVENTS</h2><p class=\"ds-panel-hint\">17 total</p></header><div class=\"ds-panel-body\"><p style=\"opacity:0.6;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.7;padding:0 18px;color:#aab3cf\">[event rows render here]</p></div></section>",
+      "css": ".ds-panel { width: 380px; height: 720px; display: flex; flex-direction: column; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 16px; overflow: hidden; backdrop-filter: blur(8px); } .ds-panel-header { padding: 16px 18px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); } .ds-panel-title { margin: 0; font-family: 'Plus Jakarta Sans', ui-sans-serif, sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #c8d0e6; } .ds-panel-hint { margin: 4px 0 0; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #8d97b3; } .ds-panel-body { flex: 1; overflow-y: auto; padding: 8px 8px 16px; }"
+    },
+    {
+      "name": "Pro-Grade Timeline Ruler",
+      "kind": "custom",
+      "refersTo": "timeline",
+      "description": "Signature component. Three-row sub-grid: kind-colored marker pins above the rail, the rail with brand-blue gradient fill in the middle, mono time-tick labels below. A vertical playhead strand crosses all three rows; the round thumb sits on the rail center. Pro-grade transport, not consumer playback.",
+      "html": "<div class=\"ds-timeline\" role=\"group\" aria-label=\"Timeline\"><div class=\"ds-timeline-pins\"><button type=\"button\" class=\"ds-marker\" style=\"left:5%;color:#5d8fc9\" aria-label=\"Seek to 00:01: e4\"></button><button type=\"button\" class=\"ds-marker\" style=\"left:14%;color:#f0b429\" aria-label=\"Seek to 00:03: highlight e4\"></button><button type=\"button\" class=\"ds-marker\" style=\"left:24%;color:#f08c2e\" aria-label=\"Seek to 00:05: arrow e2-&gt;e4\"></button><button type=\"button\" class=\"ds-marker\" style=\"left:34%;color:#9b9b9b\" aria-label=\"Seek to 00:07: clear\"></button><button type=\"button\" class=\"ds-marker\" style=\"left:88%;color:#cf5d5d\" aria-label=\"Seek to 00:30: reset\"></button></div><div class=\"ds-timeline-rail\"><div class=\"ds-scrub-fill\" style=\"width:42%\"></div></div><div class=\"ds-timeline-ticks\" aria-hidden=\"true\"><span class=\"ds-timeline-tick\" style=\"left:0%\">00:00</span><span class=\"ds-timeline-tick\" style=\"left:15%\">00:05</span><span class=\"ds-timeline-tick\" style=\"left:30%\">00:10</span><span class=\"ds-timeline-tick\" style=\"left:45%\">00:15</span><span class=\"ds-timeline-tick\" style=\"left:60%\">00:20</span><span class=\"ds-timeline-tick\" style=\"left:75%\">00:25</span><span class=\"ds-timeline-tick\" style=\"left:90%\">00:30</span></div><div class=\"ds-playhead\" style=\"left:42%\" aria-hidden=\"true\"><div class=\"ds-playhead-thumb\"></div></div></div>",
+      "css": ".ds-timeline { position: relative; width: 100%; max-width: 480px; display: grid; grid-template-rows: 18px 6px 14px; row-gap: 5px; align-items: center; padding: 0 4px; } .ds-timeline-pins { position: relative; width: 100%; height: 100%; } .ds-timeline-rail { position: relative; width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 999px; } .ds-scrub-fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #5d8fc9, #7da9dc); border-radius: 999px; pointer-events: none; } .ds-timeline-ticks { position: relative; width: 100%; height: 14px; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: #6b7596; letter-spacing: 0.04em; } .ds-timeline-tick { position: absolute; top: 1px; transform: translateX(-50%); white-space: nowrap; } .ds-timeline-tick::before { content: ''; position: absolute; top: -7px; left: 50%; width: 1px; height: 4px; background: rgba(255, 255, 255, 0.10); transform: translateX(-50%); } .ds-playhead { position: absolute; top: -6px; bottom: 0; width: 1px; margin-left: -0.5px; background: linear-gradient(to bottom, rgba(232, 236, 245, 0.55) 0%, rgba(232, 236, 245, 0.55) 30%, rgba(232, 236, 245, 0.18) 100%); pointer-events: none; z-index: 3; } .ds-playhead-thumb { position: absolute; top: 24px; left: 50%; width: 14px; height: 14px; margin-left: -7px; margin-top: -7px; background: #e8ecf5; border-radius: 50%; box-shadow: 0 0 0 4px rgba(93, 143, 201, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4); } .ds-marker { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 5px; height: 16px; border: 0; padding: 0; background: currentColor; border-radius: 2px; cursor: pointer; opacity: 0.85; transition: opacity 150ms ease-out, height 150ms ease-out; } .ds-marker:hover, .ds-marker:focus-visible { opacity: 1; height: 22px; } .ds-marker::after { content: ''; position: absolute; left: 50%; top: 100%; width: 1px; height: 7px; margin-left: -0.5px; background: currentColor; opacity: 0.45; }"
+    },
+    {
+      "name": "Now-Playing Caption",
+      "kind": "custom",
+      "refersTo": "now-playing-caption",
+      "description": "A slim mono strip directly under the board that announces the active event in 13.5px mono so a viewer of a screen recording knows what just happened. Recordable-by-Default principle. 4-column grid: stripe + time + kind chip + body. Color-coded by kind under Five Meanings.",
+      "html": "<div class=\"ds-now-playing\" role=\"status\" aria-live=\"polite\" aria-atomic=\"true\"><span class=\"ds-np-rail\" style=\"background:#5d8fc9\" aria-hidden=\"true\"></span><span class=\"ds-np-time\">00:10</span><span class=\"ds-np-kind ds-chip-move\">move</span><span class=\"ds-np-body\">Nf3</span></div>",
+      "css": ".ds-now-playing { width: 100%; max-width: 720px; display: grid; grid-template-columns: 4px auto auto 1fr; align-items: center; column-gap: 12px; padding: 10px 6px 10px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-family: 'JetBrains Mono', ui-monospace, monospace; min-height: 38px; transition: opacity 150ms ease-out; } .ds-now-playing.is-idle { opacity: 0.45; } .ds-np-rail { width: 4px; height: 22px; border-radius: 2px; transition: background 150ms ease-out, height 150ms ease-out; } .ds-now-playing.is-idle .ds-np-rail { height: 12px; opacity: 0.6; } .ds-np-time { font-size: 11px; color: #8d97b3; letter-spacing: 0.04em; min-width: 44px; } .ds-np-kind { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 7px; border-radius: 5px; text-align: center; } .ds-chip-move { background: rgba(93, 143, 201, 0.20); color: #b8d0ec; } .ds-chip-highlight { background: rgba(240, 180, 41, 0.20); color: #f0c869; } .ds-chip-arrow { background: rgba(240, 140, 46, 0.20); color: #f0a86b; } .ds-chip-clear { background: rgba(155, 155, 155, 0.20); color: #c0c0c0; } .ds-chip-reset { background: rgba(207, 93, 93, 0.22); color: #ff9b9b; } .ds-np-body { font-size: 13.5px; font-weight: 500; color: #e8ecf5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+    },
+    {
+      "name": "Active Event Row",
+      "kind": "custom",
+      "refersTo": "event-row",
+      "description": "Row in the side panel's event list. The active state takes a kind-colored 2px inset stripe and a low-alpha kind-tinted background under the Five Meanings Rule. The only side-stripe accent in the system; future active states reach for full-row tinting first.",
+      "html": "<button type=\"button\" class=\"ds-event-row ds-active ds-kind-arrow\" aria-current=\"step\"><span class=\"ds-ev-time\">00:05</span><span class=\"ds-chip ds-chip-arrow\">arrow</span><span class=\"ds-ev-body\">e2 → e4</span></button>",
+      "css": ".ds-event-row { display: grid; grid-template-columns: 56px 70px 1fr; align-items: center; gap: 10px; width: 320px; padding: 9px 12px; margin-bottom: 2px; border-radius: 8px; border: 0; background: transparent; font-family: 'Plus Jakarta Sans', ui-sans-serif, sans-serif; color: #aab3cf; cursor: pointer; text-align: left; transition: background 120ms ease-out, color 120ms ease-out; } .ds-event-row:hover { background: rgba(255, 255, 255, 0.05); color: #e8ecf5; } .ds-active.ds-kind-move { background: rgba(93, 143, 201, 0.18); box-shadow: inset 2px 0 0 #5d8fc9; color: #e8ecf5; } .ds-active.ds-kind-highlight { background: rgba(240, 180, 41, 0.14); box-shadow: inset 2px 0 0 #f0b429; color: #e8ecf5; } .ds-active.ds-kind-arrow { background: rgba(240, 140, 46, 0.14); box-shadow: inset 2px 0 0 #f08c2e; color: #e8ecf5; } .ds-active.ds-kind-clear { background: rgba(155, 155, 155, 0.13); box-shadow: inset 2px 0 0 #9b9b9b; color: #e8ecf5; } .ds-active.ds-kind-reset { background: rgba(207, 93, 93, 0.16); box-shadow: inset 2px 0 0 #cf5d5d; color: #e8ecf5; } .ds-ev-time { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #b8d0ec; } .ds-chip { display: inline-block; padding: 3px 7px; border-radius: 5px; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1.1; text-align: center; } .ds-chip-move { background: rgba(93, 143, 201, 0.20); color: #b8d0ec; } .ds-chip-highlight { background: rgba(240, 180, 41, 0.20); color: #f0c869; } .ds-chip-arrow { background: rgba(240, 140, 46, 0.20); color: #f0a86b; } .ds-chip-clear { background: rgba(155, 155, 155, 0.20); color: #c0c0c0; } .ds-chip-reset { background: rgba(207, 93, 93, 0.22); color: #ff9b9b; } .ds-ev-body { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Editing Booth",
+    "overview": "Gambit looks like a dim post-production room. The room is in deep navy blue lit by three radials: a steel-blue key light pooled on the board column, a warm wash from the upper-left, a cool wash from the lower-right. The chess board is the lit subject in the middle of the desk; everything around it (transport controls, the script panel, the event list) is the kind of quiet chrome a colorist or sound editor lives inside. The transport sitting under the board is a pro-grade timeline ruler with kind-colored marker pins above the rail and mono time-tick labels below; between the board and the ruler is the Now-Playing Caption, a slim mono strip that announces the active event so a viewer of a screen recording knows what just happened without seeing the side panel. The system rejects the chess.com palette outright, glassy AI-tool surfaces, candy-colored chess apps for kids, and the SaaS hero-metric template. There is exactly one gradient surface in the entire UI (the Play button); every other accent is a single solid color.",
+    "keyCharacteristics": [
+      "Dark navy backdrop with a steel-blue key-light pool centered on the board column. Cream-on-blue board, never reversed.",
+      "Quiet tonal chrome. One gradient surface only (Play). One ambient drop shadow only (the board).",
+      "Typography is the structural device: monospaced for anything numeric or chess-script, sans for chrome titles.",
+      "Color marks meaning, not decoration. Move = blue, highlight = amber, arrow = persimmon, clear = grey-mist, reset/error = vermillion. The five hues drive every chip, marker, scrub-fill, last-move tint, active-row stripe, and Now-Playing rail.",
+      "Pro-grade transport: marker pins above the rail, time-tick labels below, full-height playhead strand. The timeline ruler is the signature component.",
+      "Motion is functional and exponential. Pieces translate via transform, arrows draw, captures flash. Nothing hovers or shimmers."
+    ],
+    "rules": [
+      {
+        "name": "The Five Meanings Rule",
+        "body": "Five colors carry semantic load: blue for moves, amber for highlights, persimmon for arrows, grey-mist for clears, vermillion for resets and errors. Every chip, every timeline marker pin, the scrub-fill, the last-move tint, the active-event-row stripe and tint, and the Now-Playing rail pull from this list. Don't introduce a sixth without a sixth event kind to attach it to.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Gradient Rule",
+        "body": "The system has exactly one gradient surface: the 44x44 Play button (linear-gradient(135deg, studio-steel-blue, deep-set-blue)). The scrubber's fill is a tonal blue gradient internal to the timeline component and counts as part of the same affordance, not a second gradient. Every other accent is a single solid hex.",
+        "section": "colors"
+      },
+      {
+        "name": "The Annotation-Pens Rule",
+        "body": "Amber and Persimmon are not two colors; they are a pair, used together to imply a creator's two-pen toolkit. Highlights belong to Amber. Arrows belong to Persimmon. Don't cross them.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono-for-Chess Rule",
+        "body": "Anything chess-related (SAN, square coordinates, time codes, script lines) is set in JetBrains Mono. Anything chrome-related (the app title, panel titles, tab labels, button labels) is set in Plus Jakarta Sans. The split is structural; do not mix.",
+        "section": "typography"
+      },
+      {
+        "name": "The Single-Display Rule",
+        "body": "The 22px Display weight appears once: the 'Gambit' wordmark. Subheadings, page titles, modal titles do not graduate to Display. If a future surface needs a larger label, use Headline at a larger size before promoting to Display.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tonal-First Rule",
+        "body": "Surfaces stack via translucent whites, not shadows. If a new surface needs to read as elevated, raise its alpha by one stop on the 4/6/10/12 ladder before considering a real shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One-Bloom Rule",
+        "body": "Brand bloom (the colored shadow) is reserved for the single primary action on any given surface. Never decorate two adjacent buttons with bloom; never put bloom on a non-action surface.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep chrome in the four-stop tonal ladder: rgba(255,255,255,α) at α ∈ {0.04, 0.06, 0.10, 0.12}. Anything outside this set should be a primitive accent color, not chrome.",
+      "Do set every numeric, every chess square, every SAN move, every script line in JetBrains Mono. Set every chrome label in Plus Jakarta Sans.",
+      "Do use the move/highlight/arrow/clear/reset color list for any event-related visual. The five hues are vocabulary, not decoration.",
+      "Do keep functional motion (piece slide, arrow draw, capture flash) and cut everything else. Decorative hover pulses, gradient sweeps, shimmer effects: forbidden.",
+      "Do clamp all chrome contrast to quieter than the board. The board is the canvas. If chrome competes for attention in a screen recording, it is wrong."
+    ],
+    "donts": [
+      "Don't use the chess.com palette. No green-and-cream board, no chess.com red-and-yellow accent set.",
+      "Don't ship the SaaS dashboard template. No hero-metric block, no identical icon-headline-blurb card grids, no gradient-accent CTAs scattered through the chrome.",
+      "Don't ship toy-chess vibes. No oversize rounded everything, no candy palette, no XP bars, badges, mascots, or gamified rewards. Cap component radius at 16px.",
+      "Don't ship the glassy AI-tool reflex. No stacked translucent panels, no neon glows, no gradient-mesh hero, no decorative backdrop-filter. The two existing blurs (controls 6px, side-col 8px) are load-bearing because they float over the board's color; that is the ceiling.",
+      "Don't introduce side-stripe borders as an accent device. The active event row's inset 2px 0 0 <kind-color> shadow (color resolved per event kind under Five Meanings) is the only side-stripe in the system; it stays scoped to that row. The textarea's :focus-visible strand follows the same shape and the same constraint.",
+      "Don't use background-clip: text for gradient text anywhere. Single-color text, with hierarchy carried by weight and size.",
+      "Don't use modals as a first thought. The script editor lives in-panel, the event list lives in-panel; future affordances stay inline before they become modals.",
+      "Don't pure-#000 or pure-#fff anywhere. Stagewell Black (#0f1525) is the floor, Sodium Chalk (#e8ecf5) is the ceiling.",
+      "Don't animate CSS layout properties. Pieces translate via transform: translate3d(...) over a fixed origin, never via left/top. Animate transform, opacity, and box-shadow only. Easing curves are exponential ease-out; no bounce, no elastic, no spring."
+    ]
+  }
+}

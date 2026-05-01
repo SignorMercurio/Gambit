@@ -1,0 +1,782 @@
+/* =====================================================================
+   Design tokens (single source of truth for chrome). Mirrored in
+   src/lib/tokens.ts for the JS/SVG layer.
+   ===================================================================== */
+
+:root {
+  /* Surface (dark navy ramp) */
+  --color-stagewell-black: #0f1525;
+  --color-stagewell-indigo: #161e35;
+  --color-set-indigo: #1f2a44;
+  --color-backdrop-slate: #2a3556;
+
+  /* Brand */
+  --color-studio-steel-blue: #5d8fc9;
+  --color-deep-set-blue: #3a64a0;
+  --color-camera-highlight-blue: #7da9dc;
+
+  /* Secondary */
+  --color-studio-cream: #f1ecde;
+
+  /* Annotation pens */
+  --color-markup-amber: #f0b429;
+  --color-markup-amber-soft: #f0c869;
+  --color-annotation-persimmon: #f08c2e;
+  --color-annotation-persimmon-soft: #f0a86b;
+
+  /* Text */
+  --color-sodium-chalk: #e8ecf5;
+  --color-rim-light-pewter: #c8d0e6;
+  --color-foley-pewter: #aab3cf;
+  --color-foley-slate: #8d97b3;
+  --color-stage-mist: #6b7596;
+  --color-stage-mauve: #5d6892;
+  --color-chip-text-blue: #b8d0ec;
+
+  /* Errors */
+  --color-studio-vermillion: #cf5d5d;
+  --color-error-line: #ff7b7b;
+  --color-error-text: #ffb4b4;
+  --color-reset-text: #ff9b9b;
+  --color-clear-text: #c0c0c0;
+  --color-clear-marker: #9b9b9b;
+
+  /* Tonal whites (chrome elevation ladder) */
+  --tonal-white-04: rgba(255, 255, 255, 0.04);
+  --tonal-white-05: rgba(255, 255, 255, 0.05);
+  --tonal-white-06: rgba(255, 255, 255, 0.06);
+  --tonal-white-07: rgba(255, 255, 255, 0.07);
+  --tonal-white-08: rgba(255, 255, 255, 0.08);
+  --tonal-white-10: rgba(255, 255, 255, 0.10);
+  --tonal-white-12: rgba(255, 255, 255, 0.12);
+
+  /* Event-kind chip backgrounds */
+  --chip-bg-move: rgba(93, 143, 201, 0.20);
+  --chip-bg-highlight: rgba(240, 180, 41, 0.20);
+  --chip-bg-arrow: rgba(240, 140, 46, 0.20);
+  --chip-bg-clear: rgba(155, 155, 155, 0.20);
+  --chip-bg-reset: rgba(207, 93, 93, 0.22);
+  --chip-bg-err: rgba(207, 93, 93, 0.30);
+
+  /* Active row + brand accents */
+  --row-active-bg: rgba(93, 143, 201, 0.18);
+  --row-active-stripe-color: var(--color-studio-steel-blue);
+
+  /* Active row by kind (Five Meanings on the active state) */
+  --row-active-bg-move: rgba(93, 143, 201, 0.18);
+  --row-active-bg-highlight: rgba(240, 180, 41, 0.14);
+  --row-active-bg-arrow: rgba(240, 140, 46, 0.14);
+  --row-active-bg-clear: rgba(155, 155, 155, 0.13);
+  --row-active-bg-reset: rgba(207, 93, 93, 0.16);
+  --row-active-bg-err: rgba(207, 93, 93, 0.18);
+
+  /* Errors band */
+  --errors-bg: rgba(207, 93, 93, 0.08);
+  --errors-border: rgba(207, 93, 93, 0.30);
+
+  /* Shadows */
+  --shadow-brand-bloom: 0 6px 16px -6px rgba(93, 143, 201, 0.7);
+  --shadow-scrub-thumb: 0 0 0 4px rgba(93, 143, 201, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --shadow-logo:
+    0 18px 34px -18px rgba(93, 143, 201, 0.75),
+    0 8px 18px -14px rgba(15, 21, 37, 0.9);
+
+  /* Radii */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease-piece-slide: cubic-bezier(0.5, 0, 0.2, 1);
+  --duration-piece: 380ms;
+  --duration-transform: 220ms;
+  --duration-arrow-in: 280ms;
+  --duration-capture-flash: 500ms;
+  --duration-chrome: 120ms;
+  --duration-state: 150ms;
+
+  /* Focus ring */
+  --focus-ring-color: var(--color-camera-highlight-blue);
+  --focus-ring-offset: 2px;
+
+  /* Surface backgrounds. Three radial washes layered over the navy linear:
+     a tight steel-blue key-light pool centered on the board column, a warm
+     wash from the upper-left, a cool wash from the lower-right. The
+     "Editing Booth" reads physically. */
+  --surface-app: radial-gradient(900px 600px at 36% 48%, rgba(93, 143, 201, 0.10) 0%, transparent 62%),
+    radial-gradient(1200px 800px at 12% -10%, var(--color-set-indigo) 0%, transparent 60%),
+    radial-gradient(900px 700px at 100% 110%, var(--color-backdrop-slate) 0%, transparent 60%),
+    linear-gradient(180deg, var(--color-stagewell-black) 0%, var(--color-stagewell-indigo) 100%);
+}
+
+/* =====================================================================
+   Reset + base
+   ===================================================================== */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--surface-app);
+  color: var(--color-sodium-chalk);
+  min-height: 100%;
+  overflow-x: hidden;
+}
+#root { min-height: 100vh; }
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+.app {
+  max-width: 1500px; margin: 0 auto;
+  padding: 28px 36px 24px;
+  display: flex; flex-direction: column; gap: 22px;
+}
+
+/* =====================================================================
+   Header
+   ===================================================================== */
+
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.title-block { display: flex; align-items: center; gap: 14px; }
+.logo {
+  width: 52px; height: 52px;
+  border-radius: 16px;
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+  position: relative;
+  box-shadow: var(--shadow-logo);
+}
+.logo img {
+  width: 52px;
+  height: 52px;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+.app-title {
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  margin: 0;
+  color: var(--color-sodium-chalk);
+}
+.app-sub {
+  font-size: 12.5px;
+  color: var(--color-foley-slate);
+  font-weight: 500;
+  letter-spacing: 0;
+  margin-top: 3px;
+}
+.header-actions {
+  display: flex; gap: 6px;
+  background: var(--tonal-white-04);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--tonal-white-06);
+}
+.tab-btn {
+  position: relative;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: var(--color-foley-pewter);
+  font-weight: 600; font-size: 13.5px;
+  font-family: inherit; cursor: pointer;
+  transition: color var(--duration-state), background var(--duration-state);
+}
+.tab-btn:hover { color: var(--color-sodium-chalk); }
+.tab-btn[aria-selected='true'] {
+  background: var(--tonal-white-10);
+  color: var(--color-sodium-chalk);
+}
+/* Hit-area extension to clear WCAG 2.5.5 (44 min) without breaking the
+   visual rhythm of the tab group. */
+.tab-btn::before {
+  content: '';
+  position: absolute; inset: -6px -2px;
+}
+
+/* =====================================================================
+   Layout
+   ===================================================================== */
+
+.main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 28px;
+  align-items: start;
+}
+@media (max-width: 1080px) { .main { grid-template-columns: 1fr; } }
+
+.board-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.board-wrap { width: 100%; max-width: 720px; margin: 0 auto; }
+
+/* =====================================================================
+   Controls strip (transport)
+   ===================================================================== */
+
+.controls {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr auto;
+  gap: 16px; align-items: center;
+  background: var(--tonal-white-04);
+  border: 1px solid var(--tonal-white-07);
+  padding: 14px 18px;
+  border-radius: var(--radius-lg);
+  max-width: 720px; margin: 0 auto; width: 100%;
+  backdrop-filter: blur(6px);
+}
+
+.play-btn, .ctrl-btn {
+  position: relative;
+  border: 0; cursor: pointer;
+  border-radius: var(--radius-md);
+  color: var(--color-studio-cream);
+  font-family: inherit;
+  transition: transform var(--duration-chrome), background var(--duration-state);
+  display: grid; place-items: center;
+}
+.play-btn {
+  width: 44px; height: 44px;
+  background: linear-gradient(135deg, var(--color-studio-steel-blue), var(--color-deep-set-blue));
+  box-shadow: var(--shadow-brand-bloom);
+}
+.play-btn:hover { transform: scale(1.04); }
+.play-btn:active { transform: scale(0.96); }
+
+.ctrl-btn {
+  width: 36px; height: 36px;
+  background: var(--tonal-white-06);
+  color: var(--color-rim-light-pewter);
+}
+.ctrl-btn:hover { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
+/* Hit-area extension: visual stays 36, hit zone reaches 44. */
+.ctrl-btn::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
+.time-readout {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 13px; font-weight: 600;
+  color: var(--color-rim-light-pewter);
+  display: flex; align-items: baseline; gap: 4px;
+  /* Sized for `mm:ss.t / mm:ss.t` — a tenths-of-a-second clock so
+     sub-second event spacing is visible during playback. */
+  min-width: 124px;
+}
+.t-now { color: var(--color-sodium-chalk); font-weight: 700; }
+.t-sep { color: var(--color-stage-mauve); }
+.t-tot { color: var(--color-foley-slate); }
+
+/* Timeline: pro-grade transport ruler. Three rows: marker pins above, the
+   rail with fill + playhead in the middle, and time-tick labels below. The
+   playhead is a vertical line that crosses all three rows so position is
+   readable at recording resolution. */
+.timeline {
+  position: relative;
+  display: grid;
+  grid-template-rows: 18px 6px 14px;
+  row-gap: 5px;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.timeline-pins {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.timeline-rail {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background: var(--tonal-white-08);
+  border-radius: var(--radius-pill);
+}
+
+.scrub-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, var(--color-studio-steel-blue), var(--color-camera-highlight-blue));
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+}
+
+.timeline-ticks {
+  position: relative;
+  width: 100%;
+  height: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  color: var(--color-foley-slate);
+  letter-spacing: 0.04em;
+}
+.timeline-tick {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  user-select: none;
+}
+.timeline-tick::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 1px;
+  height: 4px;
+  background: var(--tonal-white-10);
+  transform: translateX(-50%);
+}
+
+/* Playhead spans the full timeline height (47px = 18 + 5 + 6 + 5 + 14) plus
+   a 6px crown above. Keeps the round thumb on the rail center but adds the
+   vertical strand that ties pin to tick. */
+.playhead {
+  position: absolute;
+  top: -6px;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: linear-gradient(
+    to bottom,
+    rgba(232, 236, 245, 0.55) 0%,
+    rgba(232, 236, 245, 0.55) 30%,
+    rgba(232, 236, 245, 0.18) 100%
+  );
+  pointer-events: none;
+  z-index: 3;
+}
+.playhead-thumb {
+  position: absolute;
+  top: 24px; /* sits on the rail center: 6 (crown) + 18 (pins) + 5/2 (gap) ≈ 26.5; tuned */
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
+  background: var(--color-sodium-chalk);
+  border-radius: 50%;
+  box-shadow: var(--shadow-scrub-thumb);
+}
+
+/* Markers are buttons sitting in the pin row, above the rail. Visual size
+   is 5×16 so they read at small recording resolution; hit area extends to
+   meet WCAG 2.5.5. */
+.marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 5px;
+  height: 16px;
+  border: 0;
+  padding: 0;
+  background: currentColor;
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--duration-state), height var(--duration-state);
+  color: var(--color-stage-mist);
+}
+.marker::after {
+  /* hairline tail dropping from the marker bottom toward the rail */
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 7px;
+  margin-left: -0.5px;
+  background: currentColor;
+  opacity: 0.45;
+}
+.marker::before {
+  content: '';
+  position: absolute;
+  inset: -22px -20px;
+}
+.marker:hover, .marker:focus-visible {
+  opacity: 1;
+  height: 22px;
+}
+
+.scrub-input {
+  position: absolute;
+  inset: -2px 0;
+  width: 100%;
+  height: calc(100% + 4px);
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+  z-index: 4;
+}
+
+.speed-group {
+  display: flex; gap: 2px;
+  background: var(--tonal-white-04);
+  padding: 3px; border-radius: var(--radius-md);
+}
+.speed-btn {
+  position: relative;
+  border: 0; cursor: pointer;
+  background: transparent;
+  color: var(--color-foley-slate);
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px; font-weight: 600;
+  transition: color var(--duration-state), background var(--duration-state);
+}
+.speed-btn:hover { color: var(--color-sodium-chalk); }
+.speed-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
+/* Hit-area extension: visual ~28×22, hit zone reaches 44 vertically to clear
+   WCAG 2.5.5. Inner padding stays tight so the segmented group reads. */
+.speed-btn::before {
+  content: '';
+  position: absolute;
+  inset: -11px -6px;
+}
+
+/* =====================================================================
+   Side panel
+   ===================================================================== */
+
+.side-col {
+  background: var(--tonal-white-04);
+  border: 1px solid var(--tonal-white-07);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  height: min(780px, calc(100dvh - 160px));
+  min-height: 420px;
+  display: flex; flex-direction: column;
+  backdrop-filter: blur(8px);
+}
+@media (max-width: 1080px) {
+  .side-col { height: min(720px, calc(100dvh - 80px)); }
+}
+
+.panel-header {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--tonal-white-06);
+}
+.panel-title {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--color-rim-light-pewter);
+  margin: 0;
+}
+.panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+
+.editor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.fen-field {
+  display: grid;
+  gap: 7px;
+  padding: 12px 18px 14px;
+  border-bottom: 1px solid var(--tonal-white-06);
+}
+.fen-field label {
+  color: var(--color-rim-light-pewter);
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fen-field input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--tonal-white-07);
+  border-radius: var(--radius-sm);
+  background: var(--tonal-white-04);
+  color: var(--color-sodium-chalk);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.2;
+  padding: 0 10px;
+  transition: border-color var(--duration-state), background var(--duration-state), box-shadow var(--duration-state);
+}
+.fen-field input:hover { background: var(--tonal-white-06); }
+.fen-field input:focus-visible {
+  border-color: rgba(125, 169, 220, 0.65);
+  box-shadow: 0 0 0 2px rgba(125, 169, 220, 0.16);
+}
+.fen-field input[aria-invalid='true'] {
+  border-color: rgba(207, 93, 93, 0.72);
+}
+.editor textarea {
+  flex: 1; min-height: 0;
+  width: 100%;
+  background: transparent;
+  border: 0; outline: 0; resize: none;
+  color: var(--color-sodium-chalk);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12.5px; line-height: 1.7;
+  padding: 16px 18px;
+  transition: box-shadow var(--duration-state);
+}
+.editor textarea:focus-visible {
+  box-shadow: inset 2px 0 0 var(--color-camera-highlight-blue);
+}
+
+.errors {
+  border-top: 1px solid var(--errors-border);
+  background: var(--errors-bg);
+  max-height: 140px; overflow: auto;
+  padding: 8px 0;
+}
+.err-row {
+  display: flex; gap: 10px;
+  padding: 4px 18px;
+  font-size: 12px; color: var(--color-error-text);
+  font-family: 'JetBrains Mono', monospace;
+}
+.err-line {
+  color: var(--color-error-line); font-weight: 700; min-width: 28px;
+}
+
+.moves-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.event-list { flex: 1; overflow-y: auto; padding: 8px 8px 16px; }
+.event-row {
+  display: grid;
+  grid-template-columns: 56px 70px 1fr;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  /* Indent by variation depth — `--depth` is set inline per row. The branch
+     row sits at parent depth, contents nest one level deeper, mainline
+     returns to parent depth. */
+  padding: 9px 12px 9px calc(12px + var(--depth, 0) * 14px);
+  margin-bottom: 2px;
+  border-radius: 8px;
+  border: 0; background: transparent;
+  font-family: inherit;
+  color: var(--color-foley-pewter);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-chrome), color var(--duration-chrome);
+}
+.event-row:hover { background: var(--tonal-white-05); color: var(--color-sodium-chalk); }
+.event-row.past { color: var(--color-rim-light-pewter); }
+.event-row.active {
+  /* Five Meanings on the active state. Each kind owns its own background
+     tint and stripe color; the universal rule below is the fallback. */
+  background: var(--row-active-bg);
+  color: var(--color-sodium-chalk);
+  box-shadow: inset 2px 0 0 var(--row-active-stripe-color);
+}
+.event-row.active.kind-move {
+  background: var(--row-active-bg-move);
+  box-shadow: inset 2px 0 0 var(--color-studio-steel-blue);
+}
+.event-row.active.kind-highlight {
+  background: var(--row-active-bg-highlight);
+  box-shadow: inset 2px 0 0 var(--color-markup-amber);
+}
+.event-row.active.kind-arrow {
+  background: var(--row-active-bg-arrow);
+  box-shadow: inset 2px 0 0 var(--color-annotation-persimmon);
+}
+.event-row.active.kind-clear {
+  background: var(--row-active-bg-clear);
+  box-shadow: inset 2px 0 0 var(--color-clear-marker);
+}
+.event-row.active.kind-reset {
+  background: var(--row-active-bg-reset);
+  box-shadow: inset 2px 0 0 var(--color-studio-vermillion);
+}
+.event-row.active.kind-err {
+  background: var(--row-active-bg-err);
+  box-shadow: inset 2px 0 0 var(--color-studio-vermillion);
+}
+.event-row.active.kind-branch,
+.event-row.active.kind-mainline {
+  /* Structural events read in chrome neutral so they don't compete with the
+     Five Meanings on the active state. */
+  background: var(--tonal-white-08);
+  box-shadow: inset 2px 0 0 var(--color-rim-light-pewter);
+}
+.ev-time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--color-foley-slate);
+}
+.event-row.past .ev-time { color: var(--color-rim-light-pewter); }
+.event-row.active .ev-time { color: var(--color-chip-text-blue); }
+.ev-kind {
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 3px 7px; border-radius: var(--radius-xs);
+  text-align: center;
+}
+/* Chip palette is shared between event-list rows (.ev-kind) and the
+   Now-Playing caption (.np-kind). Branch / mainline are STRUCTURAL events
+   outside the Five Meanings palette — they render in rim-light-pewter on a
+   tonal-white-08 chip so they read as editorial scaffolding. */
+.ev-kind.kind-move,
+.np-kind.kind-move { background: var(--chip-bg-move); color: var(--color-chip-text-blue); }
+.ev-kind.kind-highlight,
+.np-kind.kind-highlight { background: var(--chip-bg-highlight); color: var(--color-markup-amber-soft); }
+.ev-kind.kind-arrow,
+.np-kind.kind-arrow { background: var(--chip-bg-arrow); color: var(--color-annotation-persimmon-soft); }
+.ev-kind.kind-clear,
+.np-kind.kind-clear { background: var(--chip-bg-clear); color: var(--color-clear-text); }
+.ev-kind.kind-reset,
+.np-kind.kind-reset { background: var(--chip-bg-reset); color: var(--color-reset-text); }
+.ev-kind.kind-err,
+.np-kind.kind-err { background: var(--chip-bg-err); color: var(--color-error-text); }
+.ev-kind.kind-branch,
+.np-kind.kind-branch,
+.ev-kind.kind-mainline,
+.np-kind.kind-mainline { background: var(--tonal-white-08); color: var(--color-rim-light-pewter); }
+.ev-body {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Now-Playing caption: a slim mono strip directly under the board that
+   announces the active event in type large enough to survive a 480p
+   downscale. Color-coded by kind via inline style on `.np-rail`.
+   Recordable-by-default principle. */
+.now-playing {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 4px auto auto 1fr;
+  align-items: center;
+  column-gap: 12px;
+  padding: 10px 6px 10px 0;
+  border-bottom: 1px solid var(--tonal-white-06);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  min-height: 38px;
+  transition: opacity var(--duration-state);
+}
+.now-playing.is-idle { opacity: 0.45; }
+
+.np-rail {
+  width: 4px;
+  height: 22px;
+  border-radius: 2px;
+  background: var(--np-color, var(--color-stage-mauve));
+  transition: background var(--duration-state), height var(--duration-state);
+}
+.now-playing.is-idle .np-rail { height: 12px; opacity: 0.6; }
+
+.np-time {
+  font-size: 11px;
+  color: var(--color-rim-light-pewter);
+  letter-spacing: 0.04em;
+  min-width: 44px;
+}
+.np-kind {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
+  text-align: center;
+}
+.np-body {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--color-sodium-chalk);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-idle-text {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--color-stage-mist);
+  text-transform: lowercase;
+}
+
+.footer {
+  text-align: center;
+  color: var(--color-foley-slate);
+  font-size: 11.5px;
+  font-family: 'JetBrains Mono', monospace;
+  padding-top: 4px;
+}
+
+/* =====================================================================
+   Animations
+   ===================================================================== */
+
+@keyframes arrowIn {
+  from { opacity: 0; transform: scale(0.7); transform-origin: center; }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes capturePop {
+  0%   { opacity: 0; transform: scale(0.4); }
+  40%  { opacity: 1; transform: scale(1.4); }
+  100% { opacity: 0; transform: scale(2.2); }
+}
+
+/* =====================================================================
+   Mobile reflow: at ≤600px the 5-column controls strip stops fitting. The
+   timeline drops to a second row spanning the full width while play /
+   restart / time / speed share row 1. App padding tightens so the
+   board column doesn't get squeezed.
+   ===================================================================== */
+@media (max-width: 600px) {
+  .app { padding: 16px 16px 20px; gap: 16px; }
+
+  .header { flex-wrap: wrap; gap: 12px; }
+  .title-block { gap: 12px; }
+  .logo, .logo img { width: 44px; height: 44px; }
+  .logo { border-radius: 14px; }
+
+  .main { gap: 18px; }
+
+  /* Three rows on mobile: transport + readout, timeline, speed selector.
+     Squeezing all five children into one row collapses the time-readout
+     below its natural width and overlaps the speed group. */
+  .controls {
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto auto auto;
+    column-gap: 12px;
+    row-gap: 12px;
+    padding: 12px 14px;
+  }
+  .controls .play-btn { grid-row: 1; grid-column: 1; }
+  .controls .ctrl-btn { grid-row: 1; grid-column: 2; }
+  .controls .time-readout { grid-row: 1; grid-column: 3; justify-self: end; }
+  .controls .timeline { grid-row: 2; grid-column: 1 / -1; }
+  .controls .speed-group { grid-row: 3; grid-column: 1 / -1; justify-self: center; }
+}
+
+/* Reduced motion: cut decorative animation, keep functional motion (piece
+   slides + arrow draw) but tighten so it's snappier and less attention-grabbing.
+   The cinematic hover scale on the play button is decorative; remove it. */
+@media (prefers-reduced-motion: reduce) {
+  .play-btn:hover, .play-btn:active { transform: none; }
+  .marker:hover, .marker:focus-visible { height: 14px; }
+  /* Keyframes that depend on motion entirely: shorten capture-pop. */
+  .capture-flash { animation-duration: 1ms !important; }
+}
+
+/* =====================================================================
+   Custom scrollbar
+   ===================================================================== */
+
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--tonal-white-08); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--tonal-white-12); }
+*::-webkit-scrollbar-track { background: transparent; }
