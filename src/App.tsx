@@ -4,6 +4,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
 import { Board, type CaptureFlash, type LastMove, type PiecePos } from './components/Board';
 import * as Chess from './lib/chess';
+import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { parseScript, type ParsedEvent, type TimelineEvent } from './lib/timeline';
 import { markerColors } from './lib/tokens';
 
@@ -138,6 +139,7 @@ const KIND_COLOR_VAR: Record<ParsedEvent['kind'], string> = {
   arrow: 'var(--color-annotation-persimmon)',
   clear: 'var(--color-clear-marker)',
   reset: 'var(--color-studio-vermillion)',
+  start: 'var(--color-studio-vermillion)',
   branch: 'var(--color-rim-light-pewter)',
   mainline: 'var(--color-rim-light-pewter)',
 };
@@ -154,6 +156,8 @@ function eventBody(e: Exclude<TimelineEvent, { error: string }>): string {
       return 'cleared annotations';
     case 'reset':
       return 'board reset';
+    case 'start':
+      return 'initial position';
     case 'branch':
       return 'begin variation';
     case 'mainline':
@@ -170,13 +174,18 @@ function generateTicks(duration: number): number[] {
 
 export default function App() {
   const [scriptText, setScriptText] = useState(DEFAULT_SCRIPT);
+  const [subtitleText, setSubtitleText] = useState('');
+  const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
   const [fenText, setFenText] = useState(Chess.STARTING_FEN);
   const events = useMemo(() => parseScript(scriptText), [scriptText]);
+  const subtitleResult = useMemo(() => parseSrt(subtitleText), [subtitleText]);
+  const subtitleCues = subtitleResult.cues;
   const initialSetup = useMemo(() => setupFromFen(fenText), [fenText]);
+  const standardSetup = useMemo(() => setupFromFen(Chess.STARTING_FEN), []);
   const duration = useMemo(() => {
-    const last = events[events.length - 1];
-    return Math.max(30, (last ? last.t : 0) + 3);
-  }, [events]);
+    const lastEvent = events[events.length - 1];
+    return Math.max(30, (lastEvent ? lastEvent.t : 0) + 3, getSubtitleEnd(subtitleCues) + 1);
+  }, [events, subtitleCues]);
 
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -189,12 +198,15 @@ export default function App() {
 
   const editorLabelId = useId();
   const eventsLabelId = useId();
+  const subtitleLabelId = useId();
+  const subtitleFileInputId = useId();
   const replayTabId = useId();
   const scriptTabId = useId();
   const panelId = useId();
   const fenErrorId = useId();
   const replayTabRef = useRef<HTMLButtonElement>(null);
   const scriptTabRef = useRef<HTMLButtonElement>(null);
+  const subtitleFileInputRef = useRef<HTMLInputElement>(null);
 
   const onTabKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -210,6 +222,19 @@ export default function App() {
     },
     [showEditor],
   );
+
+  const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSubtitleText(String(reader.result ?? ''));
+      setSubtitleFileName(file.name);
+    };
+    reader.readAsText(file);
+  }, []);
 
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
@@ -271,6 +296,14 @@ export default function App() {
     const branchStack: BranchSnap[] = [];
 
     const list: WorldSnap[] = [];
+    const applySetup = (setup: Pick<WorldSnap, 'positions' | 'chessState'>) => {
+      positions = setup.positions;
+      chessState = setup.chessState;
+      lastMove = null;
+      highlights = [];
+      arrows = [];
+      lastCapture = null;
+    };
     const snapshot = (errors: TimelineEvent[] = errorAcc.slice()): WorldSnap => ({
       positions,
       chessState,
@@ -302,12 +335,10 @@ export default function App() {
             arrows = [];
             break;
           case 'reset':
-            positions = initialSetup.positions;
-            chessState = initialSetup.chessState;
-            lastMove = null;
-            highlights = [];
-            arrows = [];
-            lastCapture = null;
+            applySetup(initialSetup);
+            break;
+          case 'start':
+            applySetup(standardSetup);
             break;
           case 'branch':
             branchStack.push({ ...snapshot([]), line: ev.line, t: ev.t, raw: ev.raw });
@@ -368,7 +399,7 @@ export default function App() {
     }
 
     return list;
-  }, [events, initialSetup]);
+  }, [events, initialSetup, standardSetup]);
 
   const world = useMemo(() => {
     // Largest i such that events[i].t <= time → snapshot index i + 1.
@@ -478,6 +509,8 @@ export default function App() {
     return null;
   }, [events, time]);
 
+  const activeSubtitle = useMemo(() => getActiveSubtitle(subtitleCues, time), [subtitleCues, time]);
+
   const playState: 'play' | 'pause' | 'replay' = playing
     ? 'pause'
     : time >= duration
@@ -542,6 +575,14 @@ export default function App() {
             arrows={world.arrows}
             captureFlash={world.captureFlash}
           />
+
+          <div
+            className={`subtitle-strip ${activeSubtitle ? '' : 'is-empty'}`}
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <p>{activeSubtitle ? formatSubtitleText(activeSubtitle.text) : ''}</p>
+          </div>
 
           <div
             className={`now-playing ${currentEvent ? '' : 'is-idle'}`}
@@ -701,7 +742,7 @@ export default function App() {
               <div className="panel-header">
                 <h2 className="panel-title" id={editorLabelId}>Script</h2>
                 <p className="panel-hint">
-                  [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · br / ml
+                  [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · br / ml
                 </p>
               </div>
               <div className="fen-field">
@@ -718,12 +759,48 @@ export default function App() {
                 />
               </div>
               <textarea
+                id="script-text"
+                className="script-textarea"
                 spellCheck={false}
                 value={scriptText}
                 aria-labelledby={editorLabelId}
                 onChange={(e) => setScriptText(e.target.value)}
               />
-              {(initialSetup.error || world.errors.length > 0) && (
+              <section className="subtitle-editor" aria-labelledby={subtitleLabelId}>
+                <div className="subtitle-editor-head">
+                  <label id={subtitleLabelId} htmlFor="subtitle-text">Subtitles</label>
+                  <div className="subtitle-actions">
+                    {subtitleFileName && <span className="subtitle-file">{subtitleFileName}</span>}
+                    <button
+                      type="button"
+                      className="upload-btn"
+                      onClick={() => subtitleFileInputRef.current?.click()}
+                    >
+                      Upload SRT
+                    </button>
+                    <input
+                      id={subtitleFileInputId}
+                      ref={subtitleFileInputRef}
+                      className="file-input"
+                      type="file"
+                      accept=".srt,text/plain"
+                      onChange={onSubtitleFileChange}
+                    />
+                  </div>
+                </div>
+                <textarea
+                  id="subtitle-text"
+                  className="subtitle-textarea"
+                  spellCheck={false}
+                  value={subtitleText}
+                  onChange={(e) => {
+                    setSubtitleText(e.target.value);
+                    setSubtitleFileName(null);
+                  }}
+                  placeholder={'1\n00:00:01,000 --> 00:00:04,000\nCentral control is established.'}
+                />
+              </section>
+              {(initialSetup.error || world.errors.length > 0 || subtitleResult.errors.length > 0) && (
                 <div className="errors" role="alert" aria-live="polite">
                   {initialSetup.error && (
                     <div className="err-row">
@@ -735,6 +812,12 @@ export default function App() {
                     <div key={i} className="err-row">
                       <span className="err-line">L{er.line}</span>
                       <span>{'error' in er ? er.error : ''}</span>
+                    </div>
+                  ))}
+                  {subtitleResult.errors.map((er, i) => (
+                    <div key={`subtitle-${i}`} className="err-row">
+                      <span className="err-line">S{er.line}</span>
+                      <span>{er.error}</span>
                     </div>
                   ))}
                 </div>

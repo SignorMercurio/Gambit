@@ -33,7 +33,8 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - `src/components/Board.tsx`: board rendering, pieces, highlights, arrows, coordinates, capture flash, annotation badges.
 - `src/components/Piece.tsx`: piece image mapping.
 - `src/lib/chess.ts`: minimal chess state engine, legal move generation, SAN parsing.
-- `src/lib/timeline.ts`: timestamped script parsing. Short syntax is primary: `hl`, direct arrows like `f3->e5`, `cl`, `rs`, `br`, `ml`; legacy long commands remain accepted.
+- `src/lib/subtitles.ts`: SRT subtitle parsing and cue validation.
+- `src/lib/timeline.ts`: timestamped script parsing. Short syntax is primary: `hl`, direct arrows like `f3->e5`, `cl`, `rs`, `st`, `br`, `ml`; legacy long commands remain accepted.
 - `src/lib/tokens.ts`: JS/SVG-facing design tokens mirrored from CSS.
 - `src/styles.css`: visual system and responsive layout.
 - `public/pieces/*.svg`: Staunty chess pieces from Lichess.
@@ -44,6 +45,7 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - Prefer small, local changes. Avoid introducing state managers, chess libraries, router layers, or new dependencies unless the feature genuinely needs them.
 - Preserve strict TypeScript cleanliness. `npm run typecheck` must pass.
 - When changing parser behavior, return visible `TimelineEvent` errors rather than silently ignoring malformed script input.
+- When changing subtitle behavior, keep SRT input independent from the chess script and surface malformed cues as visible errors.
 - When changing chess behavior, add conservative validation rather than accepting ambiguous or typo-like SAN.
 - Keep board coordinates, arrows, highlights, badges, and pieces in predictable stacking order. Coordinates must remain readable with enlarged pieces.
 - Do not expose FEN or internal board metadata in the default user-facing playback surface unless the user explicitly asks for it.
@@ -63,8 +65,9 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - Timestamp parsing must never produce `NaN`; invalid timestamps should become script errors.
 - Highlight and arrow square inputs should be validated before reaching `Board`.
 - If script duration shrinks, clamp the current playback time to the new duration.
-- `reset` should restore the initial board state and clear transient visuals such as capture flash, arrows, highlights, and last move.
+- `reset` should restore the configured Start FEN; `start` should restore the standard initial chess position. Both clear transient visuals such as capture flash, arrows, highlights, and last move.
 - Branch/mainline snapshots should restore board state and overlays without mutating prior snapshots.
+- Subtitle cues should extend playback duration when they outlast the chess script and render below the board, never over it.
 
 ## Assets And Licensing
 

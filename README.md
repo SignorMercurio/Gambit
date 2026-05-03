@@ -1,6 +1,6 @@
 # Gambit
 
-Chess timeline renderer. Replays a game from a timestamped script with annotations (highlights, arrows), a scrubber, custom FEN starts, and speed controls.
+Chess timeline renderer. Replays a game from a timestamped script with annotations (highlights, arrows), synced SRT subtitles, a scrubber, custom FEN starts, and speed controls.
 
 ## Run
 
@@ -19,8 +19,19 @@ Open the URL Vite prints (typically http://localhost:5173).
 [mm:ss] f1->c4          # arrow (also accepts →, "to", or old "arrow f1->c4")
 [mm:ss] cl              # clear annotations (also accepts "clear")
 [mm:ss] rs              # reset board to the current Start FEN (also accepts "reset")
+[mm:ss] st              # reset board to the standard initial position (also accepts "start")
 [mm:ss] br              # enter variation (also accepts "branch")
 [mm:ss] ml              # exit variation (also accepts "mainline")
+```
+
+## Subtitles
+
+Paste SRT text in the Script panel or upload a `.srt` file. Subtitle cues use standard SRT time ranges:
+
+```
+1
+00:00:01,000 --> 00:00:04,000
+Central control is established.
 ```
 
 ## Credits

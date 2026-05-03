@@ -4,10 +4,11 @@
 //   [mm:ss] a1→b2 [pin]             (or a1->b2, arrow a1->b2)
 //   [mm:ss] cl                      (or clear; clears highlights and arrows)
 //   [mm:ss] rs                      (or reset; resets to configured start)
+//   [mm:ss] st                      (or start; resets to standard initial position)
 //   [mm:ss] br                      (or branch; enters a variation)
 //   [mm:ss] ml                      (or mainline; exits current variation)
 // Branches nest: every `br` must be paired with a later `ml`.
-// `pin` keeps a highlight or arrow on screen until the next `cl` or `rs`;
+// `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, or `st`;
 // without it they auto-fade after their lifetime window.
 // Lines starting with # or // are comments.
 
@@ -35,12 +36,29 @@ export type ParsedEvent =
   | { t: number; kind: 'arrow'; from: string; to: string; pinned?: boolean; line: number; raw: string }
   | { t: number; kind: 'clear'; line: number; raw: string }
   | { t: number; kind: 'reset'; line: number; raw: string }
+  | { t: number; kind: 'start'; line: number; raw: string }
   | { t: number; kind: 'branch'; line: number; raw: string }
   | { t: number; kind: 'mainline'; line: number; raw: string };
 
 export type ErrorEvent = { t: number; error: string; line: number; raw: string; kind?: undefined };
 
 export type TimelineEvent = ParsedEvent | ErrorEvent;
+
+type SimpleEventKind = Extract<ParsedEvent['kind'], 'clear' | 'reset' | 'start' | 'branch' | 'mainline'>;
+
+const SIMPLE_COMMANDS: Record<string, SimpleEventKind> = {
+  cl: 'clear',
+  clear: 'clear',
+  rs: 'reset',
+  reset: 'reset',
+  st: 'start',
+  start: 'start',
+  initial: 'start',
+  br: 'branch',
+  branch: 'branch',
+  ml: 'mainline',
+  mainline: 'mainline',
+};
 
 function toArrowEvent(t: number, line: number, raw: string, match: RegExpMatchArray): ParsedEvent {
   return {
@@ -108,20 +126,9 @@ export function parseScript(text: string): TimelineEvent[] {
       events.push({ t, error: `Line ${i + 1}: invalid arrow`, line: i + 1, raw });
       continue;
     }
-    if (/^(?:cl|clear)$/i.test(body)) {
-      events.push({ t, kind: 'clear', line: i + 1, raw });
-      continue;
-    }
-    if (/^(?:rs|reset)$/i.test(body)) {
-      events.push({ t, kind: 'reset', line: i + 1, raw });
-      continue;
-    }
-    if (/^(?:br|branch)$/i.test(body)) {
-      events.push({ t, kind: 'branch', line: i + 1, raw });
-      continue;
-    }
-    if (/^(?:ml|mainline)$/i.test(body)) {
-      events.push({ t, kind: 'mainline', line: i + 1, raw });
+    const simpleKind = SIMPLE_COMMANDS[body.toLowerCase()];
+    if (simpleKind) {
+      events.push({ t, kind: simpleKind, line: i + 1, raw });
       continue;
     }
     // `parseSAN` strips [+#!?]+ before resolving the move, so the trailing
