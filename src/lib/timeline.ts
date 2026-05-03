@@ -1,14 +1,14 @@
 // Timeline parser. Input format (one event per line):
 //   [mm:ss] move                    (SAN — may carry a trailing !!/!/?/?? annotation)
-//   [mm:ss] highlight a1,b2,... [pin]
-//   [mm:ss] arrow a1→b2 [pin]       (or a1->b2)
-//   [mm:ss] clear                   (clears highlights and arrows)
-//   [mm:ss] reset                   (resets the board to the configured start)
-//   [mm:ss] branch                  (enters a variation; saves current world state)
-//   [mm:ss] mainline                (exits the current variation; restores saved state)
-// Branches nest: every `branch` must be paired with a later `mainline`.
-// `pin` keeps a highlight or arrow on screen until the next `clear` or
-// `reset`; without it they auto-fade after their lifetime window.
+//   [mm:ss] hl a1,b2,... [pin]      (or highlight)
+//   [mm:ss] a1→b2 [pin]             (or a1->b2, arrow a1->b2)
+//   [mm:ss] cl                      (or clear; clears highlights and arrows)
+//   [mm:ss] rs                      (or reset; resets to configured start)
+//   [mm:ss] br                      (or branch; enters a variation)
+//   [mm:ss] ml                      (or mainline; exits current variation)
+// Branches nest: every `br` must be paired with a later `ml`.
+// `pin` keeps a highlight or arrow on screen until the next `cl` or `rs`;
+// without it they auto-fade after their lifetime window.
 // Lines starting with # or // are comments.
 
 // Move quality marks. `!?` / `?!` (interesting / dubious) are intentionally
@@ -23,6 +23,12 @@ const ANNOTATION_BY_MARK: Record<string, MoveAnnotation> = {
   '??': 'blunder',
 };
 
+const SQUARE_PATTERN = '[a-h][1-8]';
+const SQUARE_RE = new RegExp(`^${SQUARE_PATTERN}$`, 'i');
+const ARROW_PATTERN = `(${SQUARE_PATTERN})\\s*(?:→|->|to)\\s*(${SQUARE_PATTERN})(?:\\s+(pin))?`;
+const DIRECT_ARROW_RE = new RegExp(`^${ARROW_PATTERN}$`, 'i');
+const LEGACY_ARROW_RE = new RegExp(`^arrow\\s+${ARROW_PATTERN}$`, 'i');
+
 export type ParsedEvent =
   | { t: number; kind: 'move'; san: string; annotation?: MoveAnnotation; line: number; raw: string }
   | { t: number; kind: 'highlight'; squares: string[]; pinned?: boolean; line: number; raw: string }
@@ -35,6 +41,18 @@ export type ParsedEvent =
 export type ErrorEvent = { t: number; error: string; line: number; raw: string; kind?: undefined };
 
 export type TimelineEvent = ParsedEvent | ErrorEvent;
+
+function toArrowEvent(t: number, line: number, raw: string, match: RegExpMatchArray): ParsedEvent {
+  return {
+    t,
+    kind: 'arrow',
+    from: match[1].toLowerCase(),
+    to: match[2].toLowerCase(),
+    pinned: !!match[3],
+    line,
+    raw,
+  };
+}
 
 export function parseTime(s: string): number {
   const text = s.trim();
@@ -64,7 +82,7 @@ export function parseScript(text: string): TimelineEvent[] {
     }
     const body = m[2].trim();
 
-    const hm = body.match(/^highlight\s+(.+)$/i);
+    const hm = body.match(/^(?:hl|highlight)\s+(.+)$/i);
     if (hm) {
       const tokens = hm[1].split(/[,\s]+/).filter(Boolean);
       let pinned = false;
@@ -72,7 +90,7 @@ export function parseScript(text: string): TimelineEvent[] {
         pinned = true;
         tokens.pop();
       }
-      const invalid = tokens.filter((sq) => !/^[a-h][1-8]$/i.test(sq));
+      const invalid = tokens.filter((sq) => !SQUARE_RE.test(sq));
       if (tokens.length === 0 || invalid.length > 0) {
         const detail = invalid.length > 0 ? `: ${invalid.join(', ')}` : '';
         events.push({ t, error: `Line ${i + 1}: invalid highlight square${detail}`, line: i + 1, raw });
@@ -81,36 +99,28 @@ export function parseScript(text: string): TimelineEvent[] {
       events.push({ t, kind: 'highlight', squares: tokens.map((sq) => sq.toLowerCase()), pinned, line: i + 1, raw });
       continue;
     }
-    if (/^arrow\b/i.test(body)) {
-      const am = body.match(/^arrow\s+([a-h][1-8])\s*(?:→|->|to)\s*([a-h][1-8])(?:\s+(pin))?\s*$/i);
-      if (!am) {
-        events.push({ t, error: `Line ${i + 1}: invalid arrow`, line: i + 1, raw });
-        continue;
-      }
-      events.push({
-        t,
-        kind: 'arrow',
-        from: am[1].toLowerCase(),
-        to: am[2].toLowerCase(),
-        pinned: !!am[3],
-        line: i + 1,
-        raw,
-      });
+    const arrowMatch = body.match(DIRECT_ARROW_RE) ?? body.match(LEGACY_ARROW_RE);
+    if (arrowMatch) {
+      events.push(toArrowEvent(t, i + 1, raw, arrowMatch));
       continue;
     }
-    if (/^clear$/i.test(body)) {
+    if (/^arrow\b/i.test(body)) {
+      events.push({ t, error: `Line ${i + 1}: invalid arrow`, line: i + 1, raw });
+      continue;
+    }
+    if (/^(?:cl|clear)$/i.test(body)) {
       events.push({ t, kind: 'clear', line: i + 1, raw });
       continue;
     }
-    if (/^reset$/i.test(body)) {
+    if (/^(?:rs|reset)$/i.test(body)) {
       events.push({ t, kind: 'reset', line: i + 1, raw });
       continue;
     }
-    if (/^branch$/i.test(body)) {
+    if (/^(?:br|branch)$/i.test(body)) {
       events.push({ t, kind: 'branch', line: i + 1, raw });
       continue;
     }
-    if (/^mainline$/i.test(body)) {
+    if (/^(?:ml|mainline)$/i.test(body)) {
       events.push({ t, kind: 'mainline', line: i + 1, raw });
       continue;
     }

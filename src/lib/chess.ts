@@ -380,6 +380,7 @@ export function parseSAN(san: string, state: GameState): Move | null {
   const to = m[5];
   const promo = m[7] ? (m[7].toLowerCase() as PieceType) : null;
   const pieceType: PieceType = pieceLetter ? (pieceLetter.toLowerCase() as PieceType) : 'p';
+  if (pieceType === 'p' && wantsCapture && !fromFile) return null;
   const toIdx = sqToIdx(to);
 
   const candidates = moves.filter((mv) => {

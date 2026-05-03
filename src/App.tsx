@@ -79,36 +79,36 @@ function movePosition(positions: Positions, mv: Chess.Move): Positions {
   return out;
 }
 
-const DEFAULT_SCRIPT = `# Chess Timeline: SAN moves, highlight, arrow, clear, reset, branch/mainline
+const DEFAULT_SCRIPT = `# Chess Timeline: SAN moves, hl, arrows, cl, rs, br/ml
 # Move annotations: append !! ! ? ?? to any SAN to badge the destination square.
-# Persistent overlays: append \`pin\` to highlight or arrow — they stay on
-# screen until the next clear or reset (no auto-fade).
+# Persistent overlays: append \`pin\` to hl or arrow — they stay on
+# screen until the next cl or rs (no auto-fade).
 [00:01] e4!
-[00:03] highlight e4
-[00:05] arrow e2->e4
-[00:07] clear
+[00:03] hl e4
+[00:05] e2->e4
+[00:07] cl
 [00:08] e5?
 [00:10] Nf3
-[00:12] arrow f3->e5
+[00:12] f3->e5
 [00:14] Nc6
 # Variation: 3.Bc4 — the Italian Game
-[00:16] branch
+[00:16] br
 [00:18] Bc4
-[00:20] arrow c4->f7
+[00:20] c4->f7
 [00:22] Bc5
 # Sub-variation: 4.b4 — the Evans Gambit
-[00:24] branch
+[00:24] br
 [00:26] b4
-[00:28] highlight b4
+[00:28] hl b4
 [00:30] Bxb4??
 [00:32] c3
-[00:34] mainline
+[00:34] ml
 # back to Italian after 3...Bc5; play the quiet 4.c3
 [00:36] c3
-[00:38] mainline
+[00:38] ml
 # back to main line after 2...Nc6; play 3.Bb5 — Ruy Lopez proper
 [00:40] Bb5
-[00:42] highlight a6,b5,c6
+[00:42] hl a6,b5,c6
 [00:44] a6
 [00:46] Ba4!!
 [00:48] Nf6
@@ -200,6 +200,7 @@ export default function App() {
     (e: React.KeyboardEvent) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
+      e.stopPropagation();
       const next = !showEditor;
       setShowEditor(next);
       // Match the ARIA Tabs pattern: focus follows selection on arrow keys.
@@ -253,7 +254,11 @@ export default function App() {
   };
 
   const snapshots = useMemo<WorldSnap[]>(() => {
-    type BranchSnap = Pick<WorldSnap, 'positions' | 'chessState' | 'lastMove' | 'highlights' | 'arrows'>;
+    type BranchSnap = WorldSnap & {
+      line: number;
+      t: number;
+      raw: string;
+    };
 
     let positions = initialSetup.positions;
     let chessState = initialSetup.chessState;
@@ -266,7 +271,17 @@ export default function App() {
     const branchStack: BranchSnap[] = [];
 
     const list: WorldSnap[] = [];
-    list.push({ positions, chessState, lastMove, highlights, arrows, lastCapture, errors: [] });
+    const snapshot = (errors: TimelineEvent[] = errorAcc.slice()): WorldSnap => ({
+      positions,
+      chessState,
+      lastMove,
+      highlights,
+      arrows,
+      lastCapture,
+      errors,
+    });
+
+    list.push(snapshot([]));
 
     for (const ev of events) {
       if ('error' in ev) {
@@ -295,7 +310,7 @@ export default function App() {
             lastCapture = null;
             break;
           case 'branch':
-            branchStack.push({ positions, chessState, lastMove, highlights, arrows });
+            branchStack.push({ ...snapshot([]), line: ev.line, t: ev.t, raw: ev.raw });
             break;
           case 'mainline': {
             const snap = branchStack.pop();
@@ -312,6 +327,7 @@ export default function App() {
               lastMove = snap.lastMove;
               highlights = snap.highlights;
               arrows = snap.arrows;
+              lastCapture = snap.lastCapture;
             }
             break;
           }
@@ -336,7 +352,19 @@ export default function App() {
         }
       }
 
-      list.push({ positions, chessState, lastMove, highlights, arrows, lastCapture, errors: errorAcc.slice() });
+      list.push(snapshot());
+    }
+
+    for (const snap of branchStack) {
+      errorAcc.push({
+        t: snap.t,
+        error: `'branch' without matching 'mainline'`,
+        line: snap.line,
+        raw: snap.raw,
+      });
+    }
+    if (branchStack.length > 0) {
+      list.push(snapshot());
     }
 
     return list;
@@ -673,7 +701,7 @@ export default function App() {
               <div className="panel-header">
                 <h2 className="panel-title" id={editorLabelId}>Script</h2>
                 <p className="panel-hint">
-                  [mm:ss.s] event · SAN · highlight · arrow · clear · reset · branch / mainline
+                  [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · br / ml
                 </p>
               </div>
               <div className="fen-field">

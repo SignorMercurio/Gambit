@@ -103,9 +103,9 @@ const ANNOTATION_BADGE: Record<
   MoveAnnotation,
   { fill: string; text: string; mark: string }
 > = {
-  brilliant: { fill: '#6fcfc8', text: '#0f1525', mark: '!!' },
+  brilliant: { fill: '#4fb9b2', text: '#f1ecde', mark: '!!' },
   great: { fill: '#7da9dc', text: '#f1ecde', mark: '!' },
-  mistake: { fill: '#f0c869', text: '#0f1525', mark: '?' },
+  mistake: { fill: '#d9a93f', text: '#f1ecde', mark: '?' },
   blunder: { fill: '#cf5d5d', text: '#f1ecde', mark: '??' },
 };
 
