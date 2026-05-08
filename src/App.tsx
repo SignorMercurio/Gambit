@@ -4,6 +4,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
 import { Board, type CaptureFlash, type LastMove, type PiecePos } from './components/Board';
 import * as Chess from './lib/chess';
+import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { parseScript, type ParsedEvent, type TimelineEvent } from './lib/timeline';
 import { markerColors } from './lib/tokens';
@@ -80,41 +81,6 @@ function movePosition(positions: Positions, mv: Chess.Move): Positions {
   return out;
 }
 
-const DEFAULT_SCRIPT = `# Chess Timeline: SAN moves, hl, arrows, cl, rs, br/ml
-# Move annotations: append !! ! ? ?? to any SAN to badge the destination square.
-# Persistent overlays: append \`pin\` to hl or arrow — they stay on
-# screen until the next cl or rs (no auto-fade).
-[00:01] e4!
-[00:03] hl e4
-[00:05] e2->e4
-[00:07] cl
-[00:08] e5?
-[00:10] Nf3
-[00:12] f3->e5
-[00:14] Nc6
-# Variation: 3.Bc4 — the Italian Game
-[00:16] br
-[00:18] Bc4
-[00:20] c4->f7
-[00:22] Bc5
-# Sub-variation: 4.b4 — the Evans Gambit
-[00:24] br
-[00:26] b4
-[00:28] hl b4
-[00:30] Bxb4??
-[00:32] c3
-[00:34] ml
-# back to Italian after 3...Bc5; play the quiet 4.c3
-[00:36] c3
-[00:38] ml
-# back to main line after 2...Nc6; play 3.Bb5 — Ruy Lopez proper
-[00:40] Bb5
-[00:42] hl a6,b5,c6
-[00:44] a6
-[00:46] Ba4!!
-[00:48] Nf6
-[00:50] O-O`;
-
 const HIGHLIGHT_LIFETIME = 2.5;
 const ARROW_LIFETIME = 2.5;
 const NOW_PLAYING_LIFETIME = 2.5;
@@ -174,7 +140,7 @@ function generateTicks(duration: number): number[] {
 
 export default function App() {
   const [scriptText, setScriptText] = useState(DEFAULT_SCRIPT);
-  const [subtitleText, setSubtitleText] = useState('');
+  const [subtitleText, setSubtitleText] = useState(DEFAULT_SUBTITLES);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
   const [fenText, setFenText] = useState(Chess.STARTING_FEN);
   const events = useMemo(() => parseScript(scriptText), [scriptText]);

@@ -89,6 +89,9 @@
   --radius-xl: 16px;
   --radius-pill: 999px;
 
+  /* Layout */
+  --artifact-width: 720px;
+
   /* Motion */
   --ease-piece-slide: cubic-bezier(0.5, 0, 0.2, 1);
   --duration-piece: 380ms;
@@ -220,12 +223,12 @@ body {
 @media (max-width: 1080px) { .main { grid-template-columns: 1fr; } }
 
 .board-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.board-wrap { width: 100%; max-width: 720px; margin: 0 auto; }
+.board-wrap { width: 100%; max-width: var(--artifact-width); margin: 0 auto; }
 
 .subtitle-strip {
   width: 100%;
-  max-width: 720px;
-  min-height: 54px;
+  max-width: var(--artifact-width);
+  min-height: 68px;
   margin: -4px auto 0;
   padding: 10px 18px;
   display: grid;
@@ -246,8 +249,8 @@ body {
   margin: 0;
   font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
     'Microsoft YaHei', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  font-size: 18px;
-  font-weight: 650;
+  font-size: 23px;
+  font-weight: 720;
   line-height: 1.42;
   letter-spacing: 0;
   color: var(--color-sodium-chalk);
@@ -271,7 +274,7 @@ body {
   border: 1px solid var(--tonal-white-07);
   padding: 14px 18px;
   border-radius: var(--radius-lg);
-  max-width: 720px; margin: 0 auto; width: 100%;
+  max-width: var(--artifact-width); margin: 0 auto; width: 100%;
   backdrop-filter: blur(6px);
 }
 
@@ -768,16 +771,17 @@ body {
    Recordable-by-default principle. */
 .now-playing {
   width: 100%;
-  max-width: 720px;
+  max-width: var(--artifact-width);
   margin: 0 auto;
   display: grid;
   grid-template-columns: 4px auto auto 1fr;
   align-items: center;
   column-gap: 12px;
+  height: 52px;
   padding: 10px 6px 10px 0;
   border-bottom: 1px solid var(--tonal-white-06);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  min-height: 38px;
+  overflow: hidden;
   transition: opacity var(--duration-state);
 }
 .now-playing.is-idle { opacity: 0.45; }
