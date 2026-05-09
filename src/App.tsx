@@ -99,6 +99,12 @@ function fmtTime(t: number, fine: 'never' | 'auto' | 'always' = 'never'): string
   return `${head}.${tenths}`;
 }
 
+function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(
+    target.closest('button, input, textarea, select, [role="button"], [role="tab"], [contenteditable="true"]'),
+  );
+}
+
 const KIND_COLOR_VAR: Record<ParsedEvent['kind'], string> = {
   move: 'var(--color-studio-steel-blue)',
   highlight: 'var(--color-markup-amber)',
@@ -413,10 +419,10 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+      if (isInteractiveShortcutTarget(e.target)) return;
       if (e.code === 'Space') {
         e.preventDefault();
+        if (e.repeat) return;
         pauseToggle();
       }
       if (e.code === 'ArrowLeft') setTime((t) => Math.max(0, t - 1));
@@ -551,31 +557,21 @@ export default function App() {
           </div>
 
           <div
-            className={`now-playing ${currentEvent ? '' : 'is-idle'}`}
+            className="now-playing"
             role="status"
             aria-live="polite"
             aria-atomic="true"
           >
-            <span
-              className="np-rail"
-              style={
-                currentEvent
-                  ? { background: KIND_COLOR_VAR[currentEvent.kind] }
-                  : undefined
-              }
-              aria-hidden="true"
-            />
-            {currentEvent ? (
+            {currentEvent && (
               <>
+                <span
+                  className="np-rail"
+                  style={{ background: KIND_COLOR_VAR[currentEvent.kind] }}
+                  aria-hidden="true"
+                />
                 <span className="np-time">{fmtTime(currentEvent.t, 'auto')}</span>
                 <span className={`np-kind kind-${currentEvent.kind}`}>{currentEvent.kind}</span>
                 <span className="np-body">{eventBody(currentEvent)}</span>
-              </>
-            ) : (
-              <>
-                <span className="np-idle-text" aria-hidden="true">idle</span>
-                <span aria-hidden="true" />
-                <span aria-hidden="true" />
               </>
             )}
           </div>

@@ -23,13 +23,13 @@ typography:
     fontSize: "22px"
     fontWeight: 800
     lineHeight: 1.1
-    letterSpacing: "-0.01em"
+    letterSpacing: "0"
   headline:
     fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "13px"
     fontWeight: 700
     lineHeight: 1.2
-    letterSpacing: "0.04em"
+    letterSpacing: "0"
   title:
     fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "13.5px"
@@ -53,7 +53,7 @@ typography:
     fontSize: "10.5px"
     fontWeight: 700
     lineHeight: 1.1
-    letterSpacing: "0.06em"
+    letterSpacing: "0"
 rounded:
   xs: "5px"
   sm: "7px"
@@ -138,7 +138,7 @@ components:
     textColor: "{colors.sodium-chalk}"
     rounded: "{rounded.xs}"
     padding: "10px 6px 10px 0"
-    height: "38px"
+    height: "52px"
 ---
 
 # Design System: Gambit
@@ -153,7 +153,7 @@ The transport sitting under the board is a pro-grade timeline ruler, not a media
 
 The system rejects the chess.com palette outright (no green-and-cream board, no the-app's red-and-yellow accents). It rejects glassy AI-tool surfaces, candy-colored chess apps for kids, and the SaaS hero-metric template. There is exactly one gradient surface in the entire UI (the Play button); every other accent is a single solid color. Body chrome is tonal: translucent whites stacked over the dark gradient at four perceptible levels (4%, 6%, 10%, 12%). Type contrast carries hierarchy more than color does.
 
-Density is studied. The board sits at up to 720px wide; the timeline ruler matches that width; the side panel breathes at 14px–28px gaps; the panel header has its own typographic scale (uppercase, tracked, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
+Density is studied. The board sits at 720px on desktop and only scales down on extremely short viewports; the timeline ruler matches that width and can drop to a second row when vertical space is tight; the side panel breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
 
 **Key Characteristics:**
 - Dark navy backdrop with a steel-blue key-light pool centered on the board column. Cream-on-blue board, never reversed.
@@ -208,12 +208,12 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 **Character:** Two voices, deliberate split. Plus Jakarta Sans handles the chrome (the app title, the panel title, the tab labels) with a slightly humanist warmth that keeps the chrome from feeling clinical. JetBrains Mono handles everything chess and time related: the time-readout, the speed buttons, the script editor, the event list, the event-kind chips, the script-syntax hints, the footer. The pairing carries the principle that the script is a human-written artifact and should read like code, while the chrome reads like a tool.
 
 ### Hierarchy
-- **Display** (Jakarta, 800, 22px, line-height 1.1, letter-spacing -0.01em): the "Gambit" wordmark in the header. The single largest label in the UI; nothing competes with it.
-- **Headline** (Jakarta, 700, 13px, letter-spacing 0.04em, uppercase): panel titles ("Events", "Script"). Small but tracked, set in caps. The size restraint is the point; this is a label, not a heading.
+- **Display** (Jakarta, 800, 22px, line-height 1.1, letter-spacing 0): the "Gambit" wordmark in the header. The single largest label in the UI; nothing competes with it.
+- **Headline** (Jakarta, 700, 13px, letter-spacing 0, uppercase): panel titles ("Events", "Script"). Small and compact, set in caps. The size restraint is the point; this is a label, not a heading.
 - **Title** (Jakarta, 600, 13.5px): tab labels, controls labels, button text. Sits between Headline and Body in optical weight.
 - **Numeric** (Mono, 600/700, 13px): the time-readout (`00:14 / 00:33`). Bumped to 700 for the current time, 600 for the separator and total, color-graded by role. Monospaced so digit width is stable across frames; the readout never reflows during playback. Critical to the cinematic principle.
 - **Body** (Mono, 500, 12.5px, line-height 1.7): the script editor textarea, the event-list event body, error rows. Line-height is generous (1.7) because the editor is a working surface; users read and write here.
-- **Label** (Mono, 700, 10.5px, letter-spacing 0.06em, uppercase): the event-kind chips ("MOVE", "HIGHLIGHT", "ARROW", "CLEAR", "RESET"). Small, tracked, in caps; functions as a typographic chip color in addition to its own background-tint chip color.
+- **Label** (Mono, 700, 10.5px, letter-spacing 0, uppercase): the event-kind chips ("MOVE", "HIGHLIGHT", "ARROW", "CLEAR", "RESET"). Small, compact, in caps; functions as a typographic chip color in addition to its own background-tint chip color.
 
 ### Named Rules
 
@@ -263,7 +263,7 @@ The active event row uses a 2px inset stripe to mark the current event, applied 
 
 ### Chips (event-kind markers)
 
-**Style:** `padding: 3px 7px`, 5px radius, mono uppercase Label type (10.5px / 700 / 0.06em). Each kind has a paired background-alpha + saturated-text:
+**Style:** `padding: 3px 7px`, 5px radius, mono uppercase Label type (10.5px / 700 / 0 letter-spacing). Each kind has a paired background-alpha + saturated-text:
 
 - **Move:** `rgba(93, 143, 201, 0.20)` bg, `#b8d0ec` text.
 - **Highlight:** `rgba(240, 180, 41, 0.20)` bg, `#f0c869` text.
@@ -276,9 +276,9 @@ The chip color and the timeline marker color are linked: scrubber markers use th
 
 ### Containers (panels)
 
-**Side panel** (`side-col`). 14px radius, `rgba(255,255,255,0.04)` background, 1px `rgba(255,255,255,0.07)` border, fluid height `min(780px, 100dvh - 160px)` with a 420px floor, 8px backdrop-blur (load-bearing because the panel sits over the surface gradient and would feel weightless without it).
+**Side panel** (`side-col`). 14px radius, `rgba(255,255,255,0.04)` background, 1px `rgba(255,255,255,0.07)` border, desktop height matched to the board artifact via `--artifact-fit-width` with a 420px floor, 8px backdrop-blur (load-bearing because the panel sits over the surface gradient and would feel weightless without it).
 
-**Controls strip** (`controls`). 14px radius, same background and border treatment as the side panel, 6px backdrop-blur, `14px 18px` internal padding, max-width 720px to match the board column. The radius matches the side panel and the board, so the three primary surfaces read as a unified editing booth, not three separate cards.
+**Controls strip** (`controls`). 14px radius, same background and border treatment as the side panel, 6px backdrop-blur, `14px 18px` internal padding, max-width matched to the board column with a 720px ceiling. The radius matches the side panel and the board, so the three primary surfaces read as a unified editing booth, not three separate cards.
 
 **Panel header** (inside `side-col`). `16px 18px 12px` padding, 1px `rgba(255,255,255,0.06)` bottom border, no background tint of its own. Carries the Headline label and a Body-mono hint.
 
@@ -288,7 +288,7 @@ The chip color and the timeline marker color are linked: scrubber markers use th
 
 ### Signature Component: the Pro-Grade Timeline Ruler
 
-The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, speed selector. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, max-width 720px to match the board, 6px backdrop-blur, mono numerics that never reflow.
+The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, speed selector. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, max-width matched to the board with a 720px ceiling, 6px backdrop-blur, mono numerics that never reflow.
 
 The ruler stacks three rows over the rail:
 
@@ -307,12 +307,12 @@ Native `<input type="range">` is rendered transparent and stretched over the ent
 
 A slim mono strip directly under the board, max-width matched to the board column. Announces the active event in type large enough (13.5px mono) to survive a 480p screen-recording downscale, so a viewer of the recording knows what just happened without seeing the side panel. Recordable-by-Default principle made physical.
 
-**Layout.** A 4-column grid: `[stripe 4px] [time 11px mono] [kind chip] [body 1fr]`. Padding `10px 6px 10px 0`, min-height 38px, separated from the controls below by a `tonal-white-06` bottom border.
+**Layout.** A 4-column grid: `[stripe 4px] [time 11px mono] [kind chip] [body 1fr]`. Padding `10px 6px 10px 0`, fixed height 52px, separated from the controls below by a `tonal-white-06` bottom border.
 
 **State.** Two states:
 
 - **Active**: an event has fired within the last 2.5 seconds. The stripe (4×22 rounded rectangle) takes its color from the event kind under Five Meanings (`var(--color-studio-steel-blue)` for move, `var(--color-markup-amber)` for highlight, etc.). The time label, kind chip, and body text render at full opacity. Body text resolves to `e.san` for moves, `${from} → ${to}` for arrows, the comma-joined squares for highlights, "cleared annotations" for clear, "board reset" for reset.
-- **Idle**: no event in the last 2.5 seconds. The strip drops to 45% opacity, the stripe shrinks to 12px tall, and a single mono "idle" word appears in `stage-mist`. The strip never disappears entirely; it always functions as a divider between board and console.
+- **Idle**: no event in the last 2.5 seconds. The strip keeps its 52px frame but hides the stripe and text, leaving only the divider between board and console.
 
 **A11y.** The strip carries `role="status" aria-live="polite" aria-atomic="true"`, so screen readers announce kind + body when the active event changes without forcing focus.
 

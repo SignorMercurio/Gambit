@@ -34,7 +34,7 @@ export const DEFAULT_SCRIPT = `# Chess Timeline: SAN moves, hl, arrows, cl, rs, 
 [00:35.5] O-O`;
 
 export const DEFAULT_SUBTITLES = `1
-00:00:01,000 --> 00:00:04,000
+00:00:00,000 --> 00:00:04,000
 White starts with e4 and takes the center.
 
 2

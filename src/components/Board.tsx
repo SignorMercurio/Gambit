@@ -406,7 +406,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
                     fontFamily="'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif"
                     fontSize={isWide ? 22 : 38}
                     fontWeight={900}
-                    letterSpacing={isWide ? -2.5 : 0}
+                    letterSpacing={0}
                     fill={cfg.text}
                     textAnchor="middle"
                     dominantBaseline="central"
