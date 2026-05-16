@@ -144,11 +144,57 @@ function generateTicks(duration: number): number[] {
   return ticks;
 }
 
+const DRAFT_KEYS = {
+  script: 'gambit:draft:script',
+  subtitles: 'gambit:draft:subtitles',
+  fen: 'gambit:draft:start-fen',
+} as const;
+
+function loadDraft(key: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    return window.localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveDraft(key: string, value: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Local persistence is best-effort; playback must keep working if storage is unavailable.
+  }
+}
+
+function useDraftText(key: string, fallback: string) {
+  const [value, setValue] = useState(() => loadDraft(key, fallback));
+  useEffect(() => {
+    saveDraft(key, value);
+  }, [key, value]);
+  return [value, setValue] as const;
+}
+
+function readSelectedTextFile(
+  e: React.ChangeEvent<HTMLInputElement>,
+  onRead: (text: string, fileName: string) => void,
+): void {
+  const file = e.currentTarget.files?.[0];
+  e.currentTarget.value = '';
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => onRead(String(reader.result ?? ''), file.name);
+  reader.readAsText(file);
+}
+
 export default function App() {
-  const [scriptText, setScriptText] = useState(DEFAULT_SCRIPT);
-  const [subtitleText, setSubtitleText] = useState(DEFAULT_SUBTITLES);
+  const [scriptText, setScriptText] = useDraftText(DRAFT_KEYS.script, DEFAULT_SCRIPT);
+  const [scriptFileName, setScriptFileName] = useState<string | null>(null);
+  const [subtitleText, setSubtitleText] = useDraftText(DRAFT_KEYS.subtitles, DEFAULT_SUBTITLES);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
-  const [fenText, setFenText] = useState(Chess.STARTING_FEN);
+  const [fenText, setFenText] = useDraftText(DRAFT_KEYS.fen, Chess.STARTING_FEN);
   const events = useMemo(() => parseScript(scriptText), [scriptText]);
   const subtitleResult = useMemo(() => parseSrt(subtitleText), [subtitleText]);
   const subtitleCues = subtitleResult.cues;
@@ -171,6 +217,7 @@ export default function App() {
   const editorLabelId = useId();
   const eventsLabelId = useId();
   const subtitleLabelId = useId();
+  const scriptFileInputId = useId();
   const subtitleFileInputId = useId();
   const replayTabId = useId();
   const scriptTabId = useId();
@@ -178,6 +225,7 @@ export default function App() {
   const fenErrorId = useId();
   const replayTabRef = useRef<HTMLButtonElement>(null);
   const scriptTabRef = useRef<HTMLButtonElement>(null);
+  const scriptFileInputRef = useRef<HTMLInputElement>(null);
   const subtitleFileInputRef = useRef<HTMLInputElement>(null);
 
   const onTabKeyDown = useCallback(
@@ -195,17 +243,18 @@ export default function App() {
     [showEditor],
   );
 
-  const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.currentTarget.files?.[0];
-    e.currentTarget.value = '';
-    if (!file) return;
+  const onScriptFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    readSelectedTextFile(e, (text, fileName) => {
+      setScriptText(text);
+      setScriptFileName(fileName);
+    });
+  }, []);
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSubtitleText(String(reader.result ?? ''));
-      setSubtitleFileName(file.name);
-    };
-    reader.readAsText(file);
+  const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    readSelectedTextFile(e, (text, fileName) => {
+      setSubtitleText(text);
+      setSubtitleFileName(fileName);
+    });
   }, []);
 
   const rafRef = useRef<number | null>(null);
@@ -702,7 +751,27 @@ export default function App() {
               aria-labelledby={scriptTabId}
             >
               <div className="panel-header">
-                <h2 className="panel-title" id={editorLabelId}>Script</h2>
+                <div className="panel-title-row">
+                  <h2 className="panel-title" id={editorLabelId}>Script</h2>
+                  <div className="subtitle-actions">
+                    {scriptFileName && <span className="subtitle-file">{scriptFileName}</span>}
+                    <button
+                      type="button"
+                      className="upload-btn"
+                      onClick={() => scriptFileInputRef.current?.click()}
+                    >
+                      Upload Script
+                    </button>
+                    <input
+                      id={scriptFileInputId}
+                      ref={scriptFileInputRef}
+                      className="file-input"
+                      type="file"
+                      accept=".gambit,.txt,text/plain"
+                      onChange={onScriptFileChange}
+                    />
+                  </div>
+                </div>
                 <p className="panel-hint">
                   [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · br / ml
                 </p>
@@ -726,7 +795,10 @@ export default function App() {
                 spellCheck={false}
                 value={scriptText}
                 aria-labelledby={editorLabelId}
-                onChange={(e) => setScriptText(e.target.value)}
+                onChange={(e) => {
+                  setScriptText(e.target.value);
+                  setScriptFileName(null);
+                }}
               />
               <section className="subtitle-editor" aria-labelledby={subtitleLabelId}>
                 <div className="subtitle-editor-head">

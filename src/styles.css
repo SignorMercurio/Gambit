@@ -517,6 +517,12 @@ body {
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--tonal-white-06);
 }
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .panel-title {
   font-size: 13px; font-weight: 700; letter-spacing: 0;
   text-transform: uppercase; color: var(--color-rim-light-pewter);
