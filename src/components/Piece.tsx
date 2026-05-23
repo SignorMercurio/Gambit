@@ -7,7 +7,7 @@
 import type { PieceType, Side } from '../lib/chess';
 import { tokens } from '../lib/tokens';
 
-export function Piece({ type, side }: { type: PieceType; side: Side }) {
+export function Piece({ type, side, active = false }: { type: PieceType; side: Side; active?: boolean }) {
   const code = type + (side === 'w' ? 'l' : 'd');
   return (
     <img
@@ -20,7 +20,7 @@ export function Piece({ type, side }: { type: PieceType; side: Side }) {
         height: '100%',
         display: 'block',
         userSelect: 'none',
-        filter: tokens.shadowPiece,
+        filter: active ? tokens.shadowPieceMoving : tokens.shadowPiece,
         pointerEvents: 'none',
       }}
     />

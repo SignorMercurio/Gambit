@@ -23,11 +23,7 @@ export const tokens = {
   shadowBoard:
     '0 30px 80px -30px rgba(20, 30, 60, 0.55), 0 8px 24px -10px rgba(20, 30, 60, 0.3), inset 0 0 0 1px rgba(0, 0, 0, 0.05)',
   shadowPiece: 'drop-shadow(0 2px 2px rgba(0, 0, 0, 0.18))',
-
-  // Motion
-  easePieceSlide: 'cubic-bezier(0.5, 0, 0.2, 1)',
-  durationPiece: '380ms',
-  durationTransform: '220ms',
+  shadowPieceMoving: 'drop-shadow(0 6px 5px rgba(15, 21, 37, 0.28))',
 } as const;
 
 // Marker colors keyed by event kind. move/highlight/arrow/clear/reset are the

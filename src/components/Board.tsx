@@ -1,18 +1,31 @@
 // Pieces translate via `translate3d` so motion stays on the GPU compositor.
 
+import type { CSSProperties } from 'react';
 import { Piece } from './Piece';
 import { sqToIdx, type PieceType, type Side } from '../lib/chess';
 import type { MoveAnnotation } from '../lib/timeline';
 import { tokens } from '../lib/tokens';
 
 const SQ = 100;
+const BOARD_SIZE = SQ * 8;
+export const BOARD_OVERLAY_LIFETIME = {
+  highlight: 2.5,
+  arrow: 2.5,
+  captureFlash: 0.5,
+} as const;
+const HIGHLIGHT_FADE_IN = 0.16;
+const OVERLAY_FADE_OUT = 0.32;
+const ARROW_DRAW_DURATION = 0.34;
+const BADGE_DELAY = 0.08;
+const BADGE_IN_DURATION = 0.18;
 
 type BoardProps = {
   positions: Record<string, PiecePos>;
   lastMove: LastMove | null;
-  highlights: string[];
-  arrows: { from: string; to: string }[];
+  highlights: BoardHighlight[];
+  arrows: BoardArrow[];
   captureFlash: CaptureFlash | null;
+  time: number;
 };
 
 export type PiecePos = {
@@ -21,7 +34,10 @@ export type PiecePos = {
   type: PieceType;
   side: Side;
   captured?: boolean;
-  moving?: boolean;
+  capturedAt?: number;
+  moveFromF?: number;
+  moveFromR?: number;
+  moveT?: number;
 };
 
 export type LastMove = {
@@ -29,9 +45,12 @@ export type LastMove = {
   fromR: number;
   toF: number;
   toR: number;
+  t: number;
   annotation?: MoveAnnotation;
 };
 
+export type BoardHighlight = { sq: string; t: number; pinned?: boolean };
+export type BoardArrow = { from: string; to: string; t: number; pinned?: boolean };
 export type CaptureFlash = { f: number; r: number; t: number; id: string };
 
 const BOARD_ARROW = {
@@ -97,6 +116,133 @@ function buildArrowPath(pts: Array<readonly [number, number]>): string {
   return 'M' + out.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L') + 'Z';
 }
 
+function buildArrowGuidePath(pts: Array<readonly [number, number]>): string {
+  if (pts.length < 2) return '';
+  return 'M' + pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L');
+}
+
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
+function easeOutQuart(n: number): number {
+  const p = clamp01(n);
+  return 1 - Math.pow(1 - p, 4);
+}
+
+function timedProgress(age: number, duration: number): number {
+  if (age <= 0) return 0;
+  if (age >= duration) return 1;
+  return easeOutQuart(age / duration);
+}
+
+function overlayOpacity(age: number, lifetime: number, pinned?: boolean): number {
+  if (age < 0) return 0;
+  if (age < HIGHLIGHT_FADE_IN) return easeOutQuart(age / HIGHLIGHT_FADE_IN);
+  if (pinned) return 1;
+  if (age >= lifetime) return 0;
+  const remaining = lifetime - age;
+  if (remaining < OVERLAY_FADE_OUT) return easeOutQuart(remaining / OVERLAY_FADE_OUT);
+  return 1;
+}
+
+function moveDuration(p: PiecePos): number {
+  if (p.moveFromF == null || p.moveFromR == null) return 0;
+  const distance = Math.hypot(p.f - p.moveFromF, p.r - p.moveFromR);
+  return Math.min(0.44, Math.max(0.22, 0.2 + distance * 0.045));
+}
+
+function pieceVisual(p: PiecePos, time: number) {
+  let f = p.f;
+  let r = p.r;
+  let opacity = 1;
+  let scale = 1;
+  let isMoving = false;
+  let isCapturedFading = false;
+
+  if (p.moveT != null && p.moveFromF != null && p.moveFromR != null) {
+    const age = time - p.moveT;
+    const duration = moveDuration(p);
+    if (age >= 0 && age < duration) {
+      const eased = timedProgress(age, duration);
+      f = p.moveFromF + (p.f - p.moveFromF) * eased;
+      r = p.moveFromR + (p.r - p.moveFromR) * eased;
+      scale = 1 + Math.sin(eased * Math.PI) * 0.026;
+      isMoving = true;
+    }
+  }
+
+  if (p.captured) {
+    const age = p.capturedAt == null ? Number.POSITIVE_INFINITY : time - p.capturedAt;
+    if (age >= 0 && age < BOARD_OVERLAY_LIFETIME.captureFlash) {
+      const eased = timedProgress(age, BOARD_OVERLAY_LIFETIME.captureFlash);
+      opacity = 1 - eased;
+      scale *= 1 - eased * 0.18;
+      isCapturedFading = true;
+    } else {
+      opacity = 0;
+      scale = 0.82;
+    }
+  }
+
+  return { f, r, opacity, scale, isMoving, isCapturedFading };
+}
+
+function captureFlashVisual(age: number) {
+  const p = clamp01(age / BOARD_OVERLAY_LIFETIME.captureFlash);
+  const fadeIn = timedProgress(age, BOARD_OVERLAY_LIFETIME.captureFlash * 0.32);
+  const fadeOut = 1 - timedProgress(
+    Math.max(0, age - BOARD_OVERLAY_LIFETIME.captureFlash * 0.32),
+    BOARD_OVERLAY_LIFETIME.captureFlash * 0.68,
+  );
+  return {
+    opacity: Math.max(0, Math.min(fadeIn, fadeOut)),
+    scale: 0.45 + easeOutQuart(p) * 1.85,
+  };
+}
+
+function squareCenter(f: number, r: number): [number, number] {
+  return [f * SQ + SQ / 2, (7 - r) * SQ + SQ / 2];
+}
+
+function insetPoint(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  inset: number,
+): [number, number] {
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+  return [x1 + ((x2 - x1) / len) * inset, y1 + ((y2 - y1) / len) * inset];
+}
+
+function arrowPoints(from: string, to: string): Array<readonly [number, number]> {
+  const fromXY = sqToIdx(from);
+  const toXY = sqToIdx(to);
+  const [x1, y1] = squareCenter(fromXY.f, fromXY.r);
+  const [x2, y2] = squareCenter(toXY.f, toXY.r);
+  const df = toXY.f - fromXY.f;
+  const dr = toXY.r - fromXY.r;
+  const isKnight =
+    (Math.abs(df) === 1 && Math.abs(dr) === 2) ||
+    (Math.abs(df) === 2 && Math.abs(dr) === 1);
+
+  if (isKnight) {
+    const verticalFirst = Math.abs(dr) === 2;
+    const elbowF = verticalFirst ? fromXY.f : toXY.f;
+    const elbowR = verticalFirst ? toXY.r : fromXY.r;
+    const [ex, ey] = squareCenter(elbowF, elbowR);
+    const start = insetPoint(x1, y1, ex, ey, BOARD_ARROW.startInset);
+    const end = insetPoint(x2, y2, ex, ey, BOARD_ARROW.endInset);
+    return [start, [ex, ey], end];
+  }
+
+  return [
+    insetPoint(x1, y1, x2, y2, BOARD_ARROW.startInset),
+    insetPoint(x2, y2, x1, y1, BOARD_ARROW.endInset),
+  ];
+}
+
 // Annotation badges sit on the destination square's upper-right corner, close
 // to chess broadcast / analysis overlays: a large soft disc with a clear mark.
 const ANNOTATION_BADGE: Record<
@@ -131,7 +277,13 @@ const COORD_LABELS: { x: number; y: number; isLight: boolean; text: string; anch
   })),
 ];
 
-export function Board({ positions, lastMove, highlights, arrows, captureFlash }: BoardProps) {
+export function Board({ positions, lastMove, highlights, arrows, captureFlash, time }: BoardProps) {
+  const lastMoveOpacity = lastMove ? timedProgress(time - lastMove.t, 0.12) : 0;
+  const flash =
+    captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
+      ? captureFlashVisual(time - captureFlash.t)
+      : null;
+
   return (
     <div className="board-wrap">
       <div
@@ -149,7 +301,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
       >
         {/* squares */}
         <svg
-          viewBox={`0 0 ${SQ * 8} ${SQ * 8}`}
+          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
           aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
         >
@@ -172,6 +324,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
                 width={SQ}
                 height={SQ}
                 fill={tokens.boardLastMove}
+                opacity={lastMoveOpacity}
               />
               <rect
                 x={lastMove.toF * SQ}
@@ -179,23 +332,30 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
                 width={SQ}
                 height={SQ}
                 fill={tokens.boardLastMove}
+                opacity={lastMoveOpacity}
               />
             </>
           )}
 
-          {highlights.map((sq, i) => {
-            const { f, r } = sqToIdx(sq);
+          {highlights.map((h, i) => {
+            const { f, r } = sqToIdx(h.sq);
+            const age = time - h.t;
+            const opacity = overlayOpacity(age, BOARD_OVERLAY_LIFETIME.highlight, h.pinned);
+            if (opacity <= 0) return null;
+            const cx = f * SQ + SQ / 2;
+            const cy = (7 - r) * SQ + SQ / 2;
+            const scale = 0.94 + timedProgress(age, HIGHLIGHT_FADE_IN) * 0.06;
             return (
               <rect
-                key={`hl-${sq}-${i}`}
+                key={`hl-${h.sq}-${h.t}-${i}`}
                 x={f * SQ}
                 y={(7 - r) * SQ}
                 width={SQ}
                 height={SQ}
                 fill={tokens.boardHighlight}
-              >
-                <animate attributeName="opacity" from="0" to="1" dur="0.25s" fill="freeze" />
-              </rect>
+                opacity={opacity}
+                transform={`translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})`}
+              />
             );
           })}
 
@@ -208,9 +368,9 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
           style={{ position: 'absolute', inset: 0, zIndex: 1 }}
         >
           {Object.entries(positions).map(([id, p]) => {
-            const tx = p.f * 100;
-            const ty = (7 - p.r) * 100;
-            const captured = !!p.captured;
+            const visual = pieceVisual(p, time);
+            const tx = visual.f * 100;
+            const ty = (7 - visual.r) * 100;
             return (
               <div
                 key={id}
@@ -221,17 +381,16 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
                   top: 0,
                   width: '12.5%',
                   height: '12.5%',
-                  transform: `translate3d(${tx}%, ${ty}%, 0)${captured ? ' scale(0)' : ''}`,
-                  opacity: captured ? 0 : 1,
-                  transition: `transform ${tokens.durationPiece} ${tokens.easePieceSlide}, opacity ${tokens.durationTransform} ease-out`,
+                  transform: `translate3d(${tx}%, ${ty}%, 0) scale(${visual.scale})`,
+                  opacity: visual.opacity,
                   pointerEvents: 'none',
-                  zIndex: p.moving ? 5 : 1,
-                  willChange: 'transform',
+                  zIndex: visual.isMoving ? 5 : visual.isCapturedFading ? 4 : 1,
+                  willChange: visual.isMoving || visual.isCapturedFading ? 'transform, opacity' : 'auto',
                   padding: '0.75%',
                   boxSizing: 'border-box',
                 }}
               >
-                <Piece type={p.type} side={p.side} />
+                <Piece type={p.type} side={p.side} active={visual.isMoving} />
               </div>
             );
           })}
@@ -240,7 +399,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
         {/* Coordinates sit above enlarged Staunty pieces so file/rank labels
            remain visible in recordings, but below annotation arrows. */}
         <svg
-          viewBox={`0 0 ${SQ * 8} ${SQ * 8}`}
+          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
           aria-hidden="true"
           style={{
             position: 'absolute',
@@ -270,7 +429,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
 
         {/* arrows overlay — sits above pieces so annotations land on top */}
         <svg
-          viewBox={`0 0 ${SQ * 8} ${SQ * 8}`}
+          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
           aria-hidden="true"
           style={{
             position: 'absolute',
@@ -288,64 +447,45 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
           </defs>
           <g filter="url(#arrow-shadow)">
             {arrows.map((a, i) => {
-              const fromXY = sqToIdx(a.from);
-              const toXY = sqToIdx(a.to);
-              const x1 = fromXY.f * SQ + SQ / 2;
-              const y1 = (7 - fromXY.r) * SQ + SQ / 2;
-              const x2 = toXY.f * SQ + SQ / 2;
-              const y2 = (7 - toXY.r) * SQ + SQ / 2;
-              const df = toXY.f - fromXY.f;
-              const dr = toXY.r - fromXY.r;
-              const isKnight =
-                (Math.abs(df) === 1 && Math.abs(dr) === 2) ||
-                (Math.abs(df) === 2 && Math.abs(dr) === 1);
-              const startBack = BOARD_ARROW.startInset;
-              const endBack = BOARD_ARROW.endInset;
-
-              let pts: Array<readonly [number, number]>;
-              if (isKnight) {
-                // L-shape: longer leg first (vertical when |dr|=2, horizontal
-                // when |df|=2). Elbow lands two squares away from origin.
-                const verticalFirst = Math.abs(dr) === 2;
-                const elbowF = verticalFirst ? fromXY.f : toXY.f;
-                const elbowR = verticalFirst ? toXY.r : fromXY.r;
-                const ex = elbowF * SQ + SQ / 2;
-                const ey = (7 - elbowR) * SQ + SQ / 2;
-                const len1 = Math.hypot(ex - x1, ey - y1) || 1;
-                const sx = x1 + ((ex - x1) / len1) * startBack;
-                const sy = y1 + ((ey - y1) / len1) * startBack;
-                const len2 = Math.hypot(x2 - ex, y2 - ey) || 1;
-                const tx = x2 - ((x2 - ex) / len2) * endBack;
-                const ty = y2 - ((y2 - ey) / len2) * endBack;
-                pts = [[sx, sy], [ex, ey], [tx, ty]];
-              } else {
-                const pdx = x2 - x1;
-                const pdy = y2 - y1;
-                const plen = Math.hypot(pdx, pdy) || 1;
-                const ux = pdx / plen;
-                const uy = pdy / plen;
-                const sx = x1 + ux * startBack;
-                const sy = y1 + uy * startBack;
-                const tx = x2 - ux * endBack;
-                const ty = y2 - uy * endBack;
-                pts = [[sx, sy], [tx, ty]];
-              }
-
+              const pts = arrowPoints(a.from, a.to);
               const d = buildArrowPath(pts);
+              const guideD = buildArrowGuidePath(pts);
               if (!d) return null;
+              const age = time - a.t;
+              const opacity = overlayOpacity(age, BOARD_OVERLAY_LIFETIME.arrow, a.pinned);
+              if (opacity <= 0) return null;
+              const draw = timedProgress(age, ARROW_DRAW_DURATION);
+              const maskId = `arrow-mask-${i}-${a.from}-${a.to}`;
               return (
-                <path
-                  key={`arr-${i}`}
-                  d={d}
-                  fill={tokens.boardArrow}
-                  style={{ animation: 'arrowIn 0.28s ease-out' }}
-                />
+                <g key={`arr-${a.from}-${a.to}-${a.t}-${i}`} opacity={opacity}>
+                  <defs>
+                    <mask id={maskId} maskUnits="userSpaceOnUse">
+                      <rect x="0" y="0" width={BOARD_SIZE} height={BOARD_SIZE} fill="black" />
+                      <path
+                        d={guideD}
+                        fill="none"
+                        stroke="white"
+                        strokeWidth="86"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        pathLength={1}
+                        strokeDasharray={1}
+                        strokeDashoffset={1 - draw}
+                      />
+                    </mask>
+                  </defs>
+                  <path
+                    d={d}
+                    fill={tokens.boardArrow}
+                    mask={`url(#${maskId})`}
+                  />
+                </g>
               );
             })}
           </g>
         </svg>
 
-        {captureFlash && (
+        {captureFlash && flash && flash.opacity > 0 && (
           <div
             key={captureFlash.id}
             className="capture-flash"
@@ -358,10 +498,11 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
               height: '12.5%',
               borderRadius: '50%',
               background: tokens.captureFlash,
-              animation: 'capturePop 0.5s ease-out forwards',
               pointerEvents: 'none',
               zIndex: 4,
-            }}
+              '--capture-opacity': flash.opacity.toFixed(3),
+              '--capture-scale': flash.scale.toFixed(3),
+            } as CSSProperties}
           />
         )}
 
@@ -370,7 +511,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
            scale with the board's viewBox without container queries. */}
         {lastMove?.annotation && (
           <svg
-            viewBox={`0 0 ${SQ * 8} ${SQ * 8}`}
+            viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
             aria-hidden="true"
             style={{
               position: 'absolute',
@@ -392,8 +533,15 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash }:
               const cy = (7 - lastMove.toR) * SQ + 16;
               const r = 22;
               const isWide = cfg.mark.length === 2;
+              const badgeProgress = timedProgress(time - lastMove.t - BADGE_DELAY, BADGE_IN_DURATION);
+              if (badgeProgress <= 0) return null;
+              const badgeScale = 0.9 + badgeProgress * 0.1;
               return (
-                <g filter="url(#annotation-badge-shadow)" style={{ animation: 'arrowIn 0.28s ease-out' }}>
+                <g
+                  filter="url(#annotation-badge-shadow)"
+                  opacity={badgeProgress}
+                  transform={`translate(${cx} ${cy}) scale(${badgeScale}) translate(${-cx} ${-cy})`}
+                >
                   <circle
                     cx={cx}
                     cy={cy}

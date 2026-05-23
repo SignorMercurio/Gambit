@@ -864,14 +864,10 @@ body {
    Animations
    ===================================================================== */
 
-@keyframes arrowIn {
-  from { opacity: 0; transform: scale(0.7); transform-origin: center; }
-  to   { opacity: 1; transform: scale(1); }
-}
-@keyframes capturePop {
-  0%   { opacity: 0; transform: scale(0.4); }
-  40%  { opacity: 1; transform: scale(1.4); }
-  100% { opacity: 0; transform: scale(2.2); }
+.capture-flash {
+  opacity: var(--capture-opacity, 0);
+  transform: scale(var(--capture-scale, 1));
+  transform-origin: center;
 }
 
 /* =====================================================================
@@ -913,6 +909,8 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .play-btn:hover, .play-btn:active { transform: none; }
   .marker:hover, .marker:focus-visible { height: 14px; }
-  /* Keyframes that depend on motion entirely: shorten capture-pop. */
-  .capture-flash { animation-duration: 1ms !important; }
+  .capture-flash {
+    opacity: min(var(--capture-opacity, 0), 0.42);
+    transform: scale(1);
+  }
 }

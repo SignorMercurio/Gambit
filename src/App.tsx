@@ -2,7 +2,15 @@
 // renders the board, the timeline scrubber, and the editor panel.
 
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
-import { Board, type CaptureFlash, type LastMove, type PiecePos } from './components/Board';
+import {
+  Board,
+  BOARD_OVERLAY_LIFETIME,
+  type BoardArrow,
+  type BoardHighlight,
+  type CaptureFlash,
+  type LastMove,
+  type PiecePos,
+} from './components/Board';
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
@@ -35,7 +43,11 @@ function setupFromFen(fenText: string): { positions: Positions; chessState: Ches
   }
 }
 
-function movePosition(positions: Positions, mv: Chess.Move): Positions {
+function movePosition(
+  positions: Positions,
+  mv: Chess.Move,
+  t: number,
+): { positions: Positions; captureFlash: Omit<CaptureFlash, 'id'> | null } {
   const out: Positions = {};
   for (const [k, v] of Object.entries(positions)) out[k] = { ...v };
   const [ff, fr] = mv.from;
@@ -48,13 +60,15 @@ function movePosition(positions: Positions, mv: Chess.Move): Positions {
       break;
     }
   }
+  let captureFlash: Omit<CaptureFlash, 'id'> | null = null;
   if (mv.capture) {
     const capF = tf;
     const capR = mv.enPassant ? fr : tr;
+    captureFlash = { f: capF, r: capR, t };
     for (const [k, v] of Object.entries(out)) {
       if (k === moverId) continue;
       if (!v.captured && v.f === capF && v.r === capR) {
-        out[k] = { ...v, captured: true };
+        out[k] = { ...v, captured: true, capturedAt: t };
         break;
       }
     }
@@ -65,6 +79,9 @@ function movePosition(positions: Positions, mv: Chess.Move): Positions {
       f: tf,
       r: tr,
       type: mv.promotion || out[moverId].type,
+      moveFromF: ff,
+      moveFromR: fr,
+      moveT: t,
     };
   }
   if (mv.castle) {
@@ -73,16 +90,20 @@ function movePosition(positions: Positions, mv: Chess.Move): Positions {
     const rookToF = mv.castle === 'K' ? 5 : 3;
     for (const [k, v] of Object.entries(out)) {
       if (!v.captured && v.f === rookFromF && v.r === homeRank && v.type === 'r') {
-        out[k] = { ...v, f: rookToF };
+        out[k] = {
+          ...v,
+          f: rookToF,
+          moveFromF: rookFromF,
+          moveFromR: homeRank,
+          moveT: t,
+        };
         break;
       }
     }
   }
-  return out;
+  return { positions: out, captureFlash };
 }
 
-const HIGHLIGHT_LIFETIME = 2.5;
-const ARROW_LIFETIME = 2.5;
 const NOW_PLAYING_LIFETIME = 2.5;
 
 // Deciseconds via `Math.floor(t*10)` avoids 9.95→10 rollover.
@@ -293,8 +314,8 @@ export default function App() {
     positions: Positions;
     chessState: Chess.GameState;
     lastMove: LastMove | null;
-    highlights: { sq: string; t: number; pinned?: boolean }[];
-    arrows: { from: string; to: string; t: number; pinned?: boolean }[];
+    highlights: BoardHighlight[];
+    arrows: BoardArrow[];
     lastCapture: CaptureFlash | null;
     errors: TimelineEvent[];
   };
@@ -310,8 +331,8 @@ export default function App() {
     let chessState = initialSetup.chessState;
     let lastMove: LastMove | null = null;
     // Rebound (not mutated) so prior snapshots share their array references.
-    let highlights: { sq: string; t: number; pinned?: boolean }[] = [];
-    let arrows: { from: string; to: string; t: number; pinned?: boolean }[] = [];
+    let highlights: BoardHighlight[] = [];
+    let arrows: BoardArrow[] = [];
     let lastCapture: CaptureFlash | null = null;
     const errorAcc: TimelineEvent[] = [];
     const branchStack: BranchSnap[] = [];
@@ -388,16 +409,18 @@ export default function App() {
             if (!mv) {
               errorAcc.push({ t: ev.t, error: `Invalid move: "${ev.san}"`, line: ev.line, raw: ev.raw });
             } else {
-              positions = movePosition(positions, mv);
+              const moved = movePosition(positions, mv, ev.t);
+              positions = moved.positions;
               chessState = Chess.applyMove(chessState, mv);
               lastMove = {
                 fromF: mv.from[0],
                 fromR: mv.from[1],
                 toF: mv.to[0],
                 toR: mv.to[1],
+                t: ev.t,
                 annotation: ev.annotation,
               };
-              if (mv.capture) lastCapture = { f: mv.to[0], r: mv.to[1], t: ev.t, id: `${ev.line}` };
+              if (moved.captureFlash) lastCapture = { ...moved.captureFlash, id: `${ev.line}` };
             }
             break;
           }
@@ -435,13 +458,13 @@ export default function App() {
     const snap = snapshots[lo];
 
     const visibleHighlights = snap.highlights
-      .filter((h) => h.pinned || time - h.t < HIGHLIGHT_LIFETIME)
-      .map((h) => h.sq);
+      .filter((h) => h.pinned || time - h.t < BOARD_OVERLAY_LIFETIME.highlight);
     const visibleArrows = snap.arrows
-      .filter((a) => a.pinned || time - a.t < ARROW_LIFETIME)
-      .map((a) => ({ from: a.from, to: a.to }));
+      .filter((a) => a.pinned || time - a.t < BOARD_OVERLAY_LIFETIME.arrow);
     const captureFlash =
-      snap.lastCapture && time - snap.lastCapture.t < 0.5 ? snap.lastCapture : null;
+      snap.lastCapture && time - snap.lastCapture.t < BOARD_OVERLAY_LIFETIME.captureFlash
+        ? snap.lastCapture
+        : null;
 
     return {
       positions: snap.positions,
@@ -595,6 +618,7 @@ export default function App() {
             highlights={world.highlights}
             arrows={world.arrows}
             captureFlash={world.captureFlash}
+            time={time}
           />
 
           <div
