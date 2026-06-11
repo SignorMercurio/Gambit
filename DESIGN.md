@@ -102,12 +102,14 @@ components:
     backgroundColor: "#ffffff1a"
     textColor: "{colors.sodium-chalk}"
     rounded: "{rounded.sm}"
-    padding: "8px 16px"
+    height: "40px"
+    padding: "9px 12px"
   tab-off:
     backgroundColor: "#00000000"
     textColor: "#aab3cf"
     rounded: "{rounded.sm}"
-    padding: "8px 16px"
+    height: "40px"
+    padding: "9px 12px"
   chip-marker-move:
     backgroundColor: "#5d8fc933"
     textColor: "#b8d0ec"
@@ -138,7 +140,7 @@ components:
     textColor: "{colors.sodium-chalk}"
     rounded: "{rounded.xs}"
     padding: "10px 6px 10px 0"
-    height: "52px"
+    height: "48px"
 ---
 
 # Design System: Gambit
@@ -149,11 +151,11 @@ components:
 
 Gambit looks like a dim post-production room. The room is in deep navy blue lit by three radials: a steel-blue key light pooled on the board column, a warm wash from the upper-left, a cool wash from the lower-right. The chess board is the lit subject in the middle of the desk; everything around it (transport controls, the script panel, the event list) is the kind of quiet chrome a colorist or sound editor lives inside. The board's cream squares read like paper under a key light. The pieces are Staunty SVG silhouettes, treated like physical objects with a soft drop shadow. Highlights and arrows are amber and persimmon, the colors annotation pens leave on a print, and they fade back out the way real pen ink wouldn't, because this is a recording, not a notebook.
 
-The transport sitting under the board is a pro-grade timeline ruler, not a media-player widget: kind-colored marker pins above the rail, mono time-tick labels below, a vertical playhead strand crossing the whole console. Between the board and the ruler sits the Now-Playing Caption, a slim mono strip that announces the active event so a viewer of a screen recording knows what just happened without seeing the side panel.
+The transport sitting under the board is a pro-grade timeline ruler, not a media-player widget: kind-colored marker pins above the rail, mono time-tick labels below, a vertical playhead strand crossing the whole console. Between the board and the ruler sit the subtitle track (when SRT cues are loaded) and the Now-Playing Caption, a slim mono strip that announces the active event so a viewer of a screen recording knows what just happened without seeing the side panel.
 
-The system rejects the chess.com palette outright (no green-and-cream board, no the-app's red-and-yellow accents). It rejects glassy AI-tool surfaces, candy-colored chess apps for kids, and the SaaS hero-metric template. There is exactly one gradient surface in the entire UI (the Play button); every other accent is a single solid color. Body chrome is tonal: translucent whites stacked over the dark gradient at four perceptible levels (4%, 6%, 10%, 12%). Type contrast carries hierarchy more than color does.
+The system rejects the chess.com palette outright (no green-and-cream board, no the-app's red-and-yellow accents). It rejects glassy AI-tool surfaces, candy-colored chess apps for kids, and the SaaS hero-metric template. There is exactly one accent gradient in the entire UI (the Play button); every other accent is a single solid color. Body chrome is tonal: raised surfaces wash chalk-tinted alpha over the dark gradient (the panel and console washes stay under 7%), recessed wells (tab track, speed track, inputs) sink with stagewell-black alpha, and interactive states ride the four-stop white ladder (4%, 6%, 10%, 12%). Type contrast carries hierarchy more than color does.
 
-Density is studied. The board sits at 720px on desktop and only scales down on extremely short viewports; the timeline ruler matches that width and can drop to a second row when vertical space is tight; the side panel breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
+Density is studied. The board sits at 720px on desktop and stays there on normal laptop-height viewports; it only scales down on severely short desktop windows, with a 560px floor, so the recording artifact does not unexpectedly collapse. The transport console spans the full workspace width beneath the board column and the side panel; the side panel rides a 560–620px column (`clamp(560px, 32vw, 620px)`) and breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
 
 **Key Characteristics:**
 - Dark navy backdrop with a steel-blue key-light pool centered on the board column. Cream-on-blue board, never reversed.
@@ -196,7 +198,7 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 
 **The Five Meanings Rule.** Five colors carry semantic load: blue for moves, amber for highlights, persimmon for arrows, grey-mist for clears, vermillion for resets and errors. Every chip, every timeline marker pin, the scrub-fill, the last-move tint, the active-event-row stripe and tint, and the Now-Playing rail pull from this list. Don't introduce a sixth without a sixth event kind to attach it to.
 
-**The One Gradient Rule.** The system has exactly one gradient surface: the 44×44 Play button (`linear-gradient(135deg, studio-steel-blue, deep-set-blue)`). The scrubber's fill is a tonal blue gradient internal to the timeline component and counts as part of the same affordance, not a second gradient. Every other accent is a single solid hex. New components do not introduce gradients.
+**The One Gradient Rule.** The system has exactly one accent gradient: the 44×44 Play button (`linear-gradient(135deg, studio-steel-blue, deep-set-blue)`). The scrubber's fill is a tonal blue gradient internal to the timeline component and counts as part of the same affordance, not a second gradient. The side panel and console backgrounds (`--surface-panel`, `--surface-console`) are vertical chalk-alpha washes capped under 7% opacity — elevation treatment, not accents; they must stay subtle enough to read as flat surfaces on a 480p recording. Every other accent is a single solid hex. New components do not introduce accent gradients.
 
 **The Annotation-Pens Rule.** Amber and Persimmon are not two colors; they are a pair, used together to imply a creator's two-pen toolkit. Highlights belong to Amber. Arrows belong to Persimmon. Don't cross them.
 
@@ -221,11 +223,15 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 
 **The Single-Display Rule.** The 22px Display weight appears once: the "Gambit" wordmark. Subheadings, page titles, modal titles do not graduate to Display. If a future surface needs a larger label, use Headline at a larger size before promoting to Display.
 
-**The 65–75ch Cap.** The script editor textarea is the only place body type accumulates into long-form content. Line length there caps at the editor's natural panel width (~340px / ~52ch in the side column); on a wider viewport the editor stays in the side column rather than expanding to a width that would cross the cap.
+**The 65–75ch Cap.** The script editor textarea is the only place body type accumulates into long-form content. Line length there caps at the editor's natural panel width (560–620px column / ~70–78ch at the 12.5px mono — the 620px maximum brushes the cap's ceiling); on a wider viewport the editor stays in the side column rather than expanding further.
 
 ## 4. Elevation
 
-Gambit uses tonal layering with one structural shadow. Chrome surfaces (controls strip, side panel, event chips, tabs, ghost buttons) layer via translucent whites stacked over the dark gradient at four canonical opacities: **4%** for resting surfaces (controls strip, side panel, header tab group), **6%** for resting buttons (ghost icon button), **10%** for active states (active tab, hovered ghost button), **12%** for hover states (hovered ghost button on top of an already-active context). The same `rgba(255,255,255,α)` ladder is used for the panel borders (`α=0.06–0.07` for resting, no separate hover treatment).
+Gambit uses tonal layering with one structural shadow, in three families:
+
+1. **Raised container surfaces** are chalk-tinted washes, not flat whites: the side panel rides `--surface-panel` (vertical chalk alpha 5.8% → 2.8%) and the console rides `--surface-console` (6.2% → 3.4%). Hairlines come from `--line-soft` (7.5% chalk) for container borders and `--line-faint` (4.5% chalk) for internal dividers and inset rings; both raised surfaces wear a 1px `--rim-light` (6% chalk) top inset.
+2. **Recessed wells** sink with `stagewell-black` alpha instead of lifting with white, via the `--well-08/11/20/24/28` ladder: the tab track (24%), the speed track (28%), text inputs (20%), the panel header tint (11%), the editor field sections (8%).
+3. **Interactive states** keep the four-stop white ladder `rgba(255,255,255,α)`: **6%** for resting buttons (ghost icon button, upload button, count chip), **10%** for active states (active tab), **12%** for hover states (hovered ghost button on top of an already-active context); **4%** remains the floor for any future resting chrome that has no recess or wash of its own.
 
 Behind the chrome, the body backdrop layers three radial-gradient washes over the navy linear: a tight `studio-steel-blue at 10%` key-light pool centered at `36% 48%` (under the board column); a `set-indigo` warm wash anchored at the upper-left corner; a `backdrop-slate` cool wash anchored at the lower-right. The result is that the board reads as physically lit, not just centered.
 
@@ -257,9 +263,9 @@ The active event row uses a 2px inset stripe to mark the current event, applied 
 
 **Secondary action (Restart, future ctrl-buttons).** A 36×36 square button, `rgba(255,255,255,0.06)` resting background, `rim-light-pewter` glyph, 10px radius. Hover lifts to `rgba(255,255,255,0.12)` and `sodium-chalk` glyph; no transform on hover. Used for non-primary transport actions.
 
-**Speed selector.** A 4-button mono-font segmented group inside a `rgba(255,255,255,0.04)` track at 8px radius. Each segment is `5px 9px` padding, 6px radius, default `foley-slate` text on transparent, active `sodium-chalk` text on `rgba(255,255,255,0.12)` background. Type is JetBrains Mono 11.5px / 600. Reads like a video editor's transport-rate selector.
+**Speed selector.** A 4-button mono-font segmented group inside a recessed `stagewell-black` 28% track (10px radius, 1px `--line-faint` inset ring, 3px padding). Each segment is `5px 9px` padding, 6px radius, default `foley-slate` text on transparent, active `sodium-chalk` text on `rgba(255,255,255,0.12)` background. Type is JetBrains Mono 11.5px / 600. Reads like a video editor's transport-rate selector.
 
-**Tab toggle (Replay / Script).** Two pill buttons inside a chip surface (`rgba(255,255,255,0.04)`, 10px radius, 4px padding, 1px `rgba(255,255,255,0.06)` border). Each tab is `8px 16px` padding, 7px radius, default `#aab3cf` text, active `sodium-chalk` text on `rgba(255,255,255,0.10)` background.
+**Tab toggle (Replay / Script).** A full-width two-segment strip across the top of the side panel: recessed `stagewell-black` 24% track, 5px padding, 4px gap, 1px `--line-faint` bottom hairline. Each tab flexes to half the panel width, 40px min-height, `9px 12px` padding, 7px radius, Jakarta 12.5px / 700, default `#aab3cf` text; active `sodium-chalk` text on `rgba(255,255,255,0.10)` with a 1px `--line-faint` inset ring.
 
 ### Chips (event-kind markers)
 
@@ -276,11 +282,11 @@ The chip color and the timeline marker color are linked: scrubber markers use th
 
 ### Containers (panels)
 
-**Side panel** (`side-col`). 14px radius, `rgba(255,255,255,0.04)` background, 1px `rgba(255,255,255,0.07)` border, desktop height matched to the board artifact via `--artifact-fit-width` with a 420px floor, 8px backdrop-blur (load-bearing because the panel sits over the surface gradient and would feel weightless without it).
+**Side panel** (`side-col`). 14px radius, `--surface-panel` chalk wash background, 1px `--line-soft` border, 8px backdrop-blur (load-bearing because the panel sits over the surface gradient and would feel weightless without it). It rides a 560–620px column (`clamp(560px, 32vw, 620px)`) and spans the board, subtitle, and caption rows of the workspace grid, so its bottom edge aligns with the caption's divider. The panel carries `contain: size`: its height comes from the spanned rows, and its content must never push them.
 
-**Controls strip** (`controls`). 14px radius, same background and border treatment as the side panel, 6px backdrop-blur, `14px 18px` internal padding, max-width matched to the board column with a 720px ceiling. The radius matches the side panel and the board, so the three primary surfaces read as a unified editing booth, not three separate cards.
+**Controls strip** (`controls`). 14px radius, `--surface-console` chalk wash, 1px `--line-soft` border, 6px backdrop-blur, `14px 18px` internal padding, spanning the full workspace width beneath the board column and the side panel. The radius matches the side panel and the board, so the three primary surfaces read as a unified editing booth, not three separate cards.
 
-**Panel header** (inside `side-col`). `16px 18px 12px` padding, 1px `rgba(255,255,255,0.06)` bottom border, no background tint of its own. Carries the Headline label and a Body-mono hint.
+**Panel header** (inside `side-col`). `16px 18px 13px` padding, 1px `--line-faint` bottom border, a faint `stagewell-black` 11% recess tint. Carries the Headline label plus either a Body-mono hint (Script) or a mono count chip (Events).
 
 ### Inputs
 
@@ -288,7 +294,7 @@ The chip color and the timeline marker color are linked: scrubber markers use th
 
 ### Signature Component: the Pro-Grade Timeline Ruler
 
-The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, speed selector. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, max-width matched to the board with a 720px ceiling, 6px backdrop-blur, mono numerics that never reflow.
+The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, speed selector. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, stretching across the full workspace width, 6px backdrop-blur, mono numerics that never reflow.
 
 The ruler stacks three rows over the rail:
 
@@ -301,18 +307,18 @@ Native `<input type="range">` is rendered transparent and stretched over the ent
 
 ### Navigation
 
-**Header tabs.** Right-aligned chip-group of two tabs (Replay / Script). Already documented under Buttons → Tab toggle. The tab `<button>`s carry `role="tab"` + `aria-selected`; the active state hooks on `[aria-selected='true']`, not on a `.on` class. No mobile treatment yet; the header reflows naturally because the tab group is small.
+**Panel mode tabs.** A full-width two-tab strip at the top of the side panel (Replay / Script); the header itself carries only the wordmark. Already documented under Buttons → Tab toggle. The tab `<button>`s carry `role="tab"` + `aria-selected` with arrow-key focus-follows-selection; the active state hooks on `[aria-selected='true']`, not on a `.on` class.
 
 ### Now-Playing Caption
 
-A slim mono strip directly under the board, max-width matched to the board column. Announces the active event in type large enough (13.5px mono) to survive a 480p screen-recording downscale, so a viewer of the recording knows what just happened without seeing the side panel. Recordable-by-Default principle made physical.
+A slim mono strip under the board (below the subtitle track), max-width matched to the board column. Announces the active event in type large enough (13.5px mono) to survive a 480p screen-recording downscale, so a viewer of the recording knows what just happened without seeing the side panel. Recordable-by-Default principle made physical.
 
-**Layout.** A 4-column grid: `[stripe 4px] [time 11px mono] [kind chip] [body 1fr]`. Padding `10px 6px 10px 0`, fixed height 52px, separated from the controls below by a `tonal-white-06` bottom border.
+**Layout.** A 4-column grid: `[stripe 4px] [time 11px mono] [kind chip] [body 1fr]`. Padding `10px 6px 10px 0`, fixed height 48px via `--now-playing-height` (42px on viewports under 920px tall), closed by a `--line-faint` bottom border. It sits below the subtitle track, above the console.
 
 **State.** Two states:
 
 - **Active**: an event has fired within the last 2.5 seconds. The stripe (4×22 rounded rectangle) takes its color from the event kind under Five Meanings (`var(--color-studio-steel-blue)` for move, `var(--color-markup-amber)` for highlight, etc.). The time label, kind chip, and body text render at full opacity. Body text resolves to `e.san` for moves, `${from} → ${to}` for arrows, the comma-joined squares for highlights, "cleared annotations" for clear, "board reset" for reset.
-- **Idle**: no event in the last 2.5 seconds. The strip keeps its 52px frame but hides the stripe and text, leaving only the divider between board and console.
+- **Idle**: no event in the last 2.5 seconds. The strip keeps its 48px frame but empties completely — text, stripe, and divider all clear (`:empty` turns the border transparent), so the idle frame is invisible on a recording.
 
 **A11y.** The strip carries `role="status" aria-live="polite" aria-atomic="true"`, so screen readers announce kind + body when the active event changes without forcing focus.
 

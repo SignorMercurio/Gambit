@@ -37,6 +37,7 @@ export const markerColors: Record<ParsedEvent['kind'], string> = {
   clear: '#9b9b9b',
   reset: '#cf5d5d',
   start: '#cf5d5d',
+  fen: '#cf5d5d',
   branch: '#c8d0e6',
   mainline: '#c8d0e6',
 };

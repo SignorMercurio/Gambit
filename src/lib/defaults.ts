@@ -1,7 +1,8 @@
-export const DEFAULT_SCRIPT = `# Chess Timeline: SAN moves, hl, arrows, cl, rs, br/ml
+export const DEFAULT_SCRIPT = `# Chess Timeline: SAN moves, hl, arrows, cl, rs/st/fen, br/ml
 # Move annotations: append !! ! ? ?? to any SAN to badge the destination square.
 # Persistent overlays: append \`pin\` to hl or arrow — they stay on
-# screen until the next cl or rs (no auto-fade).
+# screen until the next cl, rs, st, or fen (no auto-fade).
+# Set an explicit position mid-script with: [mm:ss] fen <full FEN>
 [00:01] e4!
 [00:02.5] hl e4
 [00:04] e2->e4

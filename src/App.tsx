@@ -18,6 +18,7 @@ import { parseScript, type ParsedEvent, type TimelineEvent } from './lib/timelin
 import { markerColors } from './lib/tokens';
 
 type Positions = Record<string, PiecePos>;
+type BoardSetup = { positions: Positions; chessState: Chess.GameState };
 
 function positionsFromBoard(board: Chess.Board): Positions {
   const out: Positions = {};
@@ -32,10 +33,15 @@ function positionsFromBoard(board: Chess.Board): Positions {
   return out;
 }
 
-function setupFromFen(fenText: string): { positions: Positions; chessState: Chess.GameState; error: string | null } {
+function setupFromValidFen(fenText: string): BoardSetup {
+  const chessState = Chess.stateFromFEN(fenText);
+  return { chessState, positions: positionsFromBoard(chessState.board) };
+}
+
+function setupFromFen(fenText: string): BoardSetup & { error: string | null } {
   try {
-    const chessState = fenText.trim() ? Chess.stateFromFEN(fenText) : Chess.initialState();
-    return { chessState, positions: positionsFromBoard(chessState.board), error: null };
+    const setup = setupFromValidFen(fenText.trim() ? fenText : Chess.STARTING_FEN);
+    return { ...setup, error: null };
   } catch (err) {
     const chessState = Chess.initialState();
     const message = err instanceof Error ? err.message : 'Invalid FEN';
@@ -133,6 +139,7 @@ const KIND_COLOR_VAR: Record<ParsedEvent['kind'], string> = {
   clear: 'var(--color-clear-marker)',
   reset: 'var(--color-studio-vermillion)',
   start: 'var(--color-studio-vermillion)',
+  fen: 'var(--color-studio-vermillion)',
   branch: 'var(--color-rim-light-pewter)',
   mainline: 'var(--color-rim-light-pewter)',
 };
@@ -151,6 +158,8 @@ function eventBody(e: Exclude<TimelineEvent, { error: string }>): string {
       return 'board reset';
     case 'start':
       return 'initial position';
+    case 'fen':
+      return e.fen;
     case 'branch':
       return 'begin variation';
     case 'mainline':
@@ -220,7 +229,7 @@ export default function App() {
   const subtitleResult = useMemo(() => parseSrt(subtitleText), [subtitleText]);
   const subtitleCues = subtitleResult.cues;
   const initialSetup = useMemo(() => setupFromFen(fenText), [fenText]);
-  const standardSetup = useMemo(() => setupFromFen(Chess.STARTING_FEN), []);
+  const standardSetup = useMemo(() => setupFromValidFen(Chess.STARTING_FEN), []);
   const duration = useMemo(() => {
     const lastEvent = events[events.length - 1];
     return Math.max(30, (lastEvent ? lastEvent.t : 0) + 3, getSubtitleEnd(subtitleCues) + 1);
@@ -382,6 +391,15 @@ export default function App() {
           case 'start':
             applySetup(standardSetup);
             break;
+          case 'fen': {
+            const setup = setupFromFen(ev.fen);
+            if (setup.error) {
+              errorAcc.push({ t: ev.t, error: setup.error, line: ev.line, raw: ev.raw });
+            } else {
+              applySetup(setup);
+            }
+            break;
+          }
           case 'branch':
             branchStack.push({ ...snapshot([]), line: ev.line, t: ev.t, raw: ev.raw });
             break;
@@ -574,40 +592,6 @@ export default function App() {
             <div className="app-sub">Chess timeline renderer</div>
           </div>
         </div>
-        <div
-          className="header-actions"
-          role="tablist"
-          aria-orientation="horizontal"
-          aria-label="Side panel mode"
-          onKeyDown={onTabKeyDown}
-        >
-          <button
-            type="button"
-            role="tab"
-            id={replayTabId}
-            aria-controls={panelId}
-            aria-selected={!showEditor}
-            tabIndex={showEditor ? -1 : 0}
-            ref={replayTabRef}
-            className="tab-btn"
-            onClick={() => setShowEditor(false)}
-          >
-            Replay
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id={scriptTabId}
-            aria-controls={panelId}
-            aria-selected={showEditor}
-            tabIndex={showEditor ? 0 : -1}
-            ref={scriptTabRef}
-            className="tab-btn"
-            onClick={() => setShowEditor(true)}
-          >
-            Script
-          </button>
-        </div>
       </header>
 
       <main className="main">
@@ -630,7 +614,7 @@ export default function App() {
           </div>
 
           <div
-            className="now-playing"
+            className={`now-playing ${currentEvent ? '' : 'is-empty'}`}
             role="status"
             aria-live="polite"
             aria-atomic="true"
@@ -767,6 +751,40 @@ export default function App() {
         </div>
 
         <aside className="side-col">
+          <div
+            className="mode-tabs"
+            role="tablist"
+            aria-orientation="horizontal"
+            aria-label="Side panel mode"
+            onKeyDown={onTabKeyDown}
+          >
+            <button
+              type="button"
+              role="tab"
+              id={replayTabId}
+              aria-controls={panelId}
+              aria-selected={!showEditor}
+              tabIndex={showEditor ? -1 : 0}
+              ref={replayTabRef}
+              className="tab-btn"
+              onClick={() => setShowEditor(false)}
+            >
+              Replay
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id={scriptTabId}
+              aria-controls={panelId}
+              aria-selected={showEditor}
+              tabIndex={showEditor ? 0 : -1}
+              ref={scriptTabRef}
+              className="tab-btn"
+              onClick={() => setShowEditor(true)}
+            >
+              Script
+            </button>
+          </div>
           {showEditor ? (
             <div
               className="editor"
@@ -782,9 +800,10 @@ export default function App() {
                     <button
                       type="button"
                       className="upload-btn"
+                      aria-label="Import script file"
                       onClick={() => scriptFileInputRef.current?.click()}
                     >
-                      Upload Script
+                      Import
                     </button>
                     <input
                       id={scriptFileInputId}
@@ -797,7 +816,7 @@ export default function App() {
                   </div>
                 </div>
                 <p className="panel-hint">
-                  [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · br / ml
+                  [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · fen · br / ml
                 </p>
               </div>
               <div className="fen-field">
@@ -832,9 +851,10 @@ export default function App() {
                     <button
                       type="button"
                       className="upload-btn"
+                      aria-label="Import subtitle file"
                       onClick={() => subtitleFileInputRef.current?.click()}
                     >
-                      Upload SRT
+                      Import
                     </button>
                     <input
                       id={subtitleFileInputId}
@@ -889,8 +909,10 @@ export default function App() {
               aria-labelledby={replayTabId}
             >
               <div className="panel-header">
-                <h2 className="panel-title" id={eventsLabelId}>Events</h2>
-                <p className="panel-hint">{events.length} total</p>
+                <div className="panel-title-row">
+                  <h2 className="panel-title" id={eventsLabelId}>Events</h2>
+                  <span className="panel-count">{events.length} total</span>
+                </div>
               </div>
               <ol
                 className="event-list"

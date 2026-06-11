@@ -5,10 +5,11 @@
 //   [mm:ss] cl                      (or clear; clears highlights and arrows)
 //   [mm:ss] rs                      (or reset; resets to configured start)
 //   [mm:ss] st                      (or start; resets to standard initial position)
+//   [mm:ss] fen <FEN>               (or setfen; sets board to that FEN)
 //   [mm:ss] br                      (or branch; enters a variation)
 //   [mm:ss] ml                      (or mainline; exits current variation)
 // Branches nest: every `br` must be paired with a later `ml`.
-// `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, or `st`;
+// `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, `st`, or `fen`;
 // without it they auto-fade after their lifetime window.
 // Lines starting with # or // are comments.
 
@@ -37,6 +38,7 @@ export type ParsedEvent =
   | { t: number; kind: 'clear'; line: number; raw: string }
   | { t: number; kind: 'reset'; line: number; raw: string }
   | { t: number; kind: 'start'; line: number; raw: string }
+  | { t: number; kind: 'fen'; fen: string; line: number; raw: string }
   | { t: number; kind: 'branch'; line: number; raw: string }
   | { t: number; kind: 'mainline'; line: number; raw: string };
 
@@ -129,6 +131,15 @@ export function parseScript(text: string): TimelineEvent[] {
     const simpleKind = SIMPLE_COMMANDS[body.toLowerCase()];
     if (simpleKind) {
       events.push({ t, kind: simpleKind, line: i + 1, raw });
+      continue;
+    }
+    const fenMatch = body.match(/^(?:fen|setfen)\s+(.+)$/i);
+    if (fenMatch) {
+      events.push({ t, kind: 'fen', fen: fenMatch[1].trim(), line: i + 1, raw });
+      continue;
+    }
+    if (/^(?:fen|setfen)$/i.test(body)) {
+      events.push({ t, error: `Line ${i + 1}: missing FEN`, line: i + 1, raw });
       continue;
     }
     // `parseSAN` strips [+#!?]+ before resolving the move, so the trailing

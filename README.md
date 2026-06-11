@@ -20,6 +20,7 @@ Open the URL Vite prints (typically http://localhost:5173).
 [mm:ss] cl              # clear annotations (also accepts "clear")
 [mm:ss] rs              # reset board to the current Start FEN (also accepts "reset")
 [mm:ss] st              # reset board to the standard initial position (also accepts "start")
+[mm:ss] fen <FEN>       # set board to a specific FEN (also accepts "setfen")
 [mm:ss] br              # enter variation (also accepts "branch")
 [mm:ss] ml              # exit variation (also accepts "mainline")
 ```

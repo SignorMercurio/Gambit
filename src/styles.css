@@ -41,14 +41,28 @@
   --color-clear-text: #c0c0c0;
   --color-clear-marker: #9b9b9b;
 
-  /* Tonal whites (chrome elevation ladder) */
+  /* Tonal whites (interactive-state elevation ladder) */
   --tonal-white-04: rgba(255, 255, 255, 0.04);
-  --tonal-white-05: rgba(255, 255, 255, 0.05);
   --tonal-white-06: rgba(255, 255, 255, 0.06);
-  --tonal-white-07: rgba(255, 255, 255, 0.07);
   --tonal-white-08: rgba(255, 255, 255, 0.08);
   --tonal-white-10: rgba(255, 255, 255, 0.10);
   --tonal-white-12: rgba(255, 255, 255, 0.12);
+
+  /* Chalk tints (sodium-chalk alpha): hairlines, raised-surface washes, and
+     the 1px top rim-light on raised surfaces. */
+  --line-soft: rgba(232, 236, 245, 0.075);
+  --line-faint: rgba(232, 236, 245, 0.045);
+  --rim-light: rgba(232, 236, 245, 0.06);
+  --surface-panel: linear-gradient(180deg, rgba(232, 236, 245, 0.058), rgba(232, 236, 245, 0.028));
+  --surface-console: linear-gradient(180deg, rgba(232, 236, 245, 0.062), rgba(232, 236, 245, 0.034));
+
+  /* Recessed wells (stagewell-black alpha): chrome that sinks into the
+     surface instead of lifting from it. */
+  --well-08: rgba(15, 21, 37, 0.08);
+  --well-11: rgba(15, 21, 37, 0.11);
+  --well-20: rgba(15, 21, 37, 0.20);
+  --well-24: rgba(15, 21, 37, 0.24);
+  --well-28: rgba(15, 21, 37, 0.28);
 
   /* Event-kind chip backgrounds */
   --chip-bg-move: rgba(93, 143, 201, 0.20);
@@ -59,6 +73,7 @@
   --chip-bg-err: rgba(207, 93, 93, 0.30);
 
   /* Active row + brand accents */
+  --row-hover-bg: rgba(232, 236, 245, 0.055);
   --row-active-bg: rgba(93, 143, 201, 0.18);
   --row-active-stripe-color: var(--color-studio-steel-blue);
 
@@ -92,6 +107,12 @@
   /* Layout */
   --artifact-width: 720px;
   --artifact-fit-width: var(--artifact-width);
+  --main-column-gap: 20px;
+  --main-row-gap: 16px;
+  --side-panel-width: clamp(560px, 32vw, 620px);
+  --subtitle-track-height: 64px;
+  --now-playing-height: 48px;
+  --workspace-width: calc(var(--artifact-fit-width) + var(--side-panel-width) + var(--main-column-gap));
 
   /* Motion */
   --ease-piece-slide: cubic-bezier(0.5, 0, 0.2, 1);
@@ -138,9 +159,15 @@ body {
 }
 
 .app {
-  max-width: 1500px; margin: 0 auto;
+  max-width: 1920px; margin: 0 auto;
   padding: 28px 36px 24px;
   display: flex; flex-direction: column; gap: 22px;
+}
+/* Centered workspace clamp for header, main, footer. Lives on .app > *
+   so it stays in one place instead of repeating on each child. */
+.app > * {
+  width: min(100%, var(--workspace-width));
+  margin-inline: auto;
 }
 
 /* =====================================================================
@@ -148,7 +175,7 @@ body {
    ===================================================================== */
 
 .header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center;
 }
 .title-block { display: flex; align-items: center; gap: 14px; }
 .logo {
@@ -181,34 +208,38 @@ body {
   letter-spacing: 0;
   margin-top: 3px;
 }
-.header-actions {
-  display: flex; gap: 6px;
-  background: var(--tonal-white-04);
-  padding: 4px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--tonal-white-06);
+.mode-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--well-24);
 }
 .tab-btn {
   position: relative;
-  padding: 8px 16px;
+  flex: 1 1 0;
+  min-height: 40px;
+  padding: 9px 12px;
   border-radius: var(--radius-sm);
   border: 0;
   background: transparent;
   color: var(--color-foley-pewter);
-  font-weight: 600; font-size: 13.5px;
+  font-weight: 700; font-size: 12.5px;
   font-family: inherit; cursor: pointer;
-  transition: color var(--duration-state), background var(--duration-state);
+  transition: color var(--duration-state), background var(--duration-state), box-shadow var(--duration-state);
 }
 .tab-btn:hover { color: var(--color-sodium-chalk); }
 .tab-btn[aria-selected='true'] {
   background: var(--tonal-white-10);
+  box-shadow: inset 0 0 0 1px var(--line-faint);
   color: var(--color-sodium-chalk);
 }
 /* Hit-area extension to clear WCAG 2.5.5 (44 min) without breaking the
    visual rhythm of the tab group. */
 .tab-btn::before {
   content: '';
-  position: absolute; inset: -6px -2px;
+  position: absolute; inset: -2px 0;
 }
 
 /* =====================================================================
@@ -217,47 +248,57 @@ body {
 
 .main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 24px;
+  grid-template-columns: var(--artifact-fit-width) var(--side-panel-width);
+  /* Fixed rows keep playback layout stable; the subtitle row alone may grow
+     so a multi-line cue pushes content down instead of overlapping it. */
+  grid-template-rows: var(--artifact-fit-width) minmax(var(--subtitle-track-height), auto) var(--now-playing-height) auto;
+  column-gap: var(--main-column-gap);
+  row-gap: var(--main-row-gap);
+  justify-content: center;
   align-items: start;
 }
-@media (max-width: 1080px) { .main { grid-template-columns: 1fr; } }
 
-.board-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.board-col {
+  display: contents;
+}
 .board-wrap,
 .subtitle-strip,
-.controls,
 .now-playing {
+  grid-column: 1;
   width: 100%;
   max-width: var(--artifact-fit-width);
   margin-inline: auto;
 }
+.board-wrap { grid-row: 1; }
+.subtitle-strip { grid-row: 2; }
+.now-playing { grid-row: 3; }
 
 .subtitle-strip {
-  min-height: 68px;
-  margin-top: -4px;
-  padding: 10px 18px;
+  min-height: var(--subtitle-track-height);
+  margin-top: -2px;
+  padding: 8px 18px 10px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--tonal-white-06);
-  border-radius: var(--radius-md);
-  background: rgba(15, 21, 37, 0.72);
+  border-block: 1px solid var(--line-faint);
+  background:
+    linear-gradient(90deg, transparent, var(--line-faint) 18%, var(--line-faint) 82%, transparent),
+    linear-gradient(180deg, rgba(15, 21, 37, 0.38), rgba(15, 21, 37, 0.18));
   color: var(--color-sodium-chalk);
   text-align: center;
-  transition: border-color var(--duration-state), background var(--duration-state);
+  transition: border-color var(--duration-state);
 }
 .subtitle-strip.is-empty {
   border-color: transparent;
   background: transparent;
 }
 .subtitle-strip p {
-  max-width: 64ch;
+  max-width: 58ch;
   margin: 0;
   font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
     'Microsoft YaHei', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  font-size: 23px;
-  font-weight: 720;
-  line-height: 1.42;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.36;
   letter-spacing: 0;
   color: var(--color-sodium-chalk);
   text-wrap: balance;
@@ -266,21 +307,24 @@ body {
   overflow-wrap: anywhere;
   font-kerning: normal;
   text-rendering: optimizeLegibility;
-  text-shadow: 0 1px 2px rgba(15, 21, 37, 0.55);
+  text-shadow: 0 1px 2px rgba(15, 21, 37, 0.42);
 }
 /* =====================================================================
    Controls strip (transport)
    ===================================================================== */
 
 .controls {
+  grid-column: 1 / -1;
+  grid-row: 4;
   display: grid;
   grid-template-columns: auto auto auto 1fr auto;
   gap: 16px; align-items: center;
-  background: var(--tonal-white-04);
-  border: 1px solid var(--tonal-white-07);
+  background: var(--surface-console);
+  border: 1px solid var(--line-soft);
   padding: 14px 18px;
   border-radius: var(--radius-lg);
   backdrop-filter: blur(6px);
+  box-shadow: inset 0 1px 0 var(--rim-light);
 }
 
 .play-btn, .ctrl-btn {
@@ -315,16 +359,19 @@ body {
 
 .time-readout {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 13px; font-weight: 600;
+  font-size: 12.5px; font-weight: 600;
   color: var(--color-rim-light-pewter);
-  display: flex; align-items: baseline; gap: 4px;
+  display: inline-flex; align-items: baseline; gap: 3px;
   /* Sized for `mm:ss.t / mm:ss.t` — a tenths-of-a-second clock so
      sub-second event spacing is visible during playback. */
-  min-width: 124px;
+  min-width: 118px;
+  height: 24px;
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
 }
 .t-now { color: var(--color-sodium-chalk); font-weight: 700; }
-.t-sep { color: var(--color-stage-mauve); }
-.t-tot { color: var(--color-foley-slate); }
+.t-sep { color: var(--color-stage-mauve); opacity: 0.72; }
+.t-tot { color: var(--color-rim-light-pewter); opacity: 0.68; }
 
 /* Timeline: pro-grade transport ruler. Three rows: marker pins above, the
    rail with fill + playhead in the middle, and time-tick labels below. The
@@ -336,7 +383,8 @@ body {
   grid-template-rows: 18px 6px 14px;
   row-gap: 5px;
   align-items: center;
-  padding: 0 4px;
+  min-width: 0;
+  padding: 2px 8px 0;
 }
 
 .timeline-pins {
@@ -471,8 +519,9 @@ body {
 
 .speed-group {
   display: flex; gap: 2px;
-  background: var(--tonal-white-04);
+  background: var(--well-28);
   padding: 3px; border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--line-faint);
 }
 .speed-btn {
   position: relative;
@@ -500,22 +549,46 @@ body {
    ===================================================================== */
 
 .side-col {
-  background: var(--tonal-white-04);
-  border: 1px solid var(--tonal-white-07);
+  grid-column: 2;
+  grid-row: 1 / 4;
+  align-self: stretch;
+  background: var(--surface-panel);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  height: var(--artifact-fit-width);
-  min-height: 420px;
+  min-height: 0;
+  /* The panel's height must come from the spanned board rows, never push
+     them — without size containment the unscrolled event list inflates the
+     subtitle row's auto maximum. */
+  contain: size;
   display: flex; flex-direction: column;
   backdrop-filter: blur(8px);
+  box-shadow: inset 0 1px 0 var(--rim-light);
 }
-@media (max-width: 1080px) {
-  .side-col { height: min(720px, calc(100dvh - 80px)); }
+@media (max-width: 1380px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+  /* board-col children become flex items here, so their desktop grid
+     placement is inert; only .side-col stays a grid item and needs resets. */
+  .board-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--main-row-gap);
+    min-width: 0;
+  }
+  .side-col {
+    grid-column: auto;
+    grid-row: auto;
+    height: min(720px, calc(100dvh - 80px));
+  }
 }
 
 .panel-header {
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--tonal-white-06);
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--well-11);
 }
 .panel-title-row {
   display: flex;
@@ -529,13 +602,26 @@ body {
   margin: 0;
 }
 .panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+.panel-count {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--tonal-white-06);
+  color: var(--color-foley-slate);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
 
 .editor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .fen-field {
   display: grid;
   gap: 7px;
   padding: 12px 18px 14px;
-  border-bottom: 1px solid var(--tonal-white-06);
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--well-08);
 }
 .fen-field label {
   color: var(--color-rim-light-pewter);
@@ -549,9 +635,9 @@ body {
   width: 100%;
   min-width: 0;
   height: 34px;
-  border: 1px solid var(--tonal-white-07);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  background: var(--tonal-white-04);
+  background: var(--well-20);
   color: var(--color-sodium-chalk);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11.5px;
@@ -580,13 +666,15 @@ body {
 .script-textarea {
   flex: 1;
   min-height: 180px;
+  caret-color: var(--color-camera-highlight-blue);
 }
 .editor textarea:focus-visible {
   box-shadow: inset 2px 0 0 var(--color-camera-highlight-blue);
 }
 
 .subtitle-editor {
-  border-top: 1px solid var(--tonal-white-06);
+  border-top: 1px solid var(--line-faint);
+  background: var(--well-08);
 }
 .subtitle-editor-head {
   min-height: 42px;
@@ -624,13 +712,17 @@ body {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   height: 28px;
+  min-width: 58px;
   padding: 0 9px;
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--tonal-white-06);
   color: var(--color-sodium-chalk);
+  box-shadow: inset 0 0 0 1px var(--line-faint);
   cursor: pointer;
+  white-space: nowrap;
   transition: background var(--duration-state), color var(--duration-state);
 }
 .upload-btn:hover {
@@ -680,7 +772,8 @@ body {
   /* Indent by variation depth — `--depth` is set inline per row. The branch
      row sits at parent depth, contents nest one level deeper, mainline
      returns to parent depth. */
-  padding: 9px 12px 9px calc(12px + var(--depth, 0) * 14px);
+  min-height: 38px;
+  padding: 8px 12px 8px calc(12px + var(--depth, 0) * 14px);
   margin-bottom: 2px;
   border-radius: 8px;
   border: 0; background: transparent;
@@ -690,7 +783,10 @@ body {
   text-align: left;
   transition: background var(--duration-chrome), color var(--duration-chrome);
 }
-.event-row:hover { background: var(--tonal-white-05); color: var(--color-sodium-chalk); }
+.event-row:hover {
+  background: var(--row-hover-bg);
+  color: var(--color-sodium-chalk);
+}
 .event-row.past { color: var(--color-rim-light-pewter); }
 .event-row.active {
   /* Five Meanings on the active state. Each kind owns its own background
@@ -715,10 +811,8 @@ body {
   background: var(--row-active-bg-clear);
   box-shadow: inset 2px 0 0 var(--color-clear-marker);
 }
-.event-row.active.kind-reset {
-  background: var(--row-active-bg-reset);
-  box-shadow: inset 2px 0 0 var(--color-studio-vermillion);
-}
+.event-row.active.kind-reset,
+.event-row.active.kind-fen,
 .event-row.active.kind-start {
   background: var(--row-active-bg-reset);
   box-shadow: inset 2px 0 0 var(--color-studio-vermillion);
@@ -760,7 +854,9 @@ body {
 .ev-kind.kind-clear,
 .np-kind.kind-clear { background: var(--chip-bg-clear); color: var(--color-clear-text); }
 .ev-kind.kind-reset,
-.np-kind.kind-reset { background: var(--chip-bg-reset); color: var(--color-reset-text); }
+.np-kind.kind-reset,
+.ev-kind.kind-fen,
+.np-kind.kind-fen,
 .ev-kind.kind-start,
 .np-kind.kind-start { background: var(--chip-bg-reset); color: var(--color-reset-text); }
 .ev-kind.kind-err,
@@ -785,11 +881,15 @@ body {
   grid-template-columns: 4px auto auto 1fr;
   align-items: center;
   column-gap: 12px;
-  height: 52px;
+  height: var(--now-playing-height);
   padding: 10px 6px 10px 0;
-  border-bottom: 1px solid var(--tonal-white-06);
+  border-bottom: 1px solid var(--line-faint);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   overflow: hidden;
+}
+
+.now-playing.is-empty {
+  border-color: transparent;
 }
 
 .np-rail {
@@ -830,33 +930,45 @@ body {
   padding-top: 4px;
 }
 
-@media (min-width: 1081px) and (max-height: 1040px) {
+@media (max-height: 1040px) {
   .app {
     padding-top: 20px;
     padding-bottom: 18px;
     gap: 16px;
   }
-  .board-col { gap: 12px; }
   .subtitle-strip {
-    min-height: 64px;
-    padding-top: 8px;
     padding-bottom: 8px;
   }
-  .controls {
-    grid-template-columns: auto auto 1fr auto;
-    grid-template-rows: auto auto;
-    row-gap: 12px;
-  }
-  .controls .play-btn { grid-row: 1; grid-column: 1; }
-  .controls .ctrl-btn { grid-row: 1; grid-column: 2; }
-  .controls .time-readout { grid-row: 1; grid-column: 3; }
-  .controls .speed-group { grid-row: 1; grid-column: 4; }
-  .controls .timeline { grid-row: 2; grid-column: 1 / -1; }
 }
 
-@media (min-width: 1081px) and (max-height: 760px) {
+/* Board shrink applies only to the two-column desktop layout; the min-width
+   guard must match the single-column stack point at 1380px below/above. */
+@media (min-width: 1381px) and (max-height: 760px) {
   :root {
     --artifact-fit-width: min(var(--artifact-width), max(560px, calc(100dvh - 210px)));
+  }
+}
+
+@media (max-height: 920px) {
+  :root {
+    --subtitle-track-height: 56px;
+    --now-playing-height: 42px;
+    --main-row-gap: 12px;
+  }
+
+  .app {
+    padding-top: 16px;
+    padding-bottom: 14px;
+    gap: 12px;
+  }
+
+  .subtitle-strip {
+    padding-top: 7px;
+  }
+
+  .controls {
+    gap: 12px;
+    padding: 10px 14px;
   }
 }
 
@@ -877,14 +989,27 @@ body {
    board column doesn't get squeezed.
    ===================================================================== */
 @media (max-width: 600px) {
+  :root {
+    --subtitle-track-height: 58px;
+  }
+
   .app { padding: 16px 16px 20px; gap: 16px; }
 
-  .header { flex-wrap: wrap; gap: 12px; }
   .title-block { gap: 12px; }
   .logo, .logo img { width: 44px; height: 44px; }
   .logo { border-radius: 14px; }
 
   .main { gap: 18px; }
+
+  .subtitle-strip {
+    padding-inline: 14px;
+  }
+  .subtitle-strip p {
+    max-width: 28ch;
+    font-size: 19px;
+    font-weight: 600;
+    line-height: 1.34;
+  }
 
   /* Three rows on mobile: transport + readout, timeline, speed selector.
      Squeezing all five children into one row collapses the time-readout
