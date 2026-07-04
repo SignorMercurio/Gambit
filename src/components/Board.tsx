@@ -25,6 +25,7 @@ type BoardProps = {
   highlights: BoardHighlight[];
   arrows: BoardArrow[];
   captureFlash: CaptureFlash | null;
+  check: BoardCheck | null;
   time: number;
 };
 
@@ -52,6 +53,8 @@ export type LastMove = {
 export type BoardHighlight = { sq: string; t: number; pinned?: boolean };
 export type BoardArrow = { from: string; to: string; t: number; pinned?: boolean };
 export type CaptureFlash = { f: number; r: number; t: number; id: string };
+// Checked king square + the time the check appeared (drives the fade-in).
+export type BoardCheck = { sq: string; t: number };
 
 const BOARD_ARROW = {
   startInset: 18,
@@ -255,9 +258,15 @@ const ANNOTATION_BADGE: Record<
   blunder: { fill: '#cf5d5d', text: '#f1ecde', mark: '??' },
 };
 
+// The board's light/dark convention (a1 dark) in one place.
+const isLightSquare = (f: number, r: number) => (f + r) % 2 === 1;
+// Last-move amber needs a higher alpha on blue squares; see tokens.ts.
+const lastMoveFill = (f: number, r: number) =>
+  isLightSquare(f, r) ? tokens.boardLastMoveOnLight : tokens.boardLastMoveOnDark;
+
 const SQUARES: { f: number; r: number; isLight: boolean }[] = [];
 for (let r = 7; r >= 0; r--) {
-  for (let f = 0; f < 8; f++) SQUARES.push({ f, r, isLight: (f + r) % 2 === 1 });
+  for (let f = 0; f < 8; f++) SQUARES.push({ f, r, isLight: isLightSquare(f, r) });
 }
 
 const COORD_LABELS: { x: number; y: number; isLight: boolean; text: string; anchor: 'end' | 'start' }[] = [
@@ -277,8 +286,22 @@ const COORD_LABELS: { x: number; y: number; isLight: boolean; text: string; anch
   })),
 ];
 
-export function Board({ positions, lastMove, highlights, arrows, captureFlash, time }: BoardProps) {
+// Static gradient defs, hoisted so 60Hz renders reuse one element instead of
+// rebuilding (and remounting) the defs subtree with the check state.
+const CHECK_GLOW_DEFS = (
+  <defs>
+    <radialGradient id="board-check-glow">
+      <stop offset="0%" stopColor={tokens.boardCheckCenter} />
+      <stop offset="55%" stopColor={tokens.boardCheckMid} />
+      <stop offset="92%" stopColor={tokens.boardCheckEdge} />
+    </radialGradient>
+  </defs>
+);
+
+export function Board({ positions, lastMove, highlights, arrows, captureFlash, check, time }: BoardProps) {
   const lastMoveOpacity = lastMove ? timedProgress(time - lastMove.t, 0.12) : 0;
+  const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
+  const checkIdx = check ? sqToIdx(check.sq) : null;
   const flash =
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
       ? captureFlashVisual(time - captureFlash.t)
@@ -294,7 +317,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, t
           width: '100%',
           aspectRatio: '1 / 1',
           position: 'relative',
-          borderRadius: 14,
+          borderRadius: 'var(--board-radius)',
           overflow: 'hidden',
           boxShadow: tokens.shadowBoard,
         }}
@@ -305,6 +328,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, t
           aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
         >
+          {CHECK_GLOW_DEFS}
           {SQUARES.map(({ f, r, isLight }) => (
             <rect
               key={`${f}-${r}`}
@@ -316,26 +340,23 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, t
             />
           ))}
 
-          {lastMove && (
-            <>
+          {lastMove &&
+            (
+              [
+                [lastMove.fromF, lastMove.fromR],
+                [lastMove.toF, lastMove.toR],
+              ] as const
+            ).map(([f, r], i) => (
               <rect
-                x={lastMove.fromF * SQ}
-                y={(7 - lastMove.fromR) * SQ}
+                key={`lm-${i}`}
+                x={f * SQ}
+                y={(7 - r) * SQ}
                 width={SQ}
                 height={SQ}
-                fill={tokens.boardLastMove}
+                fill={lastMoveFill(f, r)}
                 opacity={lastMoveOpacity}
               />
-              <rect
-                x={lastMove.toF * SQ}
-                y={(7 - lastMove.toR) * SQ}
-                width={SQ}
-                height={SQ}
-                fill={tokens.boardLastMove}
-                opacity={lastMoveOpacity}
-              />
-            </>
-          )}
+            ))}
 
           {highlights.map((h, i) => {
             const { f, r } = sqToIdx(h.sq);
@@ -359,6 +380,19 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, t
             );
           })}
 
+          {/* Check glow: vermillion radial under the checked king. A board
+             state (not a timed overlay), so it persists while the check
+             lasts and clears the moment the position resolves it. */}
+          {checkIdx && checkOpacity > 0 && (
+            <rect
+              x={checkIdx.f * SQ}
+              y={(7 - checkIdx.r) * SQ}
+              width={SQ}
+              height={SQ}
+              fill="url(#board-check-glow)"
+              opacity={checkOpacity}
+            />
+          )}
         </svg>
 
         {/* zIndex here creates a stacking context so per-piece zIndex (1/5)

@@ -46,6 +46,7 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - Preserve strict TypeScript cleanliness. `npm run typecheck` must pass.
 - When changing parser behavior, return visible `TimelineEvent` errors rather than silently ignoring malformed script input.
 - When changing subtitle behavior, keep SRT input independent from the chess script and surface malformed cues as visible errors.
+- Narration audio is session-only (object URL, no persistence) and independent from the script and subtitles. The playback clock stays the source of truth: the audio element follows play/pause/seek/rate and never drives the board; narration that outlasts the script extends playback duration like subtitle cues.
 - When changing chess behavior, add conservative validation rather than accepting ambiguous or typo-like SAN.
 - Keep board coordinates, arrows, highlights, badges, and pieces in predictable stacking order. Coordinates must remain readable with enlarged pieces.
 - Do not expose FEN or internal board metadata in the default user-facing playback surface unless the user explicitly asks for it.

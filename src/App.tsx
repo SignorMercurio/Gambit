@@ -6,6 +6,7 @@ import {
   Board,
   BOARD_OVERLAY_LIFETIME,
   type BoardArrow,
+  type BoardCheck,
   type BoardHighlight,
   type CaptureFlash,
   type LastMove,
@@ -174,6 +175,21 @@ function generateTicks(duration: number): number[] {
   return ticks;
 }
 
+// Largest index i such that events[i].t <= time, or -1 when none. Events with
+// t === time count as reached (inclusive on the lower side). The single home
+// of the playhead→event-index rule: the world snapshot pick, the Now-Playing
+// caption, and the follow-scroll all derive from this.
+function lastEventIndexAt(events: TimelineEvent[], time: number): number {
+  let lo = 0;
+  let hi = events.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (events[mid].t <= time) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
 const DRAFT_KEYS = {
   script: 'gambit:draft:script',
   subtitles: 'gambit:draft:subtitles',
@@ -206,12 +222,19 @@ function useDraftText(key: string, fallback: string) {
   return [value, setValue] as const;
 }
 
+// Pluck the selected file and reset the input so re-picking the same file
+// fires change again. Shared intake for every import affordance.
+function takeSelectedFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
+  const file = e.currentTarget.files?.[0];
+  e.currentTarget.value = '';
+  return file ?? null;
+}
+
 function readSelectedTextFile(
   e: React.ChangeEvent<HTMLInputElement>,
   onRead: (text: string, fileName: string) => void,
 ): void {
-  const file = e.currentTarget.files?.[0];
-  e.currentTarget.value = '';
+  const file = takeSelectedFile(e);
   if (!file) return;
 
   const reader = new FileReader();
@@ -230,10 +253,24 @@ export default function App() {
   const subtitleCues = subtitleResult.cues;
   const initialSetup = useMemo(() => setupFromFen(fenText), [fenText]);
   const standardSetup = useMemo(() => setupFromValidFen(Chess.STARTING_FEN), []);
+  // Narration audio rides the playback clock. Session-only by design: object
+  // URLs die with the page and audio blobs don't fit the localStorage drafts.
+  const [narration, setNarration] = useState<{ url: string; name: string; duration: number } | null>(
+    null,
+  );
+  const [narrationError, setNarrationError] = useState<string | null>(null);
+
   const duration = useMemo(() => {
     const lastEvent = events[events.length - 1];
-    return Math.max(30, (lastEvent ? lastEvent.t : 0) + 3, getSubtitleEnd(subtitleCues) + 1);
-  }, [events, subtitleCues]);
+    return Math.max(
+      30,
+      (lastEvent ? lastEvent.t : 0) + 3,
+      getSubtitleEnd(subtitleCues) + 1,
+      // Like subtitles, narration that outlasts the chess script extends
+      // playback so the tail of the recording stays audible.
+      narration ? narration.duration : 0,
+    );
+  }, [events, subtitleCues, narration]);
 
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -249,6 +286,9 @@ export default function App() {
   const subtitleLabelId = useId();
   const scriptFileInputId = useId();
   const subtitleFileInputId = useId();
+  const narrationLabelId = useId();
+  const narrationFileInputId = useId();
+  const narrationErrorId = useId();
   const replayTabId = useId();
   const scriptTabId = useId();
   const panelId = useId();
@@ -257,6 +297,8 @@ export default function App() {
   const scriptTabRef = useRef<HTMLButtonElement>(null);
   const scriptFileInputRef = useRef<HTMLInputElement>(null);
   const subtitleFileInputRef = useRef<HTMLInputElement>(null);
+  const narrationFileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const onTabKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -284,6 +326,36 @@ export default function App() {
     readSelectedTextFile(e, (text, fileName) => {
       setSubtitleText(text);
       setSubtitleFileName(fileName);
+    });
+  }, []);
+
+  const onNarrationFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = takeSelectedFile(e);
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    // Probe metadata off-DOM so a broken file never becomes the live track.
+    const probe = new Audio();
+    probe.preload = 'metadata';
+    probe.src = url;
+    probe.onloadedmetadata = () => {
+      const audioDuration = Number.isFinite(probe.duration) ? probe.duration : 0;
+      setNarrationError(null);
+      setNarration((prev) => {
+        if (prev) URL.revokeObjectURL(prev.url);
+        return { url, name: file.name, duration: audioDuration };
+      });
+    };
+    probe.onerror = () => {
+      URL.revokeObjectURL(url);
+      setNarrationError(`Could not decode audio file: "${file.name}"`);
+    };
+  }, []);
+
+  const clearNarration = useCallback(() => {
+    setNarrationError(null);
+    setNarration((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
     });
   }, []);
 
@@ -316,6 +388,43 @@ export default function App() {
     };
   }, [playing, speed, duration]);
 
+  // Narration follows the playback clock; the clock stays the single source
+  // of truth so the board remains fully determined by script + time. Two
+  // couplings: idempotent state application (rate + play/pause, re-applied
+  // when the <audio> element remounts on narration change), and a drift snap
+  // that also covers seeks.
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !narration) return;
+    el.playbackRate = speed;
+    if (playing) {
+      el.play().catch(() => {
+        // Autoplay rejection: playback starts from a user gesture in every
+        // Gambit flow, but if a browser still refuses, stay silent.
+      });
+    } else {
+      el.pause();
+    }
+  }, [playing, speed, narration]);
+
+  // 0.25s tick granularity matches the snap tolerance below: any seek larger
+  // than the tolerance crosses a tick boundary, while steady playback runs
+  // this check ~4x/s instead of every animation frame.
+  const narrationDriftTick = narration ? Math.round(time * 4) : 0;
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !narration) return;
+    const target = Math.min(time, narration.duration);
+    if (Math.abs(el.currentTime - target) > 0.25) {
+      el.currentTime = target;
+      if (playing && time < narration.duration && el.paused) {
+        el.play().catch(() => {});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- time is sampled
+    // at tick granularity on purpose; see narrationDriftTick above.
+  }, [narrationDriftTick, narration, playing]);
+
   // snapshots[0] is the initial state; snapshots[i+1] is the state AFTER
   // applying events[i]. Per-frame render binary-searches by `time` to pick the
   // current snapshot, then filters highlights/arrows by their lifetime windows.
@@ -326,6 +435,9 @@ export default function App() {
     highlights: BoardHighlight[];
     arrows: BoardArrow[];
     lastCapture: CaptureFlash | null;
+    // Checked king square, derived from chessState (never from a SAN `+`).
+    // State-scoped, not transient: it persists until the position changes.
+    check: BoardCheck | null;
     errors: TimelineEvent[];
   };
 
@@ -336,6 +448,11 @@ export default function App() {
       raw: string;
     };
 
+    const checkAt = (state: Chess.GameState, t: number): BoardCheck | null => {
+      const sq = Chess.checkedKingSquare(state);
+      return sq ? { sq, t } : null;
+    };
+
     let positions = initialSetup.positions;
     let chessState = initialSetup.chessState;
     let lastMove: LastMove | null = null;
@@ -343,17 +460,20 @@ export default function App() {
     let highlights: BoardHighlight[] = [];
     let arrows: BoardArrow[] = [];
     let lastCapture: CaptureFlash | null = null;
+    // A custom Start FEN may already be a check position.
+    let check: BoardCheck | null = checkAt(initialSetup.chessState, 0);
     const errorAcc: TimelineEvent[] = [];
     const branchStack: BranchSnap[] = [];
 
     const list: WorldSnap[] = [];
-    const applySetup = (setup: Pick<WorldSnap, 'positions' | 'chessState'>) => {
+    const applySetup = (setup: Pick<WorldSnap, 'positions' | 'chessState'>, t: number) => {
       positions = setup.positions;
       chessState = setup.chessState;
       lastMove = null;
       highlights = [];
       arrows = [];
       lastCapture = null;
+      check = checkAt(setup.chessState, t);
     };
     const snapshot = (errors: TimelineEvent[] = errorAcc.slice()): WorldSnap => ({
       positions,
@@ -362,6 +482,7 @@ export default function App() {
       highlights,
       arrows,
       lastCapture,
+      check,
       errors,
     });
 
@@ -386,17 +507,17 @@ export default function App() {
             arrows = [];
             break;
           case 'reset':
-            applySetup(initialSetup);
+            applySetup(initialSetup, ev.t);
             break;
           case 'start':
-            applySetup(standardSetup);
+            applySetup(standardSetup, ev.t);
             break;
           case 'fen': {
             const setup = setupFromFen(ev.fen);
             if (setup.error) {
               errorAcc.push({ t: ev.t, error: setup.error, line: ev.line, raw: ev.raw });
             } else {
-              applySetup(setup);
+              applySetup(setup, ev.t);
             }
             break;
           }
@@ -419,6 +540,7 @@ export default function App() {
               highlights = snap.highlights;
               arrows = snap.arrows;
               lastCapture = snap.lastCapture;
+              check = snap.check;
             }
             break;
           }
@@ -430,6 +552,7 @@ export default function App() {
               const moved = movePosition(positions, mv, ev.t);
               positions = moved.positions;
               chessState = Chess.applyMove(chessState, mv);
+              check = checkAt(chessState, ev.t);
               lastMove = {
                 fromF: mv.from[0],
                 fromR: mv.from[1],
@@ -464,16 +587,9 @@ export default function App() {
   }, [events, initialSetup, standardSetup]);
 
   const world = useMemo(() => {
-    // Largest i such that events[i].t <= time → snapshot index i + 1.
-    // Events with t === time are applied (inclusive on the lower side).
-    let lo = 0;
-    let hi = events.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (events[mid].t <= time) lo = mid + 1;
-      else hi = mid;
-    }
-    const snap = snapshots[lo];
+    // snapshots[i + 1] is the state AFTER events[i], so the reached index
+    // maps straight to a snapshot slot.
+    const snap = snapshots[lastEventIndexAt(events, time) + 1];
 
     const visibleHighlights = snap.highlights
       .filter((h) => h.pinned || time - h.t < BOARD_OVERLAY_LIFETIME.highlight);
@@ -491,12 +607,16 @@ export default function App() {
       arrows: visibleArrows,
       errors: snap.errors,
       captureFlash,
+      check: snap.check,
     };
   }, [snapshots, events, time]);
 
+  // Rewind preserves the play state (editor convention): while playing it
+  // replays from 0; while paused or at the end it returns to 0 paused. The
+  // gradient play button owns "replay from the end", so the two transport
+  // buttons never duplicate.
   const restart = useCallback(() => {
     setTime(0);
-    setPlaying(true);
   }, []);
   const pauseToggle = useCallback(() => {
     if (time >= duration) {
@@ -555,14 +675,7 @@ export default function App() {
 
   // Now-Playing: most recent past non-error event within the lifetime window.
   const currentEvent = useMemo<ParsedEvent | null>(() => {
-    let lo = 0;
-    let hi = events.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (events[mid].t <= time) lo = mid + 1;
-      else hi = mid;
-    }
-    for (let i = lo - 1; i >= 0; i--) {
+    for (let i = lastEventIndexAt(events, time); i >= 0; i--) {
       const e = events[i];
       if ('error' in e) continue;
       if (time - e.t >= NOW_PLAYING_LIFETIME) return null;
@@ -573,6 +686,40 @@ export default function App() {
 
   const activeSubtitle = useMemo(() => getActiveSubtitle(subtitleCues, time), [subtitleCues, time]);
 
+  // Replay panel follow-scroll: keep the event the playhead has reached
+  // visible, like a video editor's timeline list. Manual reading wins:
+  // following pauses while a mouse pointer is over the list and resumes
+  // when it leaves. Scrolls only the list container, never the page.
+  const eventListRef = useRef<HTMLOListElement | null>(null);
+  const followPausedRef = useRef(false);
+  const pauseFollowOnHover = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse') followPausedRef.current = true;
+  }, []);
+  const resumeFollowOnLeave = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse') followPausedRef.current = false;
+  }, []);
+
+  const reachedEventIndex = useMemo(() => lastEventIndexAt(events, time), [events, time]);
+
+  useEffect(() => {
+    if (followPausedRef.current) return;
+    const list = eventListRef.current;
+    if (!list) return;
+    if (reachedEventIndex < 0) {
+      list.scrollTop = 0;
+      return;
+    }
+    const row = list.children[reachedEventIndex] as HTMLElement | undefined;
+    if (!row) return;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.top < listRect.top) {
+      list.scrollTop += rowRect.top - listRect.top;
+    } else if (rowRect.bottom > listRect.bottom) {
+      list.scrollTop += rowRect.bottom - listRect.bottom;
+    }
+  }, [reachedEventIndex, showEditor]);
+
   const playState: 'play' | 'pause' | 'replay' = playing
     ? 'pause'
     : time >= duration
@@ -582,6 +729,8 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Narration track: invisible, driven entirely by the playback clock. */}
+      {narration && <audio ref={audioRef} src={narration.url} preload="auto" />}
       <header className="header">
         <div className="title-block">
           <div className="logo" aria-hidden="true">
@@ -602,11 +751,14 @@ export default function App() {
             highlights={world.highlights}
             arrows={world.arrows}
             captureFlash={world.captureFlash}
+            check={world.check}
             time={time}
           />
 
           <div
-            className={`subtitle-strip ${activeSubtitle ? '' : 'is-empty'}`}
+            className={`subtitle-strip ${activeSubtitle ? '' : 'is-empty'} ${
+              subtitleCues.length === 0 ? 'no-track' : ''
+            }`}
             aria-live="polite"
             aria-atomic="true"
           >
@@ -662,7 +814,7 @@ export default function App() {
                 </svg>
               )}
             </button>
-            <button type="button" className="ctrl-btn" onClick={restart} aria-label="Restart from beginning">
+            <button type="button" className="ctrl-btn" onClick={restart} aria-label="Rewind to start">
               <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                 <path
                   d="M5 5 v14 M19 5 L8 12 L19 19 Z"
@@ -878,12 +1030,67 @@ export default function App() {
                   placeholder={'1\n00:00:01,000 --> 00:00:04,000\nCentral control is established.'}
                 />
               </section>
-              {(initialSetup.error || world.errors.length > 0 || subtitleResult.errors.length > 0) && (
+              <section className="subtitle-editor" aria-labelledby={narrationLabelId}>
+                <div className="subtitle-editor-head">
+                  <label id={narrationLabelId} htmlFor={narrationFileInputId}>Narration audio</label>
+                  <div className="subtitle-actions">
+                    {narration && (
+                      <>
+                        <span className="subtitle-file">{narration.name}</span>
+                        {/* Duration outside the truncating span: metrics never
+                           tail-truncate into an ellipsis. */}
+                        <span className="narration-duration">
+                          {fmtTime(narration.duration, 'always')}
+                        </span>
+                        <button
+                          type="button"
+                          className="upload-btn"
+                          aria-label="Remove narration audio"
+                          onClick={clearNarration}
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className="upload-btn"
+                      aria-label="Import narration audio file"
+                      aria-describedby={narrationError ? narrationErrorId : undefined}
+                      onClick={() => narrationFileInputRef.current?.click()}
+                    >
+                      Import
+                    </button>
+                    <input
+                      id={narrationFileInputId}
+                      ref={narrationFileInputRef}
+                      className="file-input"
+                      type="file"
+                      accept="audio/*"
+                      onChange={onNarrationFileChange}
+                    />
+                  </div>
+                </div>
+                <p className="panel-hint narration-hint">
+                  Follows the timeline: seek, pause, and speed stay in sync. Session-only; re-import
+                  after a reload.
+                </p>
+              </section>
+              {(initialSetup.error ||
+                narrationError ||
+                world.errors.length > 0 ||
+                subtitleResult.errors.length > 0) && (
                 <div className="errors" role="alert" aria-live="polite">
                   {initialSetup.error && (
                     <div className="err-row">
                       <span className="err-line">FEN</span>
                       <span id={fenErrorId}>{initialSetup.error}</span>
+                    </div>
+                  )}
+                  {narrationError && (
+                    <div className="err-row">
+                      <span className="err-line">AUD</span>
+                      <span id={narrationErrorId}>{narrationError}</span>
                     </div>
                   )}
                   {world.errors.map((er, i) => (
@@ -915,9 +1122,12 @@ export default function App() {
                 </div>
               </div>
               <ol
+                ref={eventListRef}
                 className="event-list"
                 aria-labelledby={eventsLabelId}
                 style={{ listStyle: 'none', margin: 0 }}
+                onPointerEnter={pauseFollowOnHover}
+                onPointerLeave={resumeFollowOnLeave}
               >
                 {events.map((e, i) => {
                   const past = e.t <= time;

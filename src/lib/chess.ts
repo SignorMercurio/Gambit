@@ -227,6 +227,15 @@ export function inCheck(board: Board, side: Side): boolean {
   return isAttacked(board, k[0], k[1], opp);
 }
 
+// The square of the side-to-move's king when it stands in check, else null.
+// Derived from the position (not from a `+` in the SAN) so the board effect
+// stays deterministic even when the script author omits the check marker.
+export function checkedKingSquare(state: GameState): string | null {
+  if (!inCheck(state.board, state.turn)) return null;
+  const k = findKing(state.board, state.turn);
+  return k ? idxToSq(k[0], k[1]) : null;
+}
+
 export function applyMove(state: GameState, mv: Move): GameState {
   const board = cloneBoard(state.board);
   const [ff, fr] = mv.from;

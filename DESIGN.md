@@ -38,7 +38,7 @@ typography:
     letterSpacing: "normal"
   numeric:
     fontFamily: "JetBrains Mono, ui-monospace, monospace"
-    fontSize: "13px"
+    fontSize: "12.5px"
     fontWeight: 600
     lineHeight: 1.2
     letterSpacing: "normal"
@@ -155,7 +155,7 @@ The transport sitting under the board is a pro-grade timeline ruler, not a media
 
 The system rejects the chess.com palette outright (no green-and-cream board, no the-app's red-and-yellow accents). It rejects glassy AI-tool surfaces, candy-colored chess apps for kids, and the SaaS hero-metric template. There is exactly one accent gradient in the entire UI (the Play button); every other accent is a single solid color. Body chrome is tonal: raised surfaces wash chalk-tinted alpha over the dark gradient (the panel and console washes stay under 7%), recessed wells (tab track, speed track, inputs) sink with stagewell-black alpha, and interactive states ride the four-stop white ladder (4%, 6%, 10%, 12%). Type contrast carries hierarchy more than color does.
 
-Density is studied. The board sits at 720px on desktop and stays there on normal laptop-height viewports; it only scales down on severely short desktop windows, with a 560px floor, so the recording artifact does not unexpectedly collapse. The transport console spans the full workspace width beneath the board column and the side panel; the side panel rides a 560–620px column (`clamp(560px, 32vw, 620px)`) and breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
+Density is studied. In the two-column desktop layout the board sizes itself to the viewport height: a 720px cap, a 560px floor, scaling continuously (`min(720px, max(560px, calc(100dvh - 410px)))`, where 410px is the worst-case vertical chrome budget) so the board and the transport console are always on screen together; only below the floor does the page scroll rather than shrink the recording artifact further. The transport console spans the full workspace width beneath the board column and the side panel; the side panel rides a 560–620px column (`clamp(560px, 32vw, 620px)`) and breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
 
 **Key Characteristics:**
 - Dark navy backdrop with a steel-blue key-light pool centered on the board column. Cream-on-blue board, never reversed.
@@ -178,7 +178,7 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 - **Studio Cream** (`#f1ecde`, `~oklch(94% 0.02 80)`). The light squares, the logo glyph, the Play-button glyph. Warm enough to balance the cool navy, never `#fff`.
 
 ### Tertiary
-- **Markup Amber** (`#ffd54f`, `~oklch(89% 0.16 95)`). User highlights and last-move tinting. Used at 55% alpha on the highlighted square, 32% alpha on the last-move tinting, 20% alpha as a chip background, and full saturation on the chip text. Reads like a highlighter pen across a printed page.
+- **Markup Amber** (`#ffd54f`, `~oklch(89% 0.16 95)`). User highlights and last-move tinting. Used at 55% alpha on the highlighted square, 20% alpha as a chip background, and full saturation on the chip text. Last-move tinting is per-square-color: 32% alpha on cream squares, 52% on blue squares (at 32% the mix over steel blue lands on a desaturated sage that stops reading as amber, especially after a 480p downscale). Reads like a highlighter pen across a printed page.
 - **Annotation Persimmon** (`#ffaa3c`, `~oklch(79% 0.17 65)`). The arrow color, used at 85% alpha on the stroke, 20% alpha as a chip background. The bolder, warmer cousin of Amber. Together they form the "annotation pens" pair.
 
 ### Neutral
@@ -192,13 +192,13 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 - **Stage Mist** (`#6b7596`, `~oklch(50% 0.04 263)`). Footer text, faintest event-time labels.
 
 ### Errors
-- **Studio Vermillion** (`#cf5d5d`, `~oklch(58% 0.16 22)`). Reset-event marker, error chip background base. Used at 22% alpha for the reset marker, 30% alpha for the err chip, with derived light tints (`#ff7b7b`, `#ff9b9b`, `#ffb4b4`) for line numbers, error text, and reset-event chip text. The derivatives live in DESIGN.json's `colorMeta.studio-vermillion.tonalRamp`.
+- **Studio Vermillion** (`#cf5d5d`, `~oklch(58% 0.16 22)`). Reset-event marker, error chip background base, and the check glow under a checked king (a radial fade from 95% to 55% alpha, gone by the square edge; derived from the engine position, never from a `+` in the SAN). Used at 22% alpha for the reset marker, 30% alpha for the err chip, with derived light tints (`#ff7b7b`, `#ff9b9b`, `#ffb4b4`) for line numbers, error text, and reset-event chip text. The derivatives live in DESIGN.json's `colorMeta.studio-vermillion.tonalRamp`.
 
 ### Named Rules
 
 **The Five Meanings Rule.** Five colors carry semantic load: blue for moves, amber for highlights, persimmon for arrows, grey-mist for clears, vermillion for resets and errors. Every chip, every timeline marker pin, the scrub-fill, the last-move tint, the active-event-row stripe and tint, and the Now-Playing rail pull from this list. Don't introduce a sixth without a sixth event kind to attach it to.
 
-**The One Gradient Rule.** The system has exactly one accent gradient: the 44×44 Play button (`linear-gradient(135deg, studio-steel-blue, deep-set-blue)`). The scrubber's fill is a tonal blue gradient internal to the timeline component and counts as part of the same affordance, not a second gradient. The side panel and console backgrounds (`--surface-panel`, `--surface-console`) are vertical chalk-alpha washes capped under 7% opacity — elevation treatment, not accents; they must stay subtle enough to read as flat surfaces on a 480p recording. Every other accent is a single solid hex. New components do not introduce accent gradients.
+**The One Gradient Rule.** The system has exactly one accent gradient: the 44×44 Play button (`linear-gradient(135deg, studio-steel-blue, deep-set-blue)`). The scrubber's fill is a tonal blue gradient internal to the timeline component and counts as part of the same affordance, not a second gradient. Board-layer functional visuals (the capture flash, the check glow) are radial fades of a single palette color; they are part of the recorded artifact, not chrome accents, and don't count against this rule. The side panel and console backgrounds (`--surface-panel`, `--surface-console`) are vertical chalk-alpha washes capped under 7% opacity — elevation treatment, not accents; they must stay subtle enough to read as flat surfaces on a 480p recording. Every other accent is a single solid hex. New components do not introduce accent gradients.
 
 **The Annotation-Pens Rule.** Amber and Persimmon are not two colors; they are a pair, used together to imply a creator's two-pen toolkit. Highlights belong to Amber. Arrows belong to Persimmon. Don't cross them.
 
@@ -213,7 +213,7 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 - **Display** (Jakarta, 800, 22px, line-height 1.1, letter-spacing 0): the "Gambit" wordmark in the header. The single largest label in the UI; nothing competes with it.
 - **Headline** (Jakarta, 700, 13px, letter-spacing 0, uppercase): panel titles ("Events", "Script"). Small and compact, set in caps. The size restraint is the point; this is a label, not a heading.
 - **Title** (Jakarta, 600, 13.5px): tab labels, controls labels, button text. Sits between Headline and Body in optical weight.
-- **Numeric** (Mono, 600/700, 13px): the time-readout (`00:14 / 00:33`). Bumped to 700 for the current time, 600 for the separator and total, color-graded by role. Monospaced so digit width is stable across frames; the readout never reflows during playback. Critical to the cinematic principle.
+- **Numeric** (Mono, 600/700, 12.5px): the time-readout (`00:14.0 / 00:33.5`). Bumped to 700 for the current time, 600 for the separator and total, color-graded by role. Monospaced so digit width is stable across frames; the readout never reflows during playback. Critical to the cinematic principle.
 - **Body** (Mono, 500, 12.5px, line-height 1.7): the script editor textarea, the event-list event body, error rows. Line-height is generous (1.7) because the editor is a working surface; users read and write here.
 - **Label** (Mono, 700, 10.5px, letter-spacing 0, uppercase): the event-kind chips ("MOVE", "HIGHLIGHT", "ARROW", "CLEAR", "RESET"). Small, compact, in caps; functions as a typographic chip color in addition to its own background-tint chip color.
 
@@ -261,7 +261,7 @@ The active event row uses a 2px inset stripe to mark the current event, applied 
 
 **Primary action (Play / Pause).** A 44×44 square button with a `linear-gradient(135deg, studio-steel-blue → deep-set-blue)` background, `studio-cream` glyph, 10px radius, brand-bloom shadow. Hover scales the button to 1.04 (transform, not layout); active scales to 0.96. The glyph swaps between play / pause / restart icons depending on state; the icon track stays at 22×22 inside the 44×44 container.
 
-**Secondary action (Restart, future ctrl-buttons).** A 36×36 square button, `rgba(255,255,255,0.06)` resting background, `rim-light-pewter` glyph, 10px radius. Hover lifts to `rgba(255,255,255,0.12)` and `sodium-chalk` glyph; no transform on hover. Used for non-primary transport actions.
+**Secondary action (Rewind, future ctrl-buttons).** A 36×36 square button, `rgba(255,255,255,0.06)` resting background, `rim-light-pewter` glyph, 10px radius. Hover lifts to `rgba(255,255,255,0.12)` and `sodium-chalk` glyph; no transform on hover. Used for non-primary transport actions. The rewind button returns the playhead to 0 while preserving the play state (paused stays paused), so it never duplicates the primary button's end-state replay.
 
 **Speed selector.** A 4-button mono-font segmented group inside a recessed `stagewell-black` 28% track (10px radius, 1px `--line-faint` inset ring, 3px padding). Each segment is `5px 9px` padding, 6px radius, default `foley-slate` text on transparent, active `sodium-chalk` text on `rgba(255,255,255,0.12)` background. Type is JetBrains Mono 11.5px / 600. Reads like a video editor's transport-rate selector.
 
@@ -292,6 +292,8 @@ The chip color and the timeline marker color are linked: scrubber markers use th
 
 **Script editor textarea.** Borderless transparent background; relies on its container (the side panel) for surface. Mono Body type (12.5px / 500 / 1.7 line-height), `16px 18px` internal padding, `sodium-chalk` text. The native focus outline is replaced by `:focus-visible { box-shadow: inset 2px 0 0 var(--color-camera-highlight-blue) }` so keyboard focus shows a left strand without disturbing layout. The lack of border is intentional: the editor is a working surface inside a documented panel, not a form field that needs distinguishing.
 
+**Narration track.** The Script panel's third section imports a narration audio file (`accept="audio/*"`, object URL, session-only by design; audio blobs don't belong in the localStorage drafts). The audio element is invisible and follows the playback clock: play/pause, seeks (0.25s drift snap), and the speed selector via `playbackRate`. Narration longer than the chess script extends playback duration, mirroring the subtitle rule. The clock stays the single source of truth; audio never drives the board. The filename may tail-truncate, the duration readout next to it never does.
+
 ### Signature Component: the Pro-Grade Timeline Ruler
 
 The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, speed selector. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, stretching across the full workspace width, 6px backdrop-blur, mono numerics that never reflow.
@@ -300,7 +302,7 @@ The ruler stacks three rows over the rail:
 
 - **Pin row (top, 18px)**. Kind-colored marker buttons hang above the rail. Each pin is 5×16 at rest (5×22 on hover/focus), with a hairline 1px tail dropping 7px to the rail so the pin feels anchored. Pins are real `<button type="button">` elements with `aria-label="Seek to mm:ss: <event raw>"`, and a `::before` pseudo-element extends the hit area to 44×44 to clear WCAG 2.5.5 without disturbing visual rhythm.
 - **Rail (middle, 6px)**. The same `tonal-white-08` track and `studio-steel-blue → camera-highlight-blue` linear-gradient fill as before. Pill radius (`999px`).
-- **Tick row (bottom, 14px)**. Mono-numeric time labels at adaptive intervals: every 5s for scripts ≤30s, every 10s ≤60s, every 15s ≤90s, every 30s ≤180s, every 60s above. Each label is preceded by a 1px `tonal-white-10` tick mark hung above it, anchoring the ruler visually.
+- **Tick row (bottom, 14px)**. Mono-numeric time labels (10.5px / 500, foley-slate; the Label-tier size floor, anything smaller aliases on downscaled recordings) at adaptive intervals: every 5s for scripts ≤30s, every 10s ≤60s, every 15s ≤90s, every 30s ≤180s, every 60s above. Each label is preceded by a 1px `tonal-white-10` tick mark hung above it, anchoring the ruler visually.
 - **Playhead strand**. Above and across all three rows: a 1px-wide vertical line in `sodium-chalk` with a top-to-bottom alpha gradient (55% → 18%), capped at the rail center by a 14×14 sodium-chalk thumb wearing the Scrub-thumb halo. The strand reads at small recording resolutions; the thumb anchors precise scrub.
 
 Native `<input type="range">` is rendered transparent and stretched over the entire ruler; click-and-drag works anywhere in the console, and arrow keys move time at 1s steps via the global keyboard handler.
@@ -321,6 +323,12 @@ A slim mono strip under the board (below the subtitle track), max-width matched 
 - **Idle**: no event in the last 2.5 seconds. The strip keeps its 48px frame but empties completely — text, stripe, and divider all clear (`:empty` turns the border transparent), so the idle frame is invisible on a recording.
 
 **A11y.** The strip carries `role="status" aria-live="polite" aria-atomic="true"`, so screen readers announce kind + body when the active event changes without forcing focus.
+
+**Mobile (≤600px).** The stable-dimensions rule serves screen recording, which does not happen on a phone: when no SRT is loaded at all, the empty subtitle track collapses (`.subtitle-strip.no-track { display: none }`) instead of pushing the transport down; with cues loaded both tracks keep their reserved heights so playback never shifts layout. The board's corner radius also steps from 14px to 8px (`--board-radius`) so the rank-8 coordinate survives the corner clip at ~343px board sizes.
+
+### Replay Panel Follow-Scroll
+
+The event list tracks the playhead: whenever the most recently reached event changes, the list scrolls just enough to keep that row visible (`block: nearest` semantics, container-only, never the page). Manual reading wins over following: a mouse pointer entering the list pauses the follow, leaving resumes it. Touch pointers do not pause it (no hover concept). This is the video-editor convention the transport already commits to; without it the active-row stripe is invisible for the second half of any script longer than the panel.
 
 ## 6. Do's and Don'ts
 

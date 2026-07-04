@@ -10,10 +10,21 @@ export const tokens = {
   coordOnLight: '#5d8fc9',
   coordOnDark: '#f1ecde',
 
-  // Board overlays
+  // Board overlays. Last-move amber needs a higher alpha on the blue dark
+  // squares: at 0.32 the mix lands on a desaturated sage that no longer
+  // reads as amber, especially after a 480p recording downscale.
   boardHighlight: 'rgba(255, 213, 79, 0.55)',
-  boardLastMove: 'rgba(255, 213, 79, 0.32)',
+  boardLastMoveOnLight: 'rgba(255, 213, 79, 0.32)',
+  boardLastMoveOnDark: 'rgba(255, 213, 79, 0.52)',
   boardArrow: 'rgba(255, 170, 60, 0.85)',
+  // Check glow under the checked king: studio-vermillion radial, dense at
+  // the center so it survives a 480p downscale, gone before the square edge
+  // so it reads as danger on the king, not a painted square. The alpha-0
+  // edge keeps the vermillion RGB because gradient interpolation blends
+  // toward its hue; all three stops must retune together.
+  boardCheckCenter: 'rgba(207, 93, 93, 0.95)',
+  boardCheckMid: 'rgba(207, 93, 93, 0.55)',
+  boardCheckEdge: 'rgba(207, 93, 93, 0)',
 
   // Capture flash
   captureFlash:
