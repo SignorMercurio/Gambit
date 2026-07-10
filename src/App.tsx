@@ -15,7 +15,21 @@ import {
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
-import { parseScript, type ParsedEvent, type TimelineEvent } from './lib/timeline';
+import { MoveList } from './components/MoveList';
+import {
+  planLineInsert,
+  planMoveGesture,
+  removeLines,
+  setLineTime,
+  type ScriptEditPlan,
+} from './lib/scriptEdit';
+import {
+  fmtTime,
+  lastEventIndexAt,
+  parseScript,
+  type ParsedEvent,
+  type TimelineEvent,
+} from './lib/timeline';
 import { markerColors } from './lib/tokens';
 
 type Positions = Record<string, PiecePos>;
@@ -111,61 +125,10 @@ function movePosition(
   return { positions: out, captureFlash };
 }
 
-const NOW_PLAYING_LIFETIME = 2.5;
-
-// Deciseconds via `Math.floor(t*10)` avoids 9.95→10 rollover.
-// `fine`: 'never' = mm:ss; 'auto' = mm:ss[.t] when fractional; 'always' = mm:ss.t.
-function fmtTime(t: number, fine: 'never' | 'auto' | 'always' = 'never'): string {
-  const totalDeciseconds = Math.max(0, Math.floor(t * 10));
-  const totalSeconds = Math.floor(totalDeciseconds / 10);
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  const tenths = totalDeciseconds % 10;
-  const head = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  if (fine === 'never') return head;
-  if (fine === 'auto' && tenths === 0) return head;
-  return `${head}.${tenths}`;
-}
-
 function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(
     target.closest('button, input, textarea, select, [role="button"], [role="tab"], [contenteditable="true"]'),
   );
-}
-
-const KIND_COLOR_VAR: Record<ParsedEvent['kind'], string> = {
-  move: 'var(--color-studio-steel-blue)',
-  highlight: 'var(--color-markup-amber)',
-  arrow: 'var(--color-annotation-persimmon)',
-  clear: 'var(--color-clear-marker)',
-  reset: 'var(--color-studio-vermillion)',
-  start: 'var(--color-studio-vermillion)',
-  fen: 'var(--color-studio-vermillion)',
-  branch: 'var(--color-rim-light-pewter)',
-  mainline: 'var(--color-rim-light-pewter)',
-};
-
-function eventBody(e: Exclude<TimelineEvent, { error: string }>): string {
-  switch (e.kind) {
-    case 'move':
-      return e.san;
-    case 'highlight':
-      return e.squares.join(', ');
-    case 'arrow':
-      return `${e.from} → ${e.to}`;
-    case 'clear':
-      return 'cleared annotations';
-    case 'reset':
-      return 'board reset';
-    case 'start':
-      return 'initial position';
-    case 'fen':
-      return e.fen;
-    case 'branch':
-      return 'begin variation';
-    case 'mainline':
-      return 'end variation';
-  }
 }
 
 function generateTicks(duration: number): number[] {
@@ -175,26 +138,27 @@ function generateTicks(duration: number): number[] {
   return ticks;
 }
 
-// Largest index i such that events[i].t <= time, or -1 when none. Events with
-// t === time count as reached (inclusive on the lower side). The single home
-// of the playhead→event-index rule: the world snapshot pick, the Now-Playing
-// caption, and the follow-scroll all derive from this.
-function lastEventIndexAt(events: TimelineEvent[], time: number): number {
-  let lo = 0;
-  let hi = events.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (events[mid].t <= time) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo - 1;
+// The one paused-landing convention (see the AGENTS.md pitfall): every timed
+// visual derives from `time - event.t`, so at age 0 the moved piece,
+// highlight, and arrow are all invisible. Land just past t — +0.5s when
+// there's room, otherwise as late as the gap to the next event allows,
+// always strictly between the two. `nextT` must be the first *strictly
+// later* event (equal-time events fire together), or undefined at the tail.
+function landBetween(t: number, nextT?: number): number {
+  if (nextT == null) return t + 0.5;
+  const gap = nextT - t;
+  return t + Math.min(0.5, Math.max(gap - 0.05, gap / 2));
 }
 
 const DRAFT_KEYS = {
   script: 'gambit:draft:script',
   subtitles: 'gambit:draft:subtitles',
   fen: 'gambit:draft:start-fen',
+  scriptView: 'gambit:draft:script-view',
 } as const;
+
+const SCRIPT_CHANGED_DURING_GESTURE_ERROR =
+  'Cannot record this gesture because the script changed while the pointer was held. Try again from the updated position.';
 
 function loadDraft(key: string, fallback: string): string {
   if (typeof window === 'undefined') return fallback;
@@ -242,6 +206,46 @@ function readSelectedTextFile(
   reader.readAsText(file);
 }
 
+// Import affordance: a labelled button driving a hidden file input. The
+// three import surfaces (script, subtitles, narration) share the wiring so
+// accept types and the button/input pairing stay in one place.
+function ImportButton({
+  id,
+  accept,
+  label,
+  onChange,
+  describedBy,
+}: {
+  id: string;
+  accept: string;
+  label: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  describedBy?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className="upload-btn"
+        aria-label={label}
+        aria-describedby={describedBy}
+        onClick={() => inputRef.current?.click()}
+      >
+        Import
+      </button>
+      <input
+        id={id}
+        ref={inputRef}
+        className="file-input"
+        type="file"
+        accept={accept}
+        onChange={onChange}
+      />
+    </>
+  );
+}
+
 export default function App() {
   const [scriptText, setScriptText] = useDraftText(DRAFT_KEYS.script, DEFAULT_SCRIPT);
   const [scriptFileName, setScriptFileName] = useState<string | null>(null);
@@ -275,29 +279,37 @@ export default function App() {
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
-  const [showEditor, setShowEditor] = useState(false);
+  // Side panel: the script editor is the primary surface; setup (start FEN,
+  // subtitles, narration audio) lives on its own quieter page.
+  const [tab, setTab] = useState<'script' | 'setup'>('script');
+  // Script panel view: PGN-style structured editor by default, raw text as
+  // the fallback for comments and exotic edits. Persisted like the drafts.
+  const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'board');
+  const scriptView: 'board' | 'text' = scriptViewRaw === 'text' ? 'text' : 'board';
+  const scriptTextRef = useRef(scriptText);
+  scriptTextRef.current = scriptText;
+  // Pre-insert script snapshot for one-step undo of the last board gesture or
+  // structured edit. Hand edits clear it so undo never reverts typing.
+  const [gestureUndo, setGestureUndo] = useState<string | null>(null);
+  const [scriptEditError, setScriptEditError] = useState<string | null>(null);
 
   useEffect(() => {
     setTime((t) => Math.min(t, duration));
   }, [duration]);
 
   const editorLabelId = useId();
-  const eventsLabelId = useId();
   const subtitleLabelId = useId();
   const scriptFileInputId = useId();
   const subtitleFileInputId = useId();
   const narrationLabelId = useId();
   const narrationFileInputId = useId();
   const narrationErrorId = useId();
-  const replayTabId = useId();
+  const setupTabId = useId();
   const scriptTabId = useId();
   const panelId = useId();
   const fenErrorId = useId();
-  const replayTabRef = useRef<HTMLButtonElement>(null);
+  const setupTabRef = useRef<HTMLButtonElement>(null);
   const scriptTabRef = useRef<HTMLButtonElement>(null);
-  const scriptFileInputRef = useRef<HTMLInputElement>(null);
-  const subtitleFileInputRef = useRef<HTMLInputElement>(null);
-  const narrationFileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const onTabKeyDown = useCallback(
@@ -305,20 +317,22 @@ export default function App() {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       e.stopPropagation();
-      const next = !showEditor;
-      setShowEditor(next);
+      const next = tab === 'script' ? 'setup' : 'script';
+      setTab(next);
       // Match the ARIA Tabs pattern: focus follows selection on arrow keys.
       requestAnimationFrame(() => {
-        (next ? scriptTabRef : replayTabRef).current?.focus();
+        (next === 'script' ? scriptTabRef : setupTabRef).current?.focus();
       });
     },
-    [showEditor],
+    [tab],
   );
 
   const onScriptFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     readSelectedTextFile(e, (text, fileName) => {
       setScriptText(text);
       setScriptFileName(fileName);
+      setGestureUndo(null);
+      setScriptEditError(null);
     });
   }, []);
 
@@ -580,7 +594,11 @@ export default function App() {
       });
     }
     if (branchStack.length > 0) {
-      list.push(snapshot());
+      // Rebuild the final snapshot (same board state, updated errors) rather
+      // than pushing an extra one: the world selector reads at most
+      // snapshots[events.length], so an appended slot is never reachable and
+      // the unpaired-br error would stay invisible forever.
+      list[list.length - 1] = snapshot();
     }
 
     return list;
@@ -602,6 +620,7 @@ export default function App() {
 
     return {
       positions: snap.positions,
+      chessState: snap.chessState,
       lastMove: snap.lastMove,
       highlights: visibleHighlights,
       arrows: visibleArrows,
@@ -610,6 +629,154 @@ export default function App() {
       check: snap.check,
     };
   }, [snapshots, events, time]);
+
+  // landBetween with the boundary looked up from the current events — for
+  // freshly written lines the events array is stale, so those callers pass
+  // the boundary they just placed to landBetween directly.
+  const landAfter = useCallback(
+    (t: number): number => landBetween(t, events[lastEventIndexAt(events, t) + 1]?.t),
+    [events],
+  );
+
+  // Event-anchored seek: while playing, land on t and let it animate; while
+  // paused, land just past it so the click shows what it named — and never
+  // shows more (the landing stays clamped before the next event).
+  const seekEvent = useCallback(
+    (t: number) => {
+      setTime(playing ? t : landAfter(t));
+    },
+    [playing, landAfter],
+  );
+
+  // One commit contract for every programmatic script edit (gestures and
+  // structured edits): snapshot the prior text for one-step undo, apply,
+  // drop the imported-file name. While paused, `landT` moves the playhead
+  // just past what the edit wrote so the board shows its settled result,
+  // and nothing more.
+  const commitScriptEdit = useCallback(
+    (next: string, landT?: number) => {
+      setGestureUndo(scriptText);
+      setScriptEditError(null);
+      setScriptText(next);
+      setScriptFileName(null);
+      if (landT != null && !playing) setTime(landT);
+    },
+    [scriptText, playing, setScriptText],
+  );
+
+  // Both gestures reject the same way: the script text changed between
+  // pointer-down and pointer-up (hand edit, undo), so any plan would be built
+  // against text the gesture never previewed. Leaves the script untouched.
+  const gestureIsStale = useCallback((): boolean => {
+    if (scriptTextRef.current === scriptText) return false;
+    setScriptEditError(SCRIPT_CHANGED_DURING_GESTURE_ERROR);
+    return true;
+  }, [scriptText]);
+
+  // The one way a planner's edit reaches React: surface a conflict, or commit
+  // the new text and land the paused playhead between the line it wrote and
+  // whatever follows.
+  const applyEditPlan = useCallback(
+    (plan: ScriptEditPlan) => {
+      if (plan.kind === 'conflict') setScriptEditError(plan.error);
+      else commitScriptEdit(plan.text, landBetween(plan.t, plan.nextT));
+    },
+    [commitScriptEdit],
+  );
+
+  // Board gestures (Script tab only): each gesture becomes one script line
+  // stamped at the playhead — stamping policy lives in planLineInsert.
+  const recordGestureLine = useCallback(
+    (body: string) => {
+      if (gestureIsStale()) return;
+      applyEditPlan(planLineInsert(events, scriptText, time, body));
+    },
+    [scriptText, time, events, gestureIsStale, applyEditPlan],
+  );
+
+  const undoGestureLine = useCallback(() => {
+    if (gestureUndo == null) return;
+    setScriptText(gestureUndo);
+    setGestureUndo(null);
+    setScriptEditError(null);
+  }, [gestureUndo, setScriptText]);
+
+  const legalTargets = useCallback(
+    (from: string): string[] => {
+      const { f, r } = Chess.sqToIdx(from);
+      const out = new Set<string>();
+      for (const m of Chess.legalMoves(world.chessState)) {
+        if (m.from[0] === f && m.from[1] === r) out.add(Chess.idxToSq(m.to[0], m.to[1]));
+      }
+      return [...out];
+    },
+    [world.chessState],
+  );
+
+  // Move gestures: chess resolution (legality, SAN, same-move comparison)
+  // happens here against the current position; the branch-aware policy —
+  // advance / extend / wrap / plain-insert fallback — is planMoveGesture's
+  // (scriptEdit.ts). The plan is either a seek or new text plus landing
+  // boundaries; committing stays a React concern.
+  const onMoveGesture = useCallback(
+    (from: string, to: string) => {
+      if (gestureIsStale()) return;
+      const f = Chess.sqToIdx(from);
+      const t = Chess.sqToIdx(to);
+      const candidates = Chess.legalMoves(world.chessState).filter(
+        (m) => m.from[0] === f.f && m.from[1] === f.r && m.to[0] === t.f && m.to[1] === t.r,
+      );
+      // Promotion records a queen; underpromotion stays a hand edit.
+      const mv = candidates.find((m) => !m.promotion || m.promotion === 'q');
+      if (!mv) return;
+      const san = Chess.sanForMove(world.chessState, mv);
+      // Coordinate comparison, not SAN string equality: the scripted line
+      // may carry check/annotation suffixes the generated SAN never has.
+      const matchesScripted = (scriptedSan: string) => {
+        const scripted = Chess.parseSAN(scriptedSan, world.chessState);
+        return (
+          !!scripted &&
+          scripted.from[0] === mv.from[0] &&
+          scripted.from[1] === mv.from[1] &&
+          scripted.to[0] === mv.to[0] &&
+          scripted.to[1] === mv.to[1] &&
+          (scripted.promotion ?? null) === (mv.promotion ?? null)
+        );
+      };
+      const plan = planMoveGesture(events, scriptText, time, san, matchesScripted);
+      if (plan.kind === 'seek') {
+        setScriptEditError(null);
+        seekEvent(plan.t);
+      } else {
+        applyEditPlan(plan);
+      }
+    },
+    [world.chessState, events, time, scriptText, seekEvent, gestureIsStale, applyEditPlan],
+  );
+
+  const onArrowGesture = useCallback(
+    (from: string, to: string) => recordGestureLine(`${from}->${to}`),
+    [recordGestureLine],
+  );
+
+  const onHighlightGesture = useCallback(
+    (sq: string) => recordGestureLine(`hl ${sq}`),
+    [recordGestureLine],
+  );
+
+  // Structured edits from the PGN script view. Free-form times by design:
+  // the script re-sorts (and the line relocates) when an edit crosses other
+  // events, and any structural damage surfaces as visible errors — same
+  // snapshot-undo safety net as the gestures.
+  const onRetimeEvent = useCallback(
+    (line: number, t: number) => commitScriptEdit(setLineTime(scriptText, line, t)),
+    [scriptText, commitScriptEdit],
+  );
+
+  const onDeleteEvents = useCallback(
+    (lines: number[]) => commitScriptEdit(removeLines(scriptText, lines)),
+    [scriptText, commitScriptEdit],
+  );
 
   // Rewind preserves the play state (editor convention): while playing it
   // replays from 0; while paused or at the end it returns to 0 paused. The
@@ -648,41 +815,17 @@ export default function App() {
   );
   const ticks = useMemo(() => generateTicks(duration), [duration]);
 
-  // Variation depth per event for the side panel's nested indent. The
-  // `branch` row sits at parent depth (so it visibly opens a new level
-  // beneath it), and the matching `mainline` row sits at parent depth too
-  // (so closing the variation aligns with where it started).
-  const eventDepths = useMemo(() => {
-    const depths: number[] = [];
-    let depth = 0;
-    for (const e of events) {
-      if ('error' in e) {
-        depths.push(depth);
-        continue;
-      }
-      if (e.kind === 'branch') {
-        depths.push(depth);
-        depth++;
-      } else if (e.kind === 'mainline') {
-        depth = Math.max(0, depth - 1);
-        depths.push(depth);
-      } else {
-        depths.push(depth);
-      }
-    }
-    return depths;
-  }, [events]);
-
-  // Now-Playing: most recent past non-error event within the lifetime window.
-  const currentEvent = useMemo<ParsedEvent | null>(() => {
-    for (let i = lastEventIndexAt(events, time); i >= 0; i--) {
-      const e = events[i];
-      if ('error' in e) continue;
-      if (time - e.t >= NOW_PLAYING_LIFETIME) return null;
-      return e;
-    }
-    return null;
-  }, [events, time]);
+  // Position context before each event (move numbering for the PGN list):
+  // snapshots[i] is the state BEFORE events[i], so its fullmove/turn label
+  // the move that events[i] plays.
+  const moveStates = useMemo(
+    () =>
+      events.map((_, i) => ({
+        fullmove: snapshots[i].chessState.fullmove,
+        turn: snapshots[i].chessState.turn,
+      })),
+    [events, snapshots],
+  );
 
   const activeSubtitle = useMemo(() => getActiveSubtitle(subtitleCues, time), [subtitleCues, time]);
 
@@ -690,7 +833,10 @@ export default function App() {
   // visible, like a video editor's timeline list. Manual reading wins:
   // following pauses while a mouse pointer is over the list and resumes
   // when it leaves. Scrolls only the list container, never the page.
-  const eventListRef = useRef<HTMLOListElement | null>(null);
+  // The Moves list follows the playhead only while playback runs; while
+  // paused it scrolls independently — editing must not fight the scroll
+  // position. Hovering pauses the follow so a click target stays put.
+  const editListRef = useRef<HTMLDivElement | null>(null);
   const followPausedRef = useRef(false);
   const pauseFollowOnHover = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'mouse') followPausedRef.current = true;
@@ -698,18 +844,25 @@ export default function App() {
   const resumeFollowOnLeave = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'mouse') followPausedRef.current = false;
   }, []);
+  // React fires no pointerleave when the hovered list unmounts (keyboard
+  // tab/view switch), so the pause must reset when the list goes away.
+  useEffect(() => {
+    if (tab !== 'script' || scriptView !== 'board') followPausedRef.current = false;
+  }, [tab, scriptView]);
 
   const reachedEventIndex = useMemo(() => lastEventIndexAt(events, time), [events, time]);
 
   useEffect(() => {
-    if (followPausedRef.current) return;
-    const list = eventListRef.current;
+    if (!playing || followPausedRef.current) return;
+    const list = editListRef.current;
     if (!list) return;
     if (reachedEventIndex < 0) {
       list.scrollTop = 0;
       return;
     }
-    const row = list.children[reachedEventIndex] as HTMLElement | undefined;
+    // The PGN list nests event elements, so the reached event is located by
+    // its data-evi attribute rather than by child index.
+    const row = list.querySelector<HTMLElement>(`[data-evi="${reachedEventIndex}"]`);
     if (!row) return;
     const listRect = list.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
@@ -718,7 +871,7 @@ export default function App() {
     } else if (rowRect.bottom > listRect.bottom) {
       list.scrollTop += rowRect.bottom - listRect.bottom;
     }
-  }, [reachedEventIndex, showEditor]);
+  }, [reachedEventIndex, playing, tab, scriptView]);
 
   const playState: 'play' | 'pause' | 'replay' = playing
     ? 'pause'
@@ -726,6 +879,78 @@ export default function App() {
     ? 'replay'
     : 'play';
   const playLabel = playState === 'pause' ? 'Pause' : playState === 'replay' ? 'Restart playback' : 'Play';
+
+  // Event pins depend only on the parsed script, not the clock — memoized so
+  // 60Hz frames reuse the element and React bails out of the subtree.
+  const timelinePins = useMemo(
+    () => (
+      <div className="timeline-pins">
+        {eventMarkers.map((e, i) => (
+          <button
+            type="button"
+            key={i}
+            className="marker"
+            aria-label={`Seek to ${fmtTime(e.t, 'auto')}: ${e.raw}`}
+            onClick={() => seekEvent(e.t)}
+            style={{
+              left: `${(e.t / duration) * 100}%`,
+              color: markerColors[e.kind],
+            }}
+          />
+        ))}
+      </div>
+    ),
+    [eventMarkers, duration, seekEvent],
+  );
+
+  // Rendered at the bottom of whichever panel page is open: an error anywhere
+  // (FEN, script, subtitles, narration) must stay visible on both pages.
+  const errorsBlock = useMemo(() => (initialSetup.error ||
+    narrationError ||
+    scriptEditError ||
+    world.errors.length > 0 ||
+    subtitleResult.errors.length > 0) && (
+    <div className="errors" role="alert" aria-live="polite">
+      {initialSetup.error && (
+        <div className="err-row">
+          <span className="err-line">FEN</span>
+          <span id={fenErrorId}>{initialSetup.error}</span>
+        </div>
+      )}
+      {narrationError && (
+        <div className="err-row">
+          <span className="err-line">AUD</span>
+          <span id={narrationErrorId}>{narrationError}</span>
+        </div>
+      )}
+      {scriptEditError && (
+        <div className="err-row">
+          <span className="err-line">EDIT</span>
+          <span>{scriptEditError}</span>
+        </div>
+      )}
+      {world.errors.map((er, i) => (
+        <div key={i} className="err-row">
+          <span className="err-line">L{er.line}</span>
+          <span>{'error' in er ? er.error : ''}</span>
+        </div>
+      ))}
+      {subtitleResult.errors.map((er, i) => (
+        <div key={`subtitle-${i}`} className="err-row">
+          <span className="err-line">S{er.line}</span>
+          <span>{er.error}</span>
+        </div>
+      ))}
+    </div>
+  ), [
+    initialSetup.error,
+    narrationError,
+    scriptEditError,
+    world.errors,
+    subtitleResult.errors,
+    fenErrorId,
+    narrationErrorId,
+  ]);
 
   return (
     <div className="app">
@@ -753,6 +978,11 @@ export default function App() {
             captureFlash={world.captureFlash}
             check={world.check}
             time={time}
+            interactive={tab === 'script'}
+            legalTargets={legalTargets}
+            onMoveGesture={onMoveGesture}
+            onArrowGesture={onArrowGesture}
+            onHighlightGesture={onHighlightGesture}
           />
 
           <div
@@ -763,26 +993,6 @@ export default function App() {
             aria-atomic="true"
           >
             <p>{activeSubtitle ? formatSubtitleText(activeSubtitle.text) : ''}</p>
-          </div>
-
-          <div
-            className={`now-playing ${currentEvent ? '' : 'is-empty'}`}
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            {currentEvent && (
-              <>
-                <span
-                  className="np-rail"
-                  style={{ background: KIND_COLOR_VAR[currentEvent.kind] }}
-                  aria-hidden="true"
-                />
-                <span className="np-time">{fmtTime(currentEvent.t, 'auto')}</span>
-                <span className={`np-kind kind-${currentEvent.kind}`}>{currentEvent.kind}</span>
-                <span className="np-body">{eventBody(currentEvent)}</span>
-              </>
-            )}
           </div>
 
           <div className="controls" role="group" aria-label="Playback controls">
@@ -836,21 +1046,7 @@ export default function App() {
             </div>
 
             <div className="timeline">
-              <div className="timeline-pins">
-                {eventMarkers.map((e, i) => (
-                  <button
-                    type="button"
-                    key={i}
-                    className="marker"
-                    aria-label={`Seek to ${fmtTime(e.t, 'auto')}: ${e.raw}`}
-                    onClick={() => setTime(e.t)}
-                    style={{
-                      left: `${(e.t / duration) * 100}%`,
-                      color: markerColors[e.kind],
-                    }}
-                  />
-                ))}
-              </div>
+              {timelinePins}
               <div className="timeline-rail">
                 <div className="scrub-fill" style={{ width: `${(time / duration) * 100}%` }} />
               </div>
@@ -913,63 +1109,129 @@ export default function App() {
             <button
               type="button"
               role="tab"
-              id={replayTabId}
+              id={scriptTabId}
               aria-controls={panelId}
-              aria-selected={!showEditor}
-              tabIndex={showEditor ? -1 : 0}
-              ref={replayTabRef}
+              aria-selected={tab === 'script'}
+              tabIndex={tab === 'script' ? 0 : -1}
+              ref={scriptTabRef}
               className="tab-btn"
-              onClick={() => setShowEditor(false)}
+              onClick={() => setTab('script')}
             >
-              Replay
+              Script
             </button>
             <button
               type="button"
               role="tab"
-              id={scriptTabId}
+              id={setupTabId}
               aria-controls={panelId}
-              aria-selected={showEditor}
-              tabIndex={showEditor ? 0 : -1}
-              ref={scriptTabRef}
+              aria-selected={tab === 'setup'}
+              tabIndex={tab === 'setup' ? 0 : -1}
+              ref={setupTabRef}
               className="tab-btn"
-              onClick={() => setShowEditor(true)}
+              onClick={() => setTab('setup')}
             >
-              Script
+              Setup
             </button>
           </div>
-          {showEditor ? (
-            <div
-              className="editor"
-              role="tabpanel"
-              id={panelId}
-              aria-labelledby={scriptTabId}
-            >
+          {/* One tabpanel shell for both pages: the ARIA wiring and the
+             errors-stay-visible rule live here once, not per page. */}
+          <div
+            className="editor"
+            role="tabpanel"
+            id={panelId}
+            aria-labelledby={tab === 'script' ? scriptTabId : setupTabId}
+          >
+            {tab === 'script' ? (
+              <>
               <div className="panel-header">
                 <div className="panel-title-row">
                   <h2 className="panel-title" id={editorLabelId}>Script</h2>
                   <div className="subtitle-actions">
+                    <div className="view-toggle" role="group" aria-label="Script view mode">
+                      <button
+                        type="button"
+                        className="view-btn"
+                        aria-pressed={scriptView === 'board'}
+                        onClick={() => setScriptView('board')}
+                      >
+                        Moves
+                      </button>
+                      <button
+                        type="button"
+                        className="view-btn"
+                        aria-pressed={scriptView === 'text'}
+                        onClick={() => setScriptView('text')}
+                      >
+                        Text
+                      </button>
+                    </div>
                     {scriptFileName && <span className="subtitle-file">{scriptFileName}</span>}
-                    <button
-                      type="button"
-                      className="upload-btn"
-                      aria-label="Import script file"
-                      onClick={() => scriptFileInputRef.current?.click()}
-                    >
-                      Import
-                    </button>
-                    <input
+                    {gestureUndo != null && (
+                      <button
+                        type="button"
+                        className="upload-btn"
+                        aria-label="Undo last board edit"
+                        onClick={undoGestureLine}
+                      >
+                        Undo
+                      </button>
+                    )}
+                    <ImportButton
                       id={scriptFileInputId}
-                      ref={scriptFileInputRef}
-                      className="file-input"
-                      type="file"
                       accept=".gambit,.txt,text/plain"
+                      label="Import script file"
                       onChange={onScriptFileChange}
                     />
                   </div>
                 </div>
-                <p className="panel-hint">
-                  [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · fen · br / ml
-                </p>
+                {/* One hint per view: syntax belongs to Text, gestures to Moves. */}
+                {scriptView === 'text' ? (
+                  <p className="panel-hint">
+                    [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · fen · br / ml
+                  </p>
+                ) : (
+                  <p className="panel-hint">
+                    Drag to move · right-drag arrow · right-click highlight
+                  </p>
+                )}
+              </div>
+              {scriptView === 'board' ? (
+                <MoveList
+                  events={events}
+                  states={moveStates}
+                  reachedEventIndex={reachedEventIndex}
+                  onSeek={seekEvent}
+                  listRef={editListRef}
+                  labelId={editorLabelId}
+                  onRetime={onRetimeEvent}
+                  onDelete={onDeleteEvents}
+                  onPointerEnter={pauseFollowOnHover}
+                  onPointerLeave={resumeFollowOnLeave}
+                />
+              ) : (
+                <textarea
+                  id="script-text"
+                  className="script-textarea"
+                  spellCheck={false}
+                  value={scriptText}
+                  aria-labelledby={editorLabelId}
+                  onChange={(e) => {
+                    setScriptText(e.target.value);
+                    setScriptFileName(null);
+                    // A hand edit invalidates the gesture-undo snapshot: undoing
+                    // past it would silently revert the user's typing too.
+                    setGestureUndo(null);
+                    setScriptEditError(null);
+                  }}
+                />
+              )}
+              </>
+            ) : (
+              <>
+              <div className="panel-header">
+                <div className="panel-title-row">
+                  <h2 className="panel-title">Setup</h2>
+                </div>
               </div>
               <div className="fen-field">
                 <label htmlFor="start-fen">Start FEN</label>
@@ -984,36 +1246,15 @@ export default function App() {
                   onChange={(e) => setFenText(e.target.value)}
                 />
               </div>
-              <textarea
-                id="script-text"
-                className="script-textarea"
-                spellCheck={false}
-                value={scriptText}
-                aria-labelledby={editorLabelId}
-                onChange={(e) => {
-                  setScriptText(e.target.value);
-                  setScriptFileName(null);
-                }}
-              />
-              <section className="subtitle-editor" aria-labelledby={subtitleLabelId}>
+              <section className="subtitle-editor grow" aria-labelledby={subtitleLabelId}>
                 <div className="subtitle-editor-head">
                   <label id={subtitleLabelId} htmlFor="subtitle-text">Subtitles</label>
                   <div className="subtitle-actions">
                     {subtitleFileName && <span className="subtitle-file">{subtitleFileName}</span>}
-                    <button
-                      type="button"
-                      className="upload-btn"
-                      aria-label="Import subtitle file"
-                      onClick={() => subtitleFileInputRef.current?.click()}
-                    >
-                      Import
-                    </button>
-                    <input
+                    <ImportButton
                       id={subtitleFileInputId}
-                      ref={subtitleFileInputRef}
-                      className="file-input"
-                      type="file"
                       accept=".srt,text/plain"
+                      label="Import subtitle file"
                       onChange={onSubtitleFileChange}
                     />
                   </div>
@@ -1052,109 +1293,23 @@ export default function App() {
                         </button>
                       </>
                     )}
-                    <button
-                      type="button"
-                      className="upload-btn"
-                      aria-label="Import narration audio file"
-                      aria-describedby={narrationError ? narrationErrorId : undefined}
-                      onClick={() => narrationFileInputRef.current?.click()}
-                    >
-                      Import
-                    </button>
-                    <input
+                    <ImportButton
                       id={narrationFileInputId}
-                      ref={narrationFileInputRef}
-                      className="file-input"
-                      type="file"
                       accept="audio/*"
+                      label="Import narration audio file"
+                      describedBy={narrationError ? narrationErrorId : undefined}
                       onChange={onNarrationFileChange}
                     />
                   </div>
                 </div>
                 <p className="panel-hint narration-hint">
-                  Follows the timeline: seek, pause, and speed stay in sync. Session-only; re-import
-                  after a reload.
+                  Follows the timeline. Session-only; re-import after a reload.
                 </p>
               </section>
-              {(initialSetup.error ||
-                narrationError ||
-                world.errors.length > 0 ||
-                subtitleResult.errors.length > 0) && (
-                <div className="errors" role="alert" aria-live="polite">
-                  {initialSetup.error && (
-                    <div className="err-row">
-                      <span className="err-line">FEN</span>
-                      <span id={fenErrorId}>{initialSetup.error}</span>
-                    </div>
-                  )}
-                  {narrationError && (
-                    <div className="err-row">
-                      <span className="err-line">AUD</span>
-                      <span id={narrationErrorId}>{narrationError}</span>
-                    </div>
-                  )}
-                  {world.errors.map((er, i) => (
-                    <div key={i} className="err-row">
-                      <span className="err-line">L{er.line}</span>
-                      <span>{'error' in er ? er.error : ''}</span>
-                    </div>
-                  ))}
-                  {subtitleResult.errors.map((er, i) => (
-                    <div key={`subtitle-${i}`} className="err-row">
-                      <span className="err-line">S{er.line}</span>
-                      <span>{er.error}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div
-              className="moves-panel"
-              role="tabpanel"
-              id={panelId}
-              aria-labelledby={replayTabId}
-            >
-              <div className="panel-header">
-                <div className="panel-title-row">
-                  <h2 className="panel-title" id={eventsLabelId}>Events</h2>
-                  <span className="panel-count">{events.length} total</span>
-                </div>
-              </div>
-              <ol
-                ref={eventListRef}
-                className="event-list"
-                aria-labelledby={eventsLabelId}
-                style={{ listStyle: 'none', margin: 0 }}
-                onPointerEnter={pauseFollowOnHover}
-                onPointerLeave={resumeFollowOnLeave}
-              >
-                {events.map((e, i) => {
-                  const past = e.t <= time;
-                  const active = e.t <= time && time - e.t < 0.6;
-                  const kind = 'error' in e ? 'err' : e.kind;
-                  const depth = eventDepths[i] ?? 0;
-                  return (
-                    <li key={i}>
-                      <button
-                        type="button"
-                        className={`event-row ${past ? 'past' : ''} ${active ? 'active' : ''} kind-${kind}`}
-                        aria-current={active ? 'step' : undefined}
-                        onClick={() => setTime(e.t)}
-                        style={{ ['--depth' as string]: depth } as React.CSSProperties}
-                      >
-                        <span className="ev-time">{fmtTime(e.t, 'auto')}</span>
-                        <span className={`ev-kind kind-${kind}`}>{kind}</span>
-                        <span className="ev-body">
-                          {'error' in e ? e.error : eventBody(e)}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ol>
-            </div>
-          )}
+              </>
+            )}
+            {errorsBlock}
+          </div>
         </aside>
       </main>
 

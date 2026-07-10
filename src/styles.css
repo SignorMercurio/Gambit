@@ -20,9 +20,7 @@
 
   /* Annotation pens */
   --color-markup-amber: #f0b429;
-  --color-markup-amber-soft: #f0c869;
   --color-annotation-persimmon: #f08c2e;
-  --color-annotation-persimmon-soft: #f0a86b;
 
   /* Text */
   --color-sodium-chalk: #e8ecf5;
@@ -38,7 +36,6 @@
   --color-error-line: #ff7b7b;
   --color-error-text: #ffb4b4;
   --color-reset-text: #ff9b9b;
-  --color-clear-text: #c0c0c0;
   --color-clear-marker: #9b9b9b;
 
   /* Tonal whites (interactive-state elevation ladder) */
@@ -64,26 +61,17 @@
   --well-24: rgba(15, 21, 37, 0.24);
   --well-28: rgba(15, 21, 37, 0.28);
 
-  /* Event-kind chip backgrounds */
-  --chip-bg-move: rgba(93, 143, 201, 0.20);
-  --chip-bg-highlight: rgba(240, 180, 41, 0.20);
-  --chip-bg-arrow: rgba(240, 140, 46, 0.20);
-  --chip-bg-clear: rgba(155, 155, 155, 0.20);
-  --chip-bg-reset: rgba(207, 93, 93, 0.22);
-  --chip-bg-err: rgba(207, 93, 93, 0.30);
-
   /* Active row + brand accents */
   --row-hover-bg: rgba(232, 236, 245, 0.055);
-  --row-active-bg: rgba(93, 143, 201, 0.18);
-  --row-active-stripe-color: var(--color-studio-steel-blue);
-
-  /* Active row by kind (Five Meanings on the active state) */
-  --row-active-bg-move: rgba(93, 143, 201, 0.18);
-  --row-active-bg-highlight: rgba(240, 180, 41, 0.14);
-  --row-active-bg-arrow: rgba(240, 140, 46, 0.14);
-  --row-active-bg-clear: rgba(155, 155, 155, 0.13);
   --row-active-bg-reset: rgba(207, 93, 93, 0.16);
   --row-active-bg-err: rgba(207, 93, 93, 0.18);
+
+  /* Move-quality annotation palette (board badges + move-list marks).
+     Mirrored by annotationColors in src/lib/tokens.ts. */
+  --color-annot-brilliant: #4fb9b2;
+  --color-annot-great: #7da9dc;
+  --color-annot-mistake: #d9a93f;
+  --color-annot-blunder: #cf5d5d;
 
   /* Errors band */
   --errors-bg: rgba(207, 93, 93, 0.08);
@@ -115,7 +103,10 @@
   --main-row-gap: 16px;
   --side-panel-width: clamp(560px, 32vw, 620px);
   --subtitle-track-height: 64px;
-  --now-playing-height: 48px;
+  /* Overlap between the board's bottom edge and the subtitle strip. The strip
+     rides up by this much, so the side panel — which bottom-aligns with the
+     strip — must give the same amount back. One value, two consumers. */
+  --board-seam: 2px;
   --workspace-width: calc(var(--artifact-fit-width) + var(--side-panel-width) + var(--main-column-gap));
 
   /* Motion */
@@ -255,7 +246,7 @@ body {
   grid-template-columns: var(--artifact-fit-width) var(--side-panel-width);
   /* Fixed rows keep playback layout stable; the subtitle row alone may grow
      so a multi-line cue pushes content down instead of overlapping it. */
-  grid-template-rows: var(--artifact-fit-width) minmax(var(--subtitle-track-height), auto) var(--now-playing-height) auto;
+  grid-template-rows: var(--artifact-fit-width) minmax(var(--subtitle-track-height), auto) auto;
   column-gap: var(--main-column-gap);
   row-gap: var(--main-row-gap);
   justify-content: center;
@@ -266,8 +257,7 @@ body {
   display: contents;
 }
 .board-wrap,
-.subtitle-strip,
-.now-playing {
+.subtitle-strip {
   grid-column: 1;
   width: 100%;
   max-width: var(--artifact-fit-width);
@@ -275,11 +265,10 @@ body {
 }
 .board-wrap { grid-row: 1; }
 .subtitle-strip { grid-row: 2; }
-.now-playing { grid-row: 3; }
 
 .subtitle-strip {
   min-height: var(--subtitle-track-height);
-  margin-top: -2px;
+  margin-top: calc(-1 * var(--board-seam));
   padding: 8px 18px 10px;
   display: grid;
   place-items: center;
@@ -319,7 +308,7 @@ body {
 
 .controls {
   grid-column: 1 / -1;
-  grid-row: 4;
+  grid-row: 3;
   display: grid;
   grid-template-columns: auto auto auto 1fr auto;
   gap: 16px; align-items: center;
@@ -541,8 +530,12 @@ body {
   font-size: 11.5px; font-weight: 600;
   transition: color var(--duration-state), background var(--duration-state);
 }
-.speed-btn:hover { color: var(--color-sodium-chalk); }
-.speed-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
+/* Segmented-control states, shared with the script view toggle (.view-btn)
+   so the pressed treatment can't drift between the two controls. */
+.speed-btn:hover,
+.view-btn:hover { color: var(--color-sodium-chalk); }
+.speed-btn[aria-pressed='true'],
+.view-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
 /* Hit-area extension: visual ~28×22, hit zone reaches 44 vertically to clear
    WCAG 2.5.5. Inner padding stays tight so the segmented group reads. */
 .speed-btn::before {
@@ -557,7 +550,12 @@ body {
 
 .side-col {
   grid-column: 2;
-  grid-row: 1 / 4;
+  /* Spans the board + subtitle rows so the panel bottom lines up with the
+     subtitle strip's bottom, above the full-width controls bar. The strip is
+     pulled up by --board-seam, ending that much above its grid track; give
+     the same back here so the two bottom edges stay flush. */
+  grid-row: 1 / 3;
+  margin-bottom: var(--board-seam);
   align-self: stretch;
   background: var(--surface-panel);
   border: 1px solid var(--line-soft);
@@ -588,6 +586,8 @@ body {
   .side-col {
     grid-column: auto;
     grid-row: auto;
+    /* No subtitle row to bottom-align with when stacked. */
+    margin-bottom: 0;
     height: min(720px, calc(100dvh - 80px));
   }
 }
@@ -611,24 +611,11 @@ body {
 .panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
 /* Narration section has no textarea; the hint carries the section body. */
 .narration-hint { margin: 0; padding: 0 18px 12px; }
-.panel-count {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border-radius: var(--radius-pill);
-  background: var(--tonal-white-06);
-  color: var(--color-foley-slate);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
 .editor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .fen-field {
   display: grid;
-  gap: 7px;
-  padding: 12px 18px 14px;
+  gap: 6px;
+  padding: 9px 18px 10px;
   border-bottom: 1px solid var(--line-faint);
   background: var(--well-08);
 }
@@ -685,9 +672,24 @@ body {
   border-top: 1px solid var(--line-faint);
   background: var(--well-08);
 }
+/* Setup page: the fen field's bottom border already separates the sections. */
+.fen-field + .subtitle-editor { border-top: 0; }
+/* Setup page: the subtitle editor takes the free column space; the narration
+   section below stays compact. */
+.subtitle-editor.grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.subtitle-editor.grow .subtitle-textarea {
+  flex: 1;
+  height: auto;
+  max-height: none;
+}
 .subtitle-editor-head {
-  min-height: 42px;
-  padding: 10px 18px 8px;
+  min-height: 36px;
+  padding: 7px 18px 5px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -753,9 +755,9 @@ body {
   display: none;
 }
 .subtitle-textarea {
-  height: 128px;
-  min-height: 128px;
-  max-height: 128px;
+  height: 92px;
+  min-height: 92px;
+  max-height: 92px;
   padding-top: 0;
   border-top: 0;
   color: var(--color-rim-light-pewter);
@@ -777,166 +779,228 @@ body {
   color: var(--color-error-line); font-weight: 700; min-width: 28px;
 }
 
-.moves-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .event-list { flex: 1; overflow-y: auto; padding: 8px 8px 16px; }
-.event-row {
+/* PGN move list: mainline moves in numbered white/black rows, variations as
+   inset flow blocks, non-move events as kind-colored seek dots. The lichess
+   analysis convention restated in Gambit's chrome: number rail on the tonal
+   ladder, JetBrains Mono for every move, a steel-blue pill (Five Meanings:
+   move) on the current position. Reached events read at full strength;
+   not-yet-reached ones sit dimmed — the recording-progress cue the old list
+   carried, kept. */
+.pgn-rows { display: flex; flex-direction: column; }
+.pgn-row {
   display: grid;
-  grid-template-columns: 56px 70px 1fr;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  /* Indent by variation depth — `--depth` is set inline per row. The branch
-     row sits at parent depth, contents nest one level deeper, mainline
-     returns to parent depth. */
-  min-height: 38px;
-  padding: 8px 12px 8px calc(12px + var(--depth, 0) * 14px);
-  margin-bottom: 2px;
-  border-radius: 8px;
-  border: 0; background: transparent;
-  font-family: inherit;
-  color: var(--color-foley-pewter);
-  cursor: pointer;
-  text-align: left;
+  grid-template-columns: 30px 1fr 1fr;
+  align-items: stretch;
+  min-height: 30px;
+}
+.pgn-numcol {
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px; font-weight: 500;
+  color: var(--color-foley-slate);
+  background: var(--tonal-white-04);
+}
+.pgn-cell {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+  min-width: 0; padding: 2px 6px 2px 4px;
+}
+.pgn-cell.pgn-gap {
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+  color: var(--color-foley-slate); padding-left: 11px;
+}
+.pgn-mv {
+  border: 0; background: transparent; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px; font-weight: 600;
+  color: var(--color-foley-slate);
+  padding: 3px 7px; border-radius: var(--radius-xs);
   transition: background var(--duration-chrome), color var(--duration-chrome);
 }
-.event-row:hover {
-  background: var(--row-hover-bg);
+.pgn-mv.past { color: var(--color-rim-light-pewter); }
+/* The hover and current-pill states are shared with variation moves so the
+   signature current-position style can't drift between the two lists. */
+.pgn-mv:hover,
+.pgn-var-mv:hover { background: var(--row-hover-bg); color: var(--color-sodium-chalk); }
+.pgn-mv.current,
+.pgn-var-mv.current {
+  background: var(--color-studio-steel-blue);
   color: var(--color-sodium-chalk);
 }
-.event-row.past { color: var(--color-rim-light-pewter); }
-.event-row.active {
-  /* Five Meanings on the active state. Each kind owns its own background
-     tint and stripe color; the universal rule below is the fallback. */
-  background: var(--row-active-bg);
-  color: var(--color-sodium-chalk);
-  box-shadow: inset 2px 0 0 var(--row-active-stripe-color);
+/* Move-quality marks share the annotation badge palette (--color-annot-*). */
+.pgn-annot { font-weight: 700; }
+.annot-brilliant { color: var(--color-annot-brilliant); }
+.annot-great { color: var(--color-annot-great); }
+.annot-mistake { color: var(--color-annot-mistake); }
+.annot-blunder { color: var(--color-annot-blunder); }
+/* Non-move events as seek dots, colored per event kind (same vocabulary as
+   the timeline pins). Current state rings the dot instead of filling a pill
+   so the Five Meanings hue stays legible. */
+.pgn-dot {
+  flex: 0 0 auto; width: 14px; height: 14px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent;
+  cursor: pointer; position: relative; opacity: 0.5;
+  transition: opacity var(--duration-chrome);
 }
-.event-row.active.kind-move {
-  background: var(--row-active-bg-move);
-  box-shadow: inset 2px 0 0 var(--color-studio-steel-blue);
+.pgn-dot.past { opacity: 0.95; }
+.pgn-dot:hover { opacity: 1; }
+.pgn-dot::before {
+  content: ''; position: absolute; inset: 3.5px; border-radius: 50%;
+  background: currentColor;
 }
-.event-row.active.kind-highlight {
-  background: var(--row-active-bg-highlight);
-  box-shadow: inset 2px 0 0 var(--color-markup-amber);
-}
-.event-row.active.kind-arrow {
-  background: var(--row-active-bg-arrow);
-  box-shadow: inset 2px 0 0 var(--color-annotation-persimmon);
-}
-.event-row.active.kind-clear {
-  background: var(--row-active-bg-clear);
-  box-shadow: inset 2px 0 0 var(--color-clear-marker);
-}
-.event-row.active.kind-reset,
-.event-row.active.kind-fen,
-.event-row.active.kind-start {
-  background: var(--row-active-bg-reset);
-  box-shadow: inset 2px 0 0 var(--color-studio-vermillion);
-}
-.event-row.active.kind-err {
-  background: var(--row-active-bg-err);
-  box-shadow: inset 2px 0 0 var(--color-studio-vermillion);
-}
-.event-row.active.kind-branch,
-.event-row.active.kind-mainline {
-  /* Structural events read in chrome neutral so they don't compete with the
-     Five Meanings on the active state. */
-  background: var(--tonal-white-08);
-  box-shadow: inset 2px 0 0 var(--color-rim-light-pewter);
-}
-.ev-time {
+.pgn-dot.current { opacity: 1; }
+.pgn-dot.current::before { box-shadow: 0 0 0 1.5px currentColor; }
+.pgn-var {
+  position: relative;
+  margin: 3px 0; padding: 5px 10px 5px 26px;
+  background: var(--tonal-white-04);
+  border-radius: var(--radius-xs);
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11.5px;
+  font-size: 11.5px; line-height: 1.9;
   color: var(--color-foley-slate);
 }
-.event-row.past .ev-time { color: var(--color-rim-light-pewter); }
-.event-row.active .ev-time { color: var(--color-chip-text-blue); }
-.ev-kind {
-  font-size: 10.5px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0;
-  padding: 3px 7px; border-radius: var(--radius-xs);
-  text-align: center;
+.pgn-var-mv {
+  display: inline; border: 0; background: transparent; cursor: pointer;
+  font: inherit; font-weight: 600;
+  color: var(--color-foley-slate);
+  padding: 1px 4px; border-radius: var(--radius-xs);
+  transition: background var(--duration-chrome), color var(--duration-chrome);
 }
-/* Chip palette is shared between event-list rows (.ev-kind) and the
-   Now-Playing caption (.np-kind). Branch / mainline are STRUCTURAL events
-   outside the Five Meanings palette — they render in rim-light-pewter on a
-   tonal-white-08 chip so they read as editorial scaffolding. */
-.ev-kind.kind-move,
-.np-kind.kind-move { background: var(--chip-bg-move); color: var(--color-chip-text-blue); }
-.ev-kind.kind-highlight,
-.np-kind.kind-highlight { background: var(--chip-bg-highlight); color: var(--color-markup-amber-soft); }
-.ev-kind.kind-arrow,
-.np-kind.kind-arrow { background: var(--chip-bg-arrow); color: var(--color-annotation-persimmon-soft); }
-.ev-kind.kind-clear,
-.np-kind.kind-clear { background: var(--chip-bg-clear); color: var(--color-clear-text); }
-.ev-kind.kind-reset,
-.np-kind.kind-reset,
-.ev-kind.kind-fen,
-.np-kind.kind-fen,
-.ev-kind.kind-start,
-.np-kind.kind-start { background: var(--chip-bg-reset); color: var(--color-reset-text); }
-.ev-kind.kind-err,
-.np-kind.kind-err { background: var(--chip-bg-err); color: var(--color-error-text); }
-.ev-kind.kind-branch,
-.np-kind.kind-branch,
-.ev-kind.kind-mainline,
-.np-kind.kind-mainline { background: var(--tonal-white-08); color: var(--color-rim-light-pewter); }
-.ev-body {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12.5px;
-  font-weight: 500;
+.pgn-var-mv.past { color: var(--color-foley-pewter); }
+.pgn-varnum { color: var(--color-foley-slate); font-weight: 500; margin-right: 1px; }
+.pgn-var-mv.current .pgn-varnum { color: var(--color-chip-text-blue); }
+.pgn-paren { color: var(--color-foley-slate); opacity: 0.8; }
+.pgn-ret {
+  border: 0; background: transparent; cursor: pointer;
+  font: inherit; color: var(--color-foley-slate);
+  padding: 1px 5px; border-radius: var(--radius-xs); opacity: 0.7;
+}
+.pgn-ret:hover { opacity: 1; background: var(--row-hover-bg); color: var(--color-sodium-chalk); }
+.pgn-ret.current { opacity: 1; background: var(--tonal-white-10); color: var(--color-sodium-chalk); }
+/* Structural resets (rs / st / fen) as full-width vermillion section breaks;
+   numbering restarts beneath them. */
+.pgn-divider {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 26px; margin: 3px 0; padding: 2px 10px;
+  border: 0; border-radius: var(--radius-xs); background: transparent;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--color-reset-text); cursor: pointer; text-align: left;
+  transition: background var(--duration-chrome);
+}
+.pgn-divider::before {
+  content: ''; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-studio-vermillion); opacity: 0.85;
+}
+.pgn-divider-body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-/* Now-Playing caption: a slim mono strip directly under the board that
-   announces the active event in type large enough to survive a 480p
-   downscale. Color-coded by kind via inline style on `.np-rail`.
-   Recordable-by-default principle. */
-.now-playing {
-  display: grid;
-  grid-template-columns: 4px auto auto 1fr;
-  align-items: center;
-  column-gap: 12px;
-  height: var(--now-playing-height);
-  padding: 10px 6px 10px 0;
-  border-bottom: 1px solid var(--line-faint);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  overflow: hidden;
+.pgn-divider:hover { background: var(--row-hover-bg); }
+.pgn-divider.current { background: var(--row-active-bg-reset); }
+.pgn-error {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  margin: 2px 0; padding: 5px 10px;
+  border: 0; border-radius: var(--radius-xs); background: transparent;
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  color: var(--color-error-text); cursor: pointer; text-align: left;
+  transition: background var(--duration-chrome);
 }
-
-.now-playing.is-empty {
-  border-color: transparent;
+.pgn-error:hover { background: var(--row-hover-bg); }
+.pgn-error.current { background: var(--row-active-bg-err); }
+/* Annotations with no move to attach to (script preamble). */
+.pgn-marks {
+  display: flex; align-items: center; gap: 4px;
+  min-height: 24px; padding: 2px 6px 2px 30px;
 }
-
-.np-rail {
-  width: 4px;
-  height: 22px;
-  border-radius: 2px;
-  background: var(--np-color, var(--color-stage-mauve));
+/* Seek affordances inside divider / error wrappers (the wrapper also hosts
+   the editable time chip and delete ×, so it can't be a button itself).
+   Same button reset; only the row's own alignment differs. */
+.pgn-divider-seek,
+.pgn-err-seek {
+  display: flex; min-width: 0; flex: 1;
+  border: 0; background: transparent; padding: 0;
+  font: inherit; color: inherit; cursor: pointer; text-align: left;
 }
-
-.np-time {
-  font-size: 11px;
-  color: var(--color-rim-light-pewter);
-  letter-spacing: 0;
-  min-width: 44px;
+.pgn-divider-seek { align-items: center; }
+.pgn-err-seek { align-items: baseline; gap: 8px; }
+/* Script-panel view toggle: Moves (structured) / Text (fallback). Mirrors
+   the speed-group segmented pattern. */
+.view-toggle {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border-radius: var(--radius-pill); background: var(--tonal-white-06);
 }
-.np-kind {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-  padding: 3px 7px;
-  border-radius: var(--radius-xs);
-  text-align: center;
+.view-btn {
+  border: 0; background: transparent; cursor: pointer;
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: uppercase;
+  color: var(--color-foley-slate);
+  transition: background var(--duration-chrome), color var(--duration-chrome);
 }
-.np-body {
-  font-size: 13.5px;
-  font-weight: 500;
-  color: var(--color-sodium-chalk);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Hover/pressed states live with .speed-btn (shared segmented pattern). */
+/* Editable PGN view: every event pairs with a click-to-edit time chip and a
+   hover-revealed delete ×; a variation block deletes as a whole via its own
+   × at the end of the flow. */
+.pgn-tok { display: inline-flex; align-items: center; gap: 1px; min-width: 0; position: relative; }
+/* Faint pill so editable timestamps read as objects, distinct from the mono
+   move numbers they sit next to. margin-left: auto keeps the chip pushed to
+   the right edge inside full-width rows (dividers). */
+.pgn-time-edit {
+  margin-left: auto; flex: 0 0 auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--color-foley-slate);
+  border: 0; cursor: pointer;
+  background: var(--tonal-white-06);
+  padding: 1px 4px; border-radius: var(--radius-pill);
+  opacity: 0.9;
+}
+.pgn-time-edit:hover { background: var(--tonal-white-10); color: var(--color-sodium-chalk); opacity: 1; }
+.pgn-time-input {
+  width: 66px; height: 20px; padding: 0 5px;
+  border: 1px solid var(--line-soft); border-radius: var(--radius-xs);
+  background: var(--well-20); color: var(--color-sodium-chalk);
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+}
+.pgn-x {
+  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
+  width: 16px; height: 16px; padding: 0; border-radius: var(--radius-xs);
+  color: var(--color-foley-slate); font-size: 12px; line-height: 1;
+  opacity: 0;
+  transition: opacity var(--duration-chrome), color var(--duration-chrome), background var(--duration-chrome);
+}
+.pgn-x:hover { color: var(--color-studio-vermillion); background: var(--tonal-white-08); }
+/* Inside tokens and variation blocks the × floats as a corner badge on
+   hover instead of reserving inline space — the resting layout stays as
+   compact as the read-only view. Dividers/errors keep it in flow (roomy). */
+.pgn-tok > .pgn-x,
+.pgn-var > .pgn-x {
+  position: absolute; z-index: 2;
+  width: 15px; height: 15px;
+  background: var(--color-stagewell-black);
+  border: 1px solid var(--line-soft);
+  border-radius: 50%;
+}
+.pgn-tok > .pgn-x { top: -7px; right: -5px; }
+.pgn-var > .pgn-x { top: 5px; right: 6px; }
+.pgn-tok > .pgn-x:hover,
+.pgn-var > .pgn-x:hover {
+  background: var(--color-stagewell-black);
+  border-color: var(--color-studio-vermillion);
+}
+.pgn-tok:hover > .pgn-x,
+.pgn-divider:hover .pgn-x,
+.pgn-error:hover .pgn-x,
+.pgn-var:hover > .pgn-x { opacity: 1; }
+/* Keyboard focus must reveal the destructive control the same way hover
+   does — opacity: 0 would otherwise hide the focused button outline too. */
+.pgn-x:focus-visible {
+  opacity: 1;
+  outline: 1px solid var(--color-camera-highlight-blue);
+  outline-offset: 1px;
+}
+.pgn-empty {
+  margin: 0; padding: 14px 10px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.7;
+  color: var(--color-foley-slate);
 }
 .footer {
   text-align: center;
@@ -958,7 +1022,7 @@ body {
 }
 
 /* Two-column desktop: fit the whole workspace (header, board, subtitle track,
-   caption, console, footer) inside the viewport height so the board and the
+   console, footer) inside the viewport height so the board and the
    transport are always on screen together. The board scales continuously
    between its 720px cap and 560px floor; 410px is the worst-case vertical
    chrome budget around it (the tighter ≤920px chrome makes this slightly
@@ -973,7 +1037,6 @@ body {
 @media (max-height: 920px) {
   :root {
     --subtitle-track-height: 56px;
-    --now-playing-height: 42px;
     --main-row-gap: 12px;
   }
 

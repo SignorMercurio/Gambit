@@ -1,10 +1,17 @@
 // Pieces translate via `translate3d` so motion stays on the GPU compositor.
 
-import type { CSSProperties } from 'react';
+import { useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Piece } from './Piece';
-import { sqToIdx, type PieceType, type Side } from '../lib/chess';
+import { idxToSq, sqToIdx, type PieceType, type Side } from '../lib/chess';
+import {
+  beginAnnotationGesture,
+  beginMoveGesture,
+  finishBoardGesture,
+  updateGestureTarget,
+  type BoardGesture,
+} from '../lib/boardGesture';
 import type { MoveAnnotation } from '../lib/timeline';
-import { tokens } from '../lib/tokens';
+import { annotationColors, annotationInk, tokens } from '../lib/tokens';
 
 const SQ = 100;
 const BOARD_SIZE = SQ * 8;
@@ -27,6 +34,15 @@ type BoardProps = {
   captureFlash: CaptureFlash | null;
   check: BoardCheck | null;
   time: number;
+  // Interactive editing (Script tab only). Gestures never draw directly —
+  // they report intents that App records as script lines, so the script
+  // text stays the single source of truth. Mouse-only by design: this is a
+  // desktop screen-recording tool and right-button gestures need a mouse.
+  interactive?: boolean;
+  legalTargets?: (from: string) => string[];
+  onMoveGesture?: (from: string, to: string) => void;
+  onArrowGesture?: (from: string, to: string) => void;
+  onHighlightGesture?: (sq: string) => void;
 };
 
 export type PiecePos = {
@@ -248,14 +264,11 @@ function arrowPoints(from: string, to: string): Array<readonly [number, number]>
 
 // Annotation badges sit on the destination square's upper-right corner, close
 // to chess broadcast / analysis overlays: a large soft disc with a clear mark.
-const ANNOTATION_BADGE: Record<
-  MoveAnnotation,
-  { fill: string; text: string; mark: string }
-> = {
-  brilliant: { fill: '#4fb9b2', text: '#f1ecde', mark: '!!' },
-  great: { fill: '#7da9dc', text: '#f1ecde', mark: '!' },
-  mistake: { fill: '#d9a93f', text: '#f1ecde', mark: '?' },
-  blunder: { fill: '#cf5d5d', text: '#f1ecde', mark: '??' },
+const ANNOTATION_BADGE: Record<MoveAnnotation, { fill: string; mark: string }> = {
+  brilliant: { fill: annotationColors.brilliant, mark: '!!' },
+  great: { fill: annotationColors.great, mark: '!' },
+  mistake: { fill: annotationColors.mistake, mark: '?' },
+  blunder: { fill: annotationColors.blunder, mark: '??' },
 };
 
 // The board's light/dark convention (a1 dark) in one place.
@@ -298,7 +311,176 @@ const CHECK_GLOW_DEFS = (
   </defs>
 );
 
-export function Board({ positions, lastMove, highlights, arrows, captureFlash, check, time }: BoardProps) {
+// Best-effort: capture keeps the gesture tracking when the pointer leaves
+// the board, but a pointer can go inactive between down and capture, and
+// browsers throw for it. The gesture still works without capture.
+function capturePointer(e: React.PointerEvent) {
+  try {
+    e.currentTarget.setPointerCapture(e.pointerId);
+  } catch {
+    // Fall back to uncaptured tracking.
+  }
+}
+
+// Per-square ink that stays readable on both square colors — the same
+// pairing the coordinate labels use.
+function squareInk(sq: string): string {
+  const { f, r } = sqToIdx(sq);
+  return isLightSquare(f, r) ? tokens.coordOnLight : tokens.coordOnDark;
+}
+
+function insetSquareMarker(sq: string, key: string) {
+  const { f, r } = sqToIdx(sq);
+  return (
+    <rect
+      key={key}
+      x={f * SQ + 4}
+      y={(7 - r) * SQ + 4}
+      width={SQ - 8}
+      height={SQ - 8}
+      rx={8}
+      fill="none"
+      stroke={squareInk(sq)}
+      strokeWidth={5}
+      opacity={0.85}
+    />
+  );
+}
+
+// Same plane as the arrows overlay so annotate previews read exactly like
+// the artifact they are about to record.
+const GESTURE_LAYER_STYLE: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  pointerEvents: 'none',
+  zIndex: 3,
+};
+
+// Live preview of the gesture in progress. Move gestures mark the origin and
+// the legal destinations (dot on empty squares, ring on occupied ones);
+// annotate gestures preview the exact highlight or arrow a release would
+// record, at reduced opacity so preview reads as not-yet-committed.
+function GestureOverlay({
+  gesture,
+  positions,
+}: {
+  gesture: BoardGesture;
+  positions: Record<string, PiecePos>;
+}) {
+  // Memoized on positions (not gesture start): a scripted move firing during
+  // playback must restyle the dots, but a 60Hz drag frame must not rebuild
+  // the set. Computed before the annotate early-return per the hooks rules.
+  const occupied = useMemo(
+    () =>
+      new Set(
+        Object.values(positions)
+          .filter((p) => !p.captured)
+          .map((p) => idxToSq(p.f, p.r)),
+      ),
+    [positions],
+  );
+
+  if (gesture.kind === 'annotate') {
+    const { from, over } = gesture;
+    const fromIdx = sqToIdx(from);
+    return (
+      <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={GESTURE_LAYER_STYLE}>
+        {over && over !== from ? (
+          <path d={buildArrowPath(arrowPoints(from, over))} fill={tokens.boardArrow} opacity={0.55} />
+        ) : (
+          <rect
+            x={fromIdx.f * SQ}
+            y={(7 - fromIdx.r) * SQ}
+            width={SQ}
+            height={SQ}
+            fill={tokens.boardHighlight}
+            opacity={0.5}
+          />
+        )}
+      </svg>
+    );
+  }
+
+  const { from, over, targets } = gesture;
+  return (
+    <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={GESTURE_LAYER_STYLE}>
+      {insetSquareMarker(from, 'from')}
+      {[...targets].map((sq) => {
+        const { f, r } = sqToIdx(sq);
+        const [cx, cy] = squareCenter(f, r);
+        return occupied.has(sq) ? (
+          <circle key={sq} cx={cx} cy={cy} r={40} fill="none" stroke={squareInk(sq)} strokeWidth={7} opacity={0.5} />
+        ) : (
+          <circle key={sq} cx={cx} cy={cy} r={13} fill={squareInk(sq)} opacity={0.45} />
+        );
+      })}
+      {over && over !== from && targets.has(over) && insetSquareMarker(over, 'over')}
+    </svg>
+  );
+}
+
+export function Board({
+  positions,
+  lastMove,
+  highlights,
+  arrows,
+  captureFlash,
+  check,
+  time,
+  interactive,
+  legalTargets,
+  onMoveGesture,
+  onArrowGesture,
+  onHighlightGesture,
+}: BoardProps) {
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const [gesture, setGesture] = useState<BoardGesture | null>(null);
+
+  // Map a pointer event to the square under it, or null outside the board.
+  const squareAtPointer = (e: React.PointerEvent): string | null => {
+    const rect = boardRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return null;
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    if (x < 0 || x >= 1 || y < 0 || y >= 1) return null;
+    return idxToSq(Math.floor(x * 8), 7 - Math.floor(y * 8));
+  };
+
+  const onGesturePointerDown = (e: React.PointerEvent) => {
+    if (!interactive || gesture || e.pointerType !== 'mouse') return;
+    const sq = squareAtPointer(e);
+    if (!sq) return;
+    // Ctrl+left covers macOS's right-click convention.
+    const annotate = e.button === 2 || (e.button === 0 && e.ctrlKey);
+    if (!annotate && e.button !== 0) return;
+    if (annotate) {
+      e.preventDefault();
+      capturePointer(e);
+      setGesture(beginAnnotationGesture(sq, onArrowGesture, onHighlightGesture));
+      return;
+    }
+    const targets = new Set(legalTargets?.(sq) ?? []);
+    if (targets.size === 0) return;
+    e.preventDefault();
+    capturePointer(e);
+    setGesture(beginMoveGesture(sq, targets, onMoveGesture));
+  };
+
+  const onGesturePointerMove = (e: React.PointerEvent) => {
+    if (!gesture) return;
+    const sq = squareAtPointer(e);
+    if (sq !== gesture.over) setGesture(updateGestureTarget(gesture, sq));
+  };
+
+  const onGesturePointerUp = (e: React.PointerEvent) => {
+    if (!gesture) return;
+    setGesture(null);
+    const over = squareAtPointer(e);
+    finishBoardGesture(gesture, over);
+  };
+
   const lastMoveOpacity = lastMove ? timedProgress(time - lastMove.t, 0.12) : 0;
   const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
   const checkIdx = check ? sqToIdx(check.sq) : null;
@@ -310,9 +492,17 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, c
   return (
     <div className="board-wrap">
       <div
+        ref={boardRef}
         className="board"
         role="img"
         aria-label="Chess board"
+        onPointerDown={onGesturePointerDown}
+        onPointerMove={onGesturePointerMove}
+        onPointerUp={onGesturePointerUp}
+        onPointerCancel={() => setGesture(null)}
+        onContextMenu={(e) => {
+          if (interactive) e.preventDefault();
+        }}
         style={{
           width: '100%',
           aspectRatio: '1 / 1',
@@ -320,6 +510,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, c
           borderRadius: 'var(--board-radius)',
           overflow: 'hidden',
           boxShadow: tokens.shadowBoard,
+          cursor: gesture ? (gesture.kind === 'move' ? 'grabbing' : 'crosshair') : undefined,
         }}
       >
         {/* squares */}
@@ -519,6 +710,8 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, c
           </g>
         </svg>
 
+        {gesture && <GestureOverlay gesture={gesture} positions={positions} />}
+
         {captureFlash && flash && flash.opacity > 0 && (
           <div
             key={captureFlash.id}
@@ -589,7 +782,7 @@ export function Board({ positions, lastMove, highlights, arrows, captureFlash, c
                     fontSize={isWide ? 22 : 38}
                     fontWeight={900}
                     letterSpacing={0}
-                    fill={cfg.text}
+                    fill={annotationInk}
                     textAnchor="middle"
                     dominantBaseline="central"
                   >

@@ -1,0 +1,561 @@
+// PGN-style move list: mainline moves in numbered white/black rows,
+// variations as inset flow blocks, non-move events as kind-colored seek
+// dots — the lichess analysis-panel convention rendered in Gambit's chrome.
+// Every element that maps to a script event carries data-evi={event index}
+// so the follow-scroll and the current-move highlight can find it regardless
+// of nesting.
+//
+// The list is the Script tab's Moves view — a structured editor over the
+// script text: every event grows a click-to-edit time chip (mm:ss.t, ↑/↓
+// nudges 0.1s) and a delete ×; variation blocks delete as a whole (br
+// through ml). Edits are reported as script-text transforms, never applied
+// to board state directly.
+
+import { memo, useMemo, useRef, useState } from 'react';
+import type { Side } from '../lib/chess';
+import {
+  eventBody,
+  fmtDeci,
+  fmtTime,
+  parseTime,
+  splitSanAnnotation,
+  type MoveAnnotation,
+  type ParsedEvent,
+  type TimelineEvent,
+} from '../lib/timeline';
+import { markerColors } from '../lib/tokens';
+
+type MarkKind = ParsedEvent['kind'] | 'err';
+type Mark = { i: number; kind: MarkKind; t: number; line: number; body: string };
+type Cell = {
+  i: number;
+  t: number;
+  line: number;
+  san: string;
+  annotation?: MoveAnnotation;
+  marks: Mark[];
+};
+// `gap` marks a row that resumes on Black's move after an interruption — the
+// White cell renders the PGN "…" placeholder.
+type Row = { num: number; white: Cell | null; black: Cell | null; gap: boolean };
+
+type FlowNode =
+  | {
+      type: 'mv';
+      i: number;
+      t: number;
+      line: number;
+      num: number;
+      side: Side;
+      san: string;
+      annotation?: MoveAnnotation;
+      showNum: boolean;
+    }
+  | { type: 'mark'; mark: Mark }
+  | { type: 'open'; i: number }
+  | { type: 'close'; i: number; t: number; line: number }
+  | { type: 'ret'; i: number; t: number; line: number };
+
+type Block =
+  | { type: 'rows'; rows: Row[] }
+  | { type: 'var'; i: number; nodes: FlowNode[]; lines: number[] }
+  | { type: 'divider'; i: number; t: number; line: number; body: string }
+  | { type: 'error'; i: number; t: number; line: number; text: string }
+  | { type: 'marks'; marks: Mark[] };
+
+type MoveState = { fullmove: number; turn: Side };
+
+// Walk the (time-sorted) event stream into render blocks. Mainline moves
+// accumulate into rows; a top-level `br` opens a variation flow that closes
+// at its matching `ml`; annotations attach as dots to the move they follow,
+// or to an orphan marks block when no move precedes them.
+function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
+  const blocks: Block[] = [];
+  let rowAcc: Row[] = [];
+  let markAcc: Mark[] = [];
+  let row: Row | null = null;
+  let lastCell: Cell | null = null;
+  let varNodes: FlowNode[] | null = null;
+  let varLines: number[] = [];
+  let varHeadI = 0;
+  // Nesting depth inside the open variation: 1 at the top-level `br`, higher
+  // for nested `br`s, so the `ml` that returns to 0 is the one that closes
+  // the flow block (nested `ml`s render as closing parens instead).
+  let varDepth = 0;
+  let flowInterrupted = true;
+
+  const flushRows = () => {
+    if (rowAcc.length) {
+      blocks.push({ type: 'rows', rows: rowAcc });
+      rowAcc = [];
+    }
+    row = null;
+    lastCell = null;
+  };
+  const flushMarks = () => {
+    if (markAcc.length) {
+      blocks.push({ type: 'marks', marks: markAcc });
+      markAcc = [];
+    }
+  };
+  const closeVar = () => {
+    if (varNodes) {
+      blocks.push({ type: 'var', i: varHeadI, nodes: varNodes, lines: varLines });
+      varNodes = null;
+      varLines = [];
+    }
+  };
+
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (varNodes) varLines.push(e.line);
+    if ('error' in e) {
+      const mark: Mark = { i, kind: 'err', t: e.t, line: e.line, body: e.error };
+      if (varNodes) {
+        varNodes.push({ type: 'mark', mark });
+      } else {
+        flushRows();
+        flushMarks();
+        blocks.push({ type: 'error', i, t: e.t, line: e.line, text: e.error });
+      }
+      continue;
+    }
+    switch (e.kind) {
+      case 'move': {
+        const st = states[i];
+        if (varNodes) {
+          varNodes.push({
+            type: 'mv',
+            i,
+            t: e.t,
+            line: e.line,
+            num: st.fullmove,
+            side: st.turn,
+            san: e.san,
+            annotation: e.annotation,
+            showNum: st.turn === 'w' || flowInterrupted,
+          });
+          flowInterrupted = false;
+        } else {
+          flushMarks();
+          const cell: Cell = {
+            i,
+            t: e.t,
+            line: e.line,
+            san: e.san,
+            annotation: e.annotation,
+            marks: [],
+          };
+          if (st.turn === 'w') {
+            row = { num: st.fullmove, white: cell, black: null, gap: false };
+            rowAcc.push(row);
+          } else if (row && !row.black) {
+            row.black = cell;
+            row = null;
+          } else {
+            rowAcc.push({ num: st.fullmove, white: null, black: cell, gap: true });
+            row = null;
+          }
+          lastCell = cell;
+        }
+        break;
+      }
+      case 'highlight':
+      case 'arrow':
+      case 'clear': {
+        const mark: Mark = { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) };
+        if (varNodes) {
+          varNodes.push({ type: 'mark', mark });
+          flowInterrupted = true;
+        } else if (lastCell) {
+          lastCell.marks.push(mark);
+        } else {
+          markAcc.push(mark);
+        }
+        break;
+      }
+      case 'branch': {
+        varDepth++;
+        if (varNodes) {
+          varNodes.push({ type: 'open', i });
+          flowInterrupted = true;
+        } else {
+          flushRows();
+          flushMarks();
+          varNodes = [];
+          varLines = [e.line];
+          varHeadI = i;
+          flowInterrupted = true;
+        }
+        break;
+      }
+      case 'mainline': {
+        if (!varNodes) {
+          // Stray `ml` (already a script error); keep it seekable as a dot.
+          markAcc.push({ i, kind: 'mainline', t: e.t, line: e.line, body: eventBody(e) });
+        } else if (--varDepth === 0) {
+          varNodes.push({ type: 'ret', i, t: e.t, line: e.line });
+          closeVar();
+        } else {
+          varNodes.push({ type: 'close', i, t: e.t, line: e.line });
+          flowInterrupted = true;
+        }
+        break;
+      }
+      case 'reset':
+      case 'start':
+      case 'fen': {
+        if (varNodes) {
+          varNodes.push({
+            type: 'mark',
+            mark: { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) },
+          });
+          flowInterrupted = true;
+        } else {
+          flushRows();
+          flushMarks();
+          blocks.push({ type: 'divider', i, t: e.t, line: e.line, body: eventBody(e) });
+        }
+        break;
+      }
+    }
+  }
+  closeVar();
+  flushRows();
+  flushMarks();
+  return blocks;
+}
+
+function dotColor(kind: MarkKind): string {
+  return kind === 'err' ? markerColors.reset : markerColors[kind];
+}
+
+// Click-to-edit timestamp chip. The input commits on Enter/blur, cancels on
+// Escape, and ↑/↓ nudge by 0.1s without committing — a commit re-parses the
+// script, so live-nudging would unmount the input mid-edit. All chip math
+// runs on the integer decisecond grid: raw ±0.1 float steps stick or skip a
+// tenth (0.7 + 0.1 floors back to 0.7), and a floor-based prefill on an
+// off-grid authored time would make a no-edit blur rewrite the line.
+function TimeChip({
+  t,
+  line,
+  label,
+  onRetime,
+}: {
+  t: number;
+  line: number;
+  label: string;
+  onRetime: (line: number, t: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState('');
+  const cancelled = useRef(false);
+  const deci = Math.max(0, Math.round(t * 10));
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="pgn-time-edit"
+        title={`Edit time of ${label}`}
+        aria-label={`Edit time of ${label}, currently ${fmtDeci(deci, 'always')}`}
+        onClick={() => {
+          cancelled.current = false;
+          setVal(fmtDeci(deci, 'always'));
+          setEditing(true);
+        }}
+      >
+        {fmtDeci(deci, 'auto')}
+      </button>
+    );
+  }
+  return (
+    <input
+      className="pgn-time-input"
+      value={val}
+      autoFocus
+      spellCheck={false}
+      aria-label={`Time of ${label}`}
+      onChange={(e) => setVal(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          cancelled.current = true;
+          e.currentTarget.blur();
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          const cur = parseTime(e.currentTarget.value.trim());
+          if (Number.isFinite(cur)) {
+            const step = e.key === 'ArrowUp' ? 1 : -1;
+            setVal(fmtDeci(Math.max(0, Math.round(cur * 10) + step), 'always'));
+          }
+        }
+      }}
+      onBlur={() => {
+        setEditing(false);
+        if (cancelled.current) return;
+        const parsed = parseTime(val.trim());
+        if (Number.isFinite(parsed) && parsed >= 0 && Math.round(parsed * 10) !== deci) {
+          onRetime(line, parsed);
+        }
+      }}
+    />
+  );
+}
+
+type MoveListProps = {
+  events: TimelineEvent[];
+  states: MoveState[];
+  reachedEventIndex: number;
+  onSeek: (t: number) => void;
+  listRef: React.Ref<HTMLDivElement>;
+  labelId: string;
+  onRetime: (line: number, t: number) => void;
+  onDelete: (lines: number[]) => void;
+  onPointerEnter?: (e: React.PointerEvent) => void;
+  onPointerLeave?: (e: React.PointerEvent) => void;
+};
+
+// memo matters here: the parent re-renders every animation frame during
+// playback, and every prop except reachedEventIndex is referentially stable
+// while the clock runs. Past/current state derives from reachedEventIndex —
+// events are time-sorted, so `i <= reachedEventIndex` is exactly "fired".
+export const MoveList = memo(function MoveList({
+  events,
+  states,
+  reachedEventIndex,
+  onSeek,
+  listRef,
+  labelId,
+  onRetime,
+  onDelete,
+  onPointerEnter,
+  onPointerLeave,
+}: MoveListProps) {
+  const blocks = useMemo(() => buildBlocks(events, states), [events, states]);
+
+  const stateClass = (i: number) =>
+    `${i <= reachedEventIndex ? 'past' : ''} ${i === reachedEventIndex ? 'current' : ''}`;
+
+  const deleteX = (lines: number[], label: string) => (
+    <button
+      type="button"
+      className="pgn-x"
+      title={`Delete ${label}`}
+      aria-label={`Delete ${label}`}
+      onClick={() => onDelete(lines)}
+    >
+      ×
+    </button>
+  );
+
+  // Editable wrapper: element + its time chip + its delete ×. br/ml pair
+  // sides pass del: false — no per-line delete, so the pairing stays intact
+  // (the whole variation deletes via the block's own ×). Error marks pass
+  // chip: false — mainline error rows offer no chip either, and retiming a
+  // line without a valid `[t]` header would be a silent no-op.
+  const tok = (
+    key: string,
+    inner: React.ReactNode,
+    line: number,
+    t: number,
+    label: string,
+    opts?: { chip?: boolean; del?: boolean },
+  ) => (
+    <span key={key} className="pgn-tok">
+      {inner}
+      {(opts?.chip ?? true) && <TimeChip t={t} line={line} label={label} onRetime={onRetime} />}
+      {(opts?.del ?? true) && deleteX([line], label)}
+    </span>
+  );
+
+  const markDot = (m: Mark) => {
+    const dot = (
+      <button
+        type="button"
+        className={`pgn-dot ${stateClass(m.i)}`}
+        data-evi={m.i}
+        aria-current={m.i === reachedEventIndex ? 'step' : undefined}
+        style={{ color: dotColor(m.kind) }}
+        title={`${fmtTime(m.t, 'auto')} · ${m.body}`}
+        aria-label={`Seek to ${fmtTime(m.t, 'auto')}: ${m.body}`}
+        onClick={() => onSeek(m.t)}
+      />
+    );
+    return tok(`m${m.i}`, dot, m.line, m.t, m.body, m.kind === 'err' ? { chip: false } : undefined);
+  };
+
+  const sanLabel = (san: string, annotation?: MoveAnnotation) => {
+    const { text, mark } = splitSanAnnotation(san);
+    return (
+      <>
+        {text}
+        {mark && annotation && <span className={`pgn-annot annot-${annotation}`}>{mark}</span>}
+        {mark && !annotation && mark}
+      </>
+    );
+  };
+
+  const moveBtn = (c: Cell) => (
+    <button
+      type="button"
+      className={`pgn-mv ${stateClass(c.i)}`}
+      data-evi={c.i}
+      aria-current={c.i === reachedEventIndex ? 'step' : undefined}
+      aria-label={`Seek to ${fmtTime(c.t, 'auto')}: ${c.san}`}
+      onClick={() => onSeek(c.t)}
+    >
+      {sanLabel(c.san, c.annotation)}
+    </button>
+  );
+
+  const cell = (c: Cell | null, gap: boolean) =>
+    c ? (
+      <span className="pgn-cell">
+        {tok(`mv${c.i}`, moveBtn(c), c.line, c.t, c.san)}
+        {c.marks.map(markDot)}
+      </span>
+    ) : (
+      <span className="pgn-cell pgn-gap">{gap ? '…' : ''}</span>
+    );
+
+  const flowNode = (n: FlowNode) => {
+    switch (n.type) {
+      case 'mv': {
+        const btn = (
+          <button
+            type="button"
+            className={`pgn-var-mv ${stateClass(n.i)}`}
+            data-evi={n.i}
+            aria-current={n.i === reachedEventIndex ? 'step' : undefined}
+            aria-label={`Seek to ${fmtTime(n.t, 'auto')}: ${n.san}`}
+            title={fmtTime(n.t, 'auto')}
+            onClick={() => onSeek(n.t)}
+          >
+            {n.showNum && (
+              <span className="pgn-varnum">
+                {n.num}
+                {n.side === 'b' ? '…' : '.'}
+              </span>
+            )}
+            {sanLabel(n.san, n.annotation)}
+          </button>
+        );
+        return tok(`v${n.i}`, btn, n.line, n.t, n.san);
+      }
+      case 'mark':
+        return markDot(n.mark);
+      case 'open':
+        // A br's timestamp is ordering-only (no visible effect), so it gets
+        // no time chip; the ml side does — it is the visible restore moment.
+        return (
+          <span key={`o${n.i}`} className="pgn-paren" data-evi={n.i}>
+            (
+          </span>
+        );
+      case 'close': {
+        const paren = (
+          <span className="pgn-paren" data-evi={n.i}>
+            )
+          </span>
+        );
+        return tok(`c${n.i}`, paren, n.line, n.t, 'nested variation end', { del: false });
+      }
+      case 'ret': {
+        const btn = (
+          <button
+            type="button"
+            className={`pgn-ret ${stateClass(n.i)}`}
+            data-evi={n.i}
+            aria-current={n.i === reachedEventIndex ? 'step' : undefined}
+            title={`${fmtTime(n.t, 'auto')} · back to main line`}
+            aria-label={`Seek to ${fmtTime(n.t, 'auto')}: end variation`}
+            onClick={() => onSeek(n.t)}
+          >
+            ↩
+          </button>
+        );
+        return tok(`r${n.i}`, btn, n.line, n.t, 'variation end (ml)', { del: false });
+      }
+    }
+  };
+
+  return (
+    <div
+      ref={listRef}
+      className="event-list"
+      aria-labelledby={labelId}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+    >
+      {events.length === 0 && (
+        <p className="pgn-empty">
+          Empty script. Drag pieces on the board to record moves, right-drag for arrows,
+          right-click for highlights — or switch to Text.
+        </p>
+      )}
+      {blocks.map((b, bi) => {
+        switch (b.type) {
+          case 'rows':
+            return (
+              <div key={bi} className="pgn-rows">
+                {b.rows.map((r, ri) => (
+                  <div key={ri} className="pgn-row">
+                    <span className="pgn-numcol">{r.num}</span>
+                    {cell(r.white, r.gap)}
+                    {cell(r.black, false)}
+                  </div>
+                ))}
+              </div>
+            );
+          case 'var':
+            return (
+              <div key={bi} className="pgn-var" data-evi={b.i}>
+                {b.nodes.map(flowNode)}
+                {deleteX(b.lines, 'whole variation')}
+              </div>
+            );
+          case 'divider':
+            return (
+              <div key={bi} className={`pgn-divider ${stateClass(b.i)}`}>
+                <button
+                  type="button"
+                  className="pgn-divider-seek"
+                  data-evi={b.i}
+                  aria-current={b.i === reachedEventIndex ? 'step' : undefined}
+                  aria-label={`Seek to ${fmtTime(b.t, 'auto')}: ${b.body}`}
+                  onClick={() => onSeek(b.t)}
+                >
+                  <span className="pgn-divider-body">{b.body}</span>
+                </button>
+                <TimeChip t={b.t} line={b.line} label={b.body} onRetime={onRetime} />
+                {deleteX([b.line], b.body)}
+              </div>
+            );
+          case 'error':
+            return (
+              <div key={bi} className={`pgn-error ${stateClass(b.i)}`}>
+                <button
+                  type="button"
+                  className="pgn-err-seek"
+                  data-evi={b.i}
+                  aria-current={b.i === reachedEventIndex ? 'step' : undefined}
+                  onClick={() => onSeek(b.t)}
+                >
+                  <span className="err-line">L{b.line}</span>
+                  <span>{b.text}</span>
+                </button>
+                {deleteX([b.line], `line ${b.line}`)}
+              </div>
+            );
+          case 'marks':
+            return (
+              <div key={bi} className="pgn-marks">
+                {b.marks.map(markDot)}
+              </div>
+            );
+        }
+      })}
+    </div>
+  );
+});
