@@ -25,6 +25,36 @@ const ANNOTATION_BY_MARK: Record<string, MoveAnnotation> = {
   '??': 'blunder',
 };
 
+// One event line: `[time] body` (non-empty body). The single home of the
+// line shape — scriptLineTime and parseScript both match through it, so the
+// gesture writer's collision detection can never drift from parse order.
+const SCRIPT_LINE_RE = /^\[\s*([0-9:.]+)\s*\]\s*(.+)$/;
+
+// Blanks and comments — lines the parser skips entirely.
+function isSkippedLine(raw: string): boolean {
+  return !raw || raw.startsWith('#') || raw.startsWith('//');
+}
+
+// Timestamp of a script line, or null for blanks, comments, and lines the
+// parser would reject — including a bare `[00:05]` (a parse error), which
+// is not a timed anchor either.
+export function scriptLineTime(line: string): number | null {
+  const raw = line.trim();
+  if (isSkippedLine(raw)) return null;
+  const m = raw.match(SCRIPT_LINE_RE);
+  if (!m) return null;
+  const t = parseTime(m[1]);
+  return Number.isFinite(t) ? t : null;
+}
+
+// SAN with its trailing quality marks split off. Shared by the parser (badge
+// derivation) and the move list (mark coloring) so the mark vocabulary can't
+// drift between the two.
+export function splitSanAnnotation(san: string): { text: string; mark: string | null } {
+  const m = san.match(/[!?]+$/);
+  return m ? { text: san.slice(0, -m[0].length), mark: m[0] } : { text: san, mark: null };
+}
+
 const SQUARE_PATTERN = '[a-h][1-8]';
 const SQUARE_RE = new RegExp(`^${SQUARE_PATTERN}$`, 'i');
 const ARROW_PATTERN = `(${SQUARE_PATTERN})\\s*(?:→|->|to)\\s*(${SQUARE_PATTERN})(?:\\s+(pin))?`;
@@ -83,14 +113,59 @@ export function parseTime(s: string): number {
   return minutes * 60 + seconds;
 }
 
+// Deciseconds via `Math.floor(t*10)` avoids 9.95→10 rollover.
+// `fine`: 'never' = mm:ss; 'auto' = mm:ss[.t] when fractional; 'always' = mm:ss.t.
+export function fmtTime(t: number, fine: 'never' | 'auto' | 'always' = 'never'): string {
+  // The clock readout floors: elapsed time never shows ahead of itself.
+  return fmtDeci(Math.max(0, Math.floor(t * 10)), fine);
+}
+
+// Format a decisecond count. Grid-exact surfaces (time chips, script lines)
+// should round to deciseconds first and format through this, so display and
+// written text can never disagree by a tenth.
+export function fmtDeci(deci: number, fine: 'never' | 'auto' | 'always' = 'never'): string {
+  const totalDeciseconds = Math.max(0, deci);
+  const totalSeconds = Math.floor(totalDeciseconds / 10);
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  const tenths = totalDeciseconds % 10;
+  const head = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  if (fine === 'never') return head;
+  if (fine === 'auto' && tenths === 0) return head;
+  return `${head}.${tenths}`;
+}
+
+// Human-readable event body shared by the move list and its tooltips.
+export function eventBody(e: ParsedEvent): string {
+  switch (e.kind) {
+    case 'move':
+      return e.san;
+    case 'highlight':
+      return e.squares.join(', ');
+    case 'arrow':
+      return `${e.from} → ${e.to}`;
+    case 'clear':
+      return 'cleared annotations';
+    case 'reset':
+      return 'board reset';
+    case 'start':
+      return 'initial position';
+    case 'fen':
+      return e.fen;
+    case 'branch':
+      return 'begin variation';
+    case 'mainline':
+      return 'end variation';
+  }
+}
+
 export function parseScript(text: string): TimelineEvent[] {
   const events: TimelineEvent[] = [];
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i].trim();
-    if (!raw) continue;
-    if (raw.startsWith('#') || raw.startsWith('//')) continue;
-    const m = raw.match(/^\[\s*([0-9:.]+)\s*\]\s*(.+)$/);
+    if (isSkippedLine(raw)) continue;
+    const m = raw.match(SCRIPT_LINE_RE);
     if (!m) {
       events.push({ t: 0, error: `Line ${i + 1}: missing [mm:ss]`, line: i + 1, raw });
       continue;
@@ -144,11 +219,25 @@ export function parseScript(text: string): TimelineEvent[] {
     }
     // `parseSAN` strips [+#!?]+ before resolving the move, so the trailing
     // marks can stay on the SAN string while still feeding the badge.
-    let annotation: MoveAnnotation | undefined;
-    const annotMatch = body.match(/[!?]+$/);
-    if (annotMatch) annotation = ANNOTATION_BY_MARK[annotMatch[0]];
+    const { mark } = splitSanAnnotation(body);
+    const annotation = mark ? ANNOTATION_BY_MARK[mark] : undefined;
     events.push({ t, kind: 'move', san: body, annotation, line: i + 1, raw });
   }
   events.sort((a, b) => a.t - b.t);
   return events;
+}
+
+// Largest index i such that events[i].t <= time, or -1 when none. Events
+// with t === time count as reached (inclusive on the lower side). The single
+// home of the playhead→event-index rule: the world snapshot pick, the move
+// list, the follow-scroll, and the gesture planners all derive from this.
+export function lastEventIndexAt(events: TimelineEvent[], time: number): number {
+  let lo = 0;
+  let hi = events.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (events[mid].t <= time) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
 }

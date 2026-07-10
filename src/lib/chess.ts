@@ -413,6 +413,44 @@ export function parseSAN(san: string, state: GameState): Move | null {
   return candidates[0];
 }
 
+// Serialize a legal move to SAN in the given position — the inverse of
+// `parseSAN`, emitting the minimal disambiguation the spec requires so a
+// generated script line reads like a hand-written one.
+export function sanForMove(state: GameState, mv: Move): string {
+  let san: string;
+  if (mv.castle) {
+    san = mv.castle === 'K' ? 'O-O' : 'O-O-O';
+  } else if (mv.piece === 'p') {
+    san = (mv.capture ? FILES[mv.from[0]] + 'x' : '') + idxToSq(mv.to[0], mv.to[1]);
+    if (mv.promotion) san += '=' + mv.promotion.toUpperCase();
+  } else {
+    // Among same-type legal moves to the same square: file if unique,
+    // else rank, else both.
+    const rivals = legalMoves(state).filter(
+      (m) =>
+        !m.castle &&
+        m.piece === mv.piece &&
+        m.to[0] === mv.to[0] &&
+        m.to[1] === mv.to[1] &&
+        (m.from[0] !== mv.from[0] || m.from[1] !== mv.from[1]),
+    );
+    let from = '';
+    if (rivals.length > 0) {
+      const fileClash = rivals.some((m) => m.from[0] === mv.from[0]);
+      const rankClash = rivals.some((m) => m.from[1] === mv.from[1]);
+      if (!fileClash) from = FILES[mv.from[0]];
+      else if (!rankClash) from = String(mv.from[1] + 1);
+      else from = idxToSq(mv.from[0], mv.from[1]);
+    }
+    san = mv.piece.toUpperCase() + from + (mv.capture ? 'x' : '') + idxToSq(mv.to[0], mv.to[1]);
+  }
+  const next = applyMove(state, mv);
+  if (inCheck(next.board, next.turn)) {
+    san += legalMoves(next).length === 0 ? '#' : '+';
+  }
+  return san;
+}
+
 export function initialState(): GameState {
   return {
     board: initialBoard(),

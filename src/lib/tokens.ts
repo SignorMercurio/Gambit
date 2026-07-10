@@ -37,6 +37,20 @@ export const tokens = {
   shadowPieceMoving: 'drop-shadow(0 6px 5px rgba(15, 21, 37, 0.28))',
 } as const;
 
+// Move-quality annotation palette: badge fills on the board and quality
+// marks in the move list. Mirrored by --color-annot-* in styles.css :root.
+export const annotationColors = {
+  brilliant: '#4fb9b2',
+  great: '#7da9dc',
+  mistake: '#d9a93f',
+  blunder: '#cf5d5d',
+} as const;
+
+// Ink for the badge marks on all four fills — the palette's studio-cream,
+// named separately from the board-surface tokens so square tuning can't
+// silently recolor badge text.
+export const annotationInk = '#f1ecde';
+
 // Marker colors keyed by event kind. move/highlight/arrow/clear/reset are the
 // Five Meanings palette; branch/mainline are structural events shown in
 // neutral rim-light-pewter so they don't compete with chess content.
