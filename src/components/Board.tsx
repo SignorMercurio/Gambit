@@ -437,6 +437,12 @@ export function Board({
 }: BoardProps) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [gesture, setGesture] = useState<BoardGesture | null>(null);
+  // The pointer and button that started the gesture: other pointers (a stray
+  // touch mid-drag) must not retarget, commit, or cancel it, and releasing a
+  // chorded second button must not finish it. `buttonBit` is the initiating
+  // button's `e.buttons` bit, used to detect a release the board never saw
+  // when pointer capture was unavailable.
+  const gesturePointer = useRef<{ id: number; buttonBit: number } | null>(null);
 
   // Map a pointer event to the square under it, or null outside the board.
   const squareAtPointer = (e: React.PointerEvent): string | null => {
@@ -449,7 +455,19 @@ export function Board({
   };
 
   const onGesturePointerDown = (e: React.PointerEvent) => {
-    if (!interactive || gesture || e.pointerType !== 'mouse') return;
+    if (!interactive || e.pointerType !== 'mouse') return;
+    const downBit = e.button === 2 ? 2 : e.button === 0 ? 1 : 0;
+    if (gesture) {
+      // A second button pressed while the drag's button is still held is a
+      // chord: ignore it, the drag continues. A re-press of the initiating
+      // button (or its bit missing from `buttons`) means the release happened
+      // where the board couldn't see it (pointer capture unavailable): drop
+      // the dangling gesture — its captured playhead is long stale — and let
+      // this press start over.
+      const gp = gesturePointer.current;
+      if (gp && downBit !== gp.buttonBit && (e.buttons & gp.buttonBit) !== 0) return;
+      setGesture(null);
+    }
     const sq = squareAtPointer(e);
     if (!sq) return;
     // Ctrl+left covers macOS's right-click convention.
@@ -458,6 +476,7 @@ export function Board({
     if (annotate) {
       e.preventDefault();
       capturePointer(e);
+      gesturePointer.current = { id: e.pointerId, buttonBit: downBit };
       setGesture(beginAnnotationGesture(sq, onArrowGesture, onHighlightGesture));
       return;
     }
@@ -465,20 +484,37 @@ export function Board({
     if (targets.size === 0) return;
     e.preventDefault();
     capturePointer(e);
+    gesturePointer.current = { id: e.pointerId, buttonBit: downBit };
     setGesture(beginMoveGesture(sq, targets, onMoveGesture));
   };
 
   const onGesturePointerMove = (e: React.PointerEvent) => {
-    if (!gesture) return;
+    const gp = gesturePointer.current;
+    if (!gesture || !gp || e.pointerId !== gp.id) return;
+    if ((e.buttons & gp.buttonBit) === 0) {
+      // The initiating button is no longer held: it was released off-board
+      // with capture unavailable. Cancel rather than commit — an uncaptured
+      // off-board release never commits.
+      setGesture(null);
+      return;
+    }
     const sq = squareAtPointer(e);
     if (sq !== gesture.over) setGesture(updateGestureTarget(gesture, sq));
   };
 
   const onGesturePointerUp = (e: React.PointerEvent) => {
-    if (!gesture) return;
+    const gp = gesturePointer.current;
+    if (!gesture || !gp || e.pointerId !== gp.id) return;
+    // Releasing a chorded second button must not finish the drag.
+    const upBit = e.button === 2 ? 2 : e.button === 0 ? 1 : 0;
+    if (upBit !== gp.buttonBit) return;
     setGesture(null);
     const over = squareAtPointer(e);
     finishBoardGesture(gesture, over);
+  };
+
+  const onGesturePointerCancel = (e: React.PointerEvent) => {
+    if (e.pointerId === gesturePointer.current?.id) setGesture(null);
   };
 
   const lastMoveOpacity = lastMove ? timedProgress(time - lastMove.t, 0.12) : 0;
@@ -499,7 +535,7 @@ export function Board({
         onPointerDown={onGesturePointerDown}
         onPointerMove={onGesturePointerMove}
         onPointerUp={onGesturePointerUp}
-        onPointerCancel={() => setGesture(null)}
+        onPointerCancel={onGesturePointerCancel}
         onContextMenu={(e) => {
           if (interactive) e.preventDefault();
         }}

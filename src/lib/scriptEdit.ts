@@ -36,9 +36,17 @@ function takenDeciseconds(text: string): Set<number> {
 // playhead spread out instead of stacking on one instant. `limit` caps the
 // stamp strictly below the next scripted event — when the roomy stepping
 // would cross it, retry with tight 0.1s steps so the line stays on the
-// position the gesture previewed. A fully saturated grid returns null rather
-// than crossing the boundary into a different board position.
-export function nextFreeTime(text: string, t: number, limit = Infinity): number | null {
+// position the gesture previewed. `floor` keeps the stamp strictly above the
+// previous event: grid rounding (and the cap-1 fallback below) may otherwise
+// slip an off-grid timestamp's decisecond back across it, re-ordering the
+// gesture onto a position it never previewed. A pinched or saturated
+// interval returns null rather than crossing either boundary.
+export function nextFreeTime(
+  text: string,
+  t: number,
+  limit = Infinity,
+  floor = -Infinity,
+): number | null {
   const taken = takenDeciseconds(text);
   const limitDeci = Number.isFinite(limit) ? Math.round(limit * 10) : Infinity;
   const scan = (step: number, cap: number): number | null => {
@@ -50,6 +58,7 @@ export function nextFreeTime(text: string, t: number, limit = Infinity): number 
     // previewed, so start one tick under the cap instead; if that slot is
     // taken the grid truly is saturated and the caller reports a conflict.
     if (Number.isFinite(cap) && deci >= cap) deci = Math.max(0, cap - 1);
+    while (deci / 10 <= floor) deci += 1;
     while (taken.has(deci)) deci += step;
     return deci < cap ? deci / 10 : null;
   };
@@ -67,12 +76,16 @@ function findSlots(
   from: number,
   gaps: number[],
   limit = Infinity,
+  floor = -Infinity,
 ): number[] | null {
   const taken = takenDeciseconds(text);
   const limitDeci = Number.isFinite(limit) ? Math.round(limit * 10) : Infinity;
   const layout = (gapsDeci: number[]): number[] | null => {
     const slots: number[] = [];
     let t = Math.max(0, Math.round(from * 10));
+    // Same rule as nextFreeTime: rounding must not slip the first slot back
+    // across the previous event's (possibly off-grid) timestamp.
+    while (t / 10 <= floor) t += 1;
     for (let i = 0; i <= gapsDeci.length; i++) {
       while (taken.has(t)) t += 1;
       if (t >= limitDeci) return null;
@@ -204,8 +217,9 @@ export function planLineInsert(
   time: number,
   body: string,
 ): ScriptEditPlan {
-  const bound = events[lastEventIndexAt(events, time) + 1];
-  const t = nextFreeTime(scriptText, time, bound ? bound.t : Infinity);
+  const idx = lastEventIndexAt(events, time);
+  const bound = events[idx + 1];
+  const t = nextFreeTime(scriptText, time, bound ? bound.t : Infinity, events[idx]?.t ?? -Infinity);
   if (t == null) return { kind: 'conflict', error: NO_FREE_SLOT_ERROR };
   return {
     kind: 'edit',
@@ -266,7 +280,14 @@ export function planMoveGesture(
   if (stateEv.kind === 'mainline') {
     const afterMl = events[stateIdx + 1];
     const cap = afterMl ? afterMl.t : Infinity;
-    const slot = findSlots(scriptText, time, [], Number.isFinite(cap) ? cap - 0.1 : Infinity);
+    const prevT = events[prevIdx]?.t ?? -Infinity;
+    const slot = findSlots(
+      scriptText,
+      time,
+      [],
+      Number.isFinite(cap) ? cap - 0.1 : Infinity,
+      prevT,
+    );
     if (!slot) return planLineInsert(events, scriptText, time, san);
     const [mvT] = slot;
     let text = scriptText;
@@ -300,14 +321,15 @@ export function planMoveGesture(
   // generated `ml` would be absorbed into the variation and silently
   // reverted by the mainline restore.
   const boundT = events[prevIdx + 1]?.t ?? Infinity;
+  const wrapFloor = events[prevIdx]?.t ?? -Infinity;
   let placed: { brT: number; mvT: number; mlT: number } | null = null;
-  const pair = findSlots(scriptText, time, [1], boundT);
+  const pair = findSlots(scriptText, time, [1], boundT, wrapFloor);
   if (pair) {
     const brT = nearestFreeTimeBelow(scriptText, pair[0], prevIdx >= 0 ? events[prevIdx].t : -1);
     if (brT != null) placed = { brT, mvT: pair[0], mlT: pair[1] };
   }
   if (!placed) {
-    const slots = findSlots(scriptText, time, [0.5, 1], boundT);
+    const slots = findSlots(scriptText, time, [0.5, 1], boundT, wrapFloor);
     if (slots) placed = { brT: slots[0], mvT: slots[1], mlT: slots[2] };
   }
   if (!placed) return planLineInsert(events, scriptText, time, san);

@@ -288,6 +288,13 @@ export default function App() {
   const scriptView: 'board' | 'text' = scriptViewRaw === 'text' ? 'text' : 'board';
   const scriptTextRef = useRef(scriptText);
   scriptTextRef.current = scriptText;
+  // Gesture callbacks are captured at pointer-down, but the pause-landing
+  // rule must follow the transport state at release: playback can flip
+  // mid-drag (Space, auto-pause at the end), and landing by the captured
+  // value would park a paused board exactly on the event's timestamp — the
+  // age-0 invisibility pitfall.
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   // Pre-insert script snapshot for one-step undo of the last board gesture or
   // structured edit. Hand edits clear it so undo never reverts typing.
   const [gestureUndo, setGestureUndo] = useState<string | null>(null);
@@ -643,9 +650,9 @@ export default function App() {
   // shows more (the landing stays clamped before the next event).
   const seekEvent = useCallback(
     (t: number) => {
-      setTime(playing ? t : landAfter(t));
+      setTime(playingRef.current ? t : landAfter(t));
     },
-    [playing, landAfter],
+    [landAfter],
   );
 
   // One commit contract for every programmatic script edit (gestures and
@@ -659,9 +666,9 @@ export default function App() {
       setScriptEditError(null);
       setScriptText(next);
       setScriptFileName(null);
-      if (landT != null && !playing) setTime(landT);
+      if (landT != null && !playingRef.current) setTime(landT);
     },
-    [scriptText, playing, setScriptText],
+    [scriptText, setScriptText],
   );
 
   // Both gestures reject the same way: the script text changed between
