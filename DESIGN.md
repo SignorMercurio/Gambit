@@ -7,33 +7,39 @@ colors:
   camera-highlight-blue: "#7da9dc"
   studio-cream: "#f1ecde"
   markup-amber: "#ffd54f"
+  marker-amber: "#f0b429"
   annotation-persimmon: "#ffaa3c"
+  marker-persimmon: "#f08c2e"
+  capture-ember: "#ffb45a"
   stagewell-black: "#0f1525"
   stagewell-indigo: "#161e35"
   set-indigo: "#1f2a44"
   backdrop-slate: "#2a3556"
   sodium-chalk: "#e8ecf5"
   rim-light-pewter: "#c8d0e6"
+  foley-pewter: "#aab3cf"
+  chip-text-blue: "#b8d0ec"
   foley-slate: "#8d97b3"
   stage-mist: "#6b7596"
+  clear-marker: "#9b9b9b"
   studio-vermillion: "#cf5d5d"
 typography:
   display:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "22px"
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "23px"
     fontWeight: 800
     lineHeight: 1.1
     letterSpacing: "0"
   headline:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
     fontSize: "13px"
     fontWeight: 700
     lineHeight: 1.2
     letterSpacing: "0"
   title:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "13.5px"
-    fontWeight: 600
+    fontFamily: "Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "12.5px"
+    fontWeight: 700
     lineHeight: 1.2
     letterSpacing: "normal"
   numeric:
@@ -48,13 +54,32 @@ typography:
     fontWeight: 500
     lineHeight: 1.7
     letterSpacing: "normal"
+  caption:
+    fontFamily: "JetBrains Mono, ui-monospace, monospace"
+    fontSize: "11.5px"
+    fontWeight: 500
+    lineHeight: 1.4
+    letterSpacing: "0"
   label:
     fontFamily: "JetBrains Mono, ui-monospace, monospace"
     fontSize: "10.5px"
     fontWeight: 700
     lineHeight: 1.1
     letterSpacing: "0"
+  subtitle:
+    fontFamily: "PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, Source Han Sans SC, Microsoft YaHei, Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "21px"
+    fontWeight: 600
+    lineHeight: 1.36
+    letterSpacing: "0"
+  subtitle-mobile:
+    fontFamily: "PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, Source Han Sans SC, Microsoft YaHei, Schibsted Grotesk, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "19px"
+    fontWeight: 600
+    lineHeight: 1.34
+    letterSpacing: "0"
 rounded:
+  hairline: "2px"
   xs: "5px"
   sm: "7px"
   md: "10px"
@@ -106,7 +131,7 @@ components:
     padding: "9px 12px"
   tab-off:
     backgroundColor: "#00000000"
-    textColor: "#aab3cf"
+    textColor: "{colors.foley-pewter}"
     rounded: "{rounded.sm}"
     height: "40px"
     padding: "9px 12px"
@@ -124,7 +149,7 @@ The transport sitting under the board is a pro-grade timeline ruler, not a media
 
 The system rejects the chess.com palette outright (no green-and-cream board, no the-app's red-and-yellow accents). It rejects glassy AI-tool surfaces, candy-colored chess apps for kids, and the SaaS hero-metric template. There is exactly one accent gradient in the entire UI (the Play button); every other accent is a single solid color. Body chrome is tonal: raised surfaces wash chalk-tinted alpha over the dark gradient (the panel and console washes stay under 7%), recessed wells (tab track, speed track, inputs) sink with stagewell-black alpha, and interactive states ride the four-stop white ladder (4%, 6%, 10%, 12%). Type contrast carries hierarchy more than color does.
 
-Density is studied. In the two-column desktop layout the board sizes itself to the viewport height: a 720px cap, a 560px floor, scaling continuously (`min(720px, max(560px, calc(100dvh - 410px)))`, where 410px is the worst-case vertical chrome budget) so the board and the transport console are always on screen together; only below the floor does the page scroll rather than shrink the recording artifact further. The transport console spans the full workspace width beneath the board column and the side panel; the side panel rides a 560–620px column (`clamp(560px, 32vw, 620px)`) and breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
+Density is studied. In the two-column desktop layout (≥1381px; the stack point is 1380px) and the stacked single-column layout, the recording artifact stays at its 720px design size on ordinary laptop heights. Width still caps it naturally on phones; only genuinely short desktop viewports (width ≥1081px and height ≤760px) opt into the 560px working fallback. At every other height the page may scroll rather than silently shrinking a recording frame into the 500px range. The ≤920px and ≤840px squeeze tiers tighten chrome only. The transport console spans the full workspace width beneath the board column and the side panel; the side panel rides a 560–620px column (`clamp(560px, 32vw, 620px)`) and breathes at 14px–24px gaps; the panel header has its own typographic scale (uppercase, compact, smaller than the body) so it never competes with the events below it. The cinematic, precise, chess-native triad from PRODUCT.md is the line: cinematic in the surface posture, precise in the monospaced numerics and the deterministic playback, chess-native in respect for files-and-ranks and SAN.
 
 **Key Characteristics:**
 - Dark navy backdrop with a steel-blue key-light pool centered on the board column. Cream-on-blue board, never reversed.
@@ -147,8 +172,12 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 - **Studio Cream** (`#f1ecde`, `~oklch(94% 0.02 80)`). The light squares, the logo glyph, the Play-button glyph. Warm enough to balance the cool navy, never `#fff`.
 
 ### Tertiary
-- **Markup Amber** (`#ffd54f`, `~oklch(89% 0.16 95)`). User highlights and last-move tinting. Used at 55% alpha on the highlighted square, 20% alpha as a chip background, and full saturation on the chip text. Last-move tinting is per-square-color: 32% alpha on cream squares, 52% on blue squares (at 32% the mix over steel blue lands on a desaturated sage that stops reading as amber, especially after a 480p downscale). Reads like a highlighter pen across a printed page.
-- **Annotation Persimmon** (`#ffaa3c`, `~oklch(79% 0.17 65)`). The arrow color, used at 85% alpha on the stroke, 20% alpha as a chip background. The bolder, warmer cousin of Amber. Together they form the "annotation pens" pair.
+
+The annotation pens are two-stop families: a light board stop for overlay tints on the recorded artifact, and a deeper marker stop for small chrome (timeline pins, seek dots) that must stay saturated at 5px sizes.
+
+- **Markup Amber** (board stop `#ffd54f`, `~oklch(89% 0.16 95)`; marker stop `#f0b429`). The board stop carries user highlights and last-move tinting: 55% alpha on the highlighted square, and per-square-color last-move tints — 42% alpha on cream squares, 52% on blue squares (below those alphas the mix desaturates until it stops reading as amber, especially after a 480p downscale). The marker stop carries the highlight pins and seek dots. Reads like a highlighter pen across a printed page.
+- **Annotation Persimmon** (board stop `#ffaa3c`, `~oklch(79% 0.17 65)`; marker stop `#f08c2e`). The board stop is the arrow color, used at 85% alpha on the stroke; the marker stop carries arrow pins and dots. The bolder, warmer cousin of Amber. Together they form the "annotation pens" pair.
+- **Capture Ember** (`#ffb45a`). The capture-flash radial only (70% alpha fading to 0): a derived warmth between the two pens, board-layer functional, never chrome.
 
 ### Neutral
 - **Stagewell Black** (`#0f1525`, `~oklch(13% 0.03 268)`). The body-gradient bottom; the deepest surface in the system.
@@ -156,9 +185,12 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 - **Set Indigo** (`#1f2a44`, `~oklch(22% 0.04 263)`). The radial-gradient warm wash from the upper-left "off-stage light".
 - **Backdrop Slate** (`#2a3556`, `~oklch(28% 0.05 268)`). The radial-gradient cool wash from the lower-right.
 - **Sodium Chalk** (`#e8ecf5`, `~oklch(93% 0.012 261)`). Primary text on chrome.
-- **Rim-Light Pewter** (`#c8d0e6`, `~oklch(83% 0.025 261)`). Secondary text, panel titles, ghost-button glyphs.
-- **Foley Slate** (`#8d97b3`, `~oklch(63% 0.035 263)`). Muted text, panel hints, app-sub.
-- **Stage Mist** (`#6b7596`, `~oklch(50% 0.04 263)`). Footer text, faintest event-time labels.
+- **Rim-Light Pewter** (`#c8d0e6`, `~oklch(83% 0.025 261)`). Secondary text, panel titles, ghost-button glyphs, and the neutral `br`/`ml` structural pins.
+- **Foley Pewter** (`#aab3cf`). Resting tab-label text; one stop quieter than Rim-Light Pewter.
+- **Foley Slate** (`#8d97b3`, `~oklch(63% 0.035 263)`). Muted text: panel hints, app-sub, footer, time ticks, time chips. Verified ≥4.5:1 against every surface it sits on; the muted floor for readable text.
+- **Stage Mist** (`#6b7596`, `~oklch(50% 0.04 263)`). Non-text uses only (the default pin ink before kind color applies); below AA at small sizes, so never for readable text.
+- **Clear Marker** (`#9b9b9b`). The grey-mist stop of the Five Meanings: clear pins and dots.
+- **Chip-Text Blue** (`#b8d0ec`). Move-number ink inside the current-move pill.
 
 ### Errors
 - **Studio Vermillion** (`#cf5d5d`, `~oklch(58% 0.16 22)`). Reset-event marker, error-row accent, and the check glow under a checked king (a radial fade from 95% to 55% alpha, gone by the square edge; derived from the engine position, never from a `+` in the SAN). Derived light tints (`#ff7b7b`, `#ff9b9b`, `#ffb4b4`) carry line numbers, error text, and reset-row text. The derivatives live in DESIGN.json's `colorMeta.studio-vermillion.tonalRamp`.
@@ -171,26 +203,32 @@ A cinematic dark-studio palette built around one structural blue, one warm cream
 
 **The Annotation-Pens Rule.** Amber and Persimmon are not two colors; they are a pair, used together to imply a creator's two-pen toolkit. Highlights belong to Amber. Arrows belong to Persimmon. Don't cross them.
 
+**The Derived-Alpha Rule.** `rgba(…)` literals in `styles.css` and SVG attributes that decompose to a named palette color at an alpha stop are derived stops, not new colors: the chalk tints (`--line-soft/faint`, `--rim-light`, the surface washes), the `--well-*` ladder (stagewell-black alphas), vermillion alphas (the chip-reject flash, the wavy error underline, the errors band), camera-highlight-blue focus tints, and the `#0f1525` `floodColor` on the board's SVG drop-shadows (stagewell-black as shadow ink). A literal that does **not** decompose to a palette color is a bug. New derived stops are fine; new base hues go through the palette.
+
 ## 3. Typography
 
-**Display Font:** Plus Jakarta Sans (with `ui-sans-serif, system-ui, sans-serif` fallback). Loaded in weights 500/600/700/800.
-**Mono Font:** JetBrains Mono (with `ui-monospace, monospace` fallback). Loaded in weights 400/500/600.
+**Display Font:** Schibsted Grotesk (with `ui-sans-serif, system-ui, sans-serif` fallback). Self-hosted variable font, weight range 400–900, latin subset (`public/fonts/schibsted-grotesk-var.woff2`).
+**Mono Font:** JetBrains Mono (with `ui-monospace, monospace` fallback). Self-hosted variable font, weight range 100–800, latin subset (`public/fonts/jetbrains-mono-var.woff2`).
 
-**Character:** Two voices, deliberate split. Plus Jakarta Sans handles the chrome (the app title, the panel title, the tab labels) with a slightly humanist warmth that keeps the chrome from feeling clinical. JetBrains Mono handles everything chess and time related: the time-readout, the speed buttons, the script editor, the event list, the event-kind chips, the script-syntax hints, the footer. The pairing carries the principle that the script is a human-written artifact and should read like code, while the chrome reads like a tool.
+Both families load from `public/fonts/` via `@font-face` in `src/styles.css` and are preloaded in `index.html` — no network font hosts, so first paint doesn't depend on a CDN and the app keeps its voice behind blocked font hosts.
+
+**Character:** Two voices, deliberate split. Schibsted Grotesk handles the chrome (the app title, the panel title, the tab labels) — a grotesque with sharp, subtly angled terminals that fit the precision-instrument identity while staying crisp at the 10.5–13px chrome sizes. JetBrains Mono handles everything chess and time related: the time-readout, the speed buttons, the script editor, the event list, the event-kind chips, the script-syntax hints, the footer. The pairing carries the principle that the script is a human-written artifact and should read like code, while the chrome reads like a tool.
 
 ### Hierarchy
-- **Display** (Jakarta, 800, 22px, line-height 1.1, letter-spacing 0): the "Gambit" wordmark in the header. The single largest label in the UI; nothing competes with it.
-- **Headline** (Jakarta, 700, 13px, letter-spacing 0, uppercase): panel titles ("Script", "Setup"). Small and compact, set in caps. The size restraint is the point; this is a label, not a heading.
-- **Title** (Jakarta, 600, 13.5px): tab labels, controls labels, button text. Sits between Headline and Body in optical weight.
+- **Display** (Schibsted, 800, 23px, line-height 1.1, letter-spacing 0): the "Gambit" wordmark in the header. The single largest label in the UI; nothing competes with it.
+- **Headline** (Schibsted, 700, 13px, letter-spacing 0, uppercase): panel titles ("Script", "Setup"). Small and compact, set in caps. The size restraint is the point; this is a label, not a heading.
+- **Title** (Schibsted, 700, 12.5px): tab labels and chrome button text. Its compact uppercase variant (10.5–11px / 700: section labels, the view toggle, upload buttons) carries the same voice one size down.
 - **Numeric** (Mono, 600/700, 12.5px): the time-readout (`00:14.0 / 00:33.5`). Bumped to 700 for the current time, 600 for the separator and total, color-graded by role. Monospaced so digit width is stable across frames; the readout never reflows during playback. Critical to the cinematic principle.
-- **Body** (Mono, 500, 12.5px, line-height 1.7): the script editor textarea, the event-list event body, error rows. Line-height is generous (1.7) because the editor is a working surface; users read and write here.
-- **Label** (Mono, 700, 10.5px, letter-spacing 0, uppercase): the event-kind chips ("MOVE", "HIGHLIGHT", "ARROW", "CLEAR", "RESET"). Small, compact, in caps; functions as a typographic chip color in addition to its own background-tint chip color.
+- **Body** (Mono, 500, 12.5px, line-height 1.7): the script editor textarea, the move list's mainline moves (13px/600), error rows. Line-height is generous (1.7) because the editor is a working surface; users read and write here.
+- **Caption** (Mono, 500–600, 11.5px): the working-surface small tier — panel hints, the footer, the FEN input, variation flows, speed segments, inline error rows.
+- **Label** (Mono, 500–700, 10.5px): the micro-metadata floor — time-tick labels, time chips, filenames, the move-number rail. 10.5px is the system's smallest type; anything smaller aliases on downscaled recordings.
+- **Subtitle** (CJK-first stack ending in Schibsted, 600, 21px, line-height 1.36; 19px at ≤600px): the subtitle strip only. CJK-first because lesson scripts are frequently Chinese; sized to survive a 480p downscale. The 19px mobile step is a documented ramp size, not drift.
 
 ### Named Rules
 
-**The Mono-for-Chess Rule.** Anything chess-related (SAN, square coordinates, time codes, script lines) is set in JetBrains Mono. Anything chrome-related (the app title, panel titles, tab labels, button labels) is set in Plus Jakarta Sans. The split is structural; do not mix.
+**The Mono-for-Chess Rule.** Anything chess-related (SAN, square coordinates, time codes, script lines) is set in JetBrains Mono. Anything chrome-related (the app title, panel titles, tab labels, button labels) is set in Schibsted Grotesk. The split is structural; do not mix.
 
-**The Single-Display Rule.** The 22px Display weight appears once: the "Gambit" wordmark. Subheadings, page titles, modal titles do not graduate to Display. If a future surface needs a larger label, use Headline at a larger size before promoting to Display.
+**The Single-Display Rule.** The 23px Display weight appears once: the "Gambit" wordmark. Subheadings, page titles, modal titles do not graduate to Display. If a future surface needs a larger label, use Headline at a larger size before promoting to Display.
 
 **The 65–75ch Cap.** The script editor textarea is the only place body type accumulates into long-form content. Line length there caps at the editor's natural panel width (560–620px column / ~70–78ch at the 12.5px mono — the 620px maximum brushes the cap's ceiling); on a wider viewport the editor stays in the side column rather than expanding further.
 
@@ -204,14 +242,16 @@ Gambit uses tonal layering with one structural shadow, in three families:
 
 Behind the chrome, the body backdrop layers three radial-gradient washes over the navy linear: a tight `studio-steel-blue at 10%` key-light pool centered at `36% 48%` (under the board column); a `set-indigo` warm wash anchored at the upper-left corner; a `backdrop-slate` cool wash anchored at the lower-right. The result is that the board reads as physically lit, not just centered.
 
-Two surfaces use a real `box-shadow`:
+Three surfaces use a real `box-shadow`:
 
 1. The board: `0 30px 80px -30px rgba(20, 30, 60, 0.55), 0 8px 24px -10px rgba(20, 30, 60, 0.30), inset 0 0 0 1px rgba(0, 0, 0, 0.05)`. A two-layer ambient shadow tinted toward the surface base, lifting the board off the studio floor. This is the only structural shadow in the system.
 2. The Play button: `0 6px 16px -6px rgba(93, 143, 201, 0.7)`. A colored bloom under the only gradient surface in the UI. Not ambient shadow; brand glow tied to the brand color.
+3. The logo mark: `0 18px 34px -18px rgba(93, 143, 201, 0.75), 0 8px 18px -14px rgba(15, 21, 37, 0.9)`. A brand bloom plus ground shadow under the wordmark tile — the header's one lit object, same family as the Play bloom, never repeated elsewhere.
 
 ### Shadow Vocabulary
 - **Board ambient** (`0 30px 80px -30px rgba(20, 30, 60, 0.55), 0 8px 24px -10px rgba(20, 30, 60, 0.30), inset 0 0 0 1px rgba(0,0,0,0.05)`): the studio floor under the board. Use only on the board.
 - **Brand bloom** (`0 6px 16px -6px rgba(93, 143, 201, 0.7)`): the colored bloom under the Play button. Use only on the single primary-action button at any one surface.
+- **Logo bloom** (`0 18px 34px -18px rgba(93, 143, 201, 0.75), 0 8px 18px -14px rgba(15, 21, 37, 0.9)`): the header wordmark tile. One instance; do not extend to other header elements.
 - **Scrub-thumb halo** (`0 0 0 4px rgba(93, 143, 201, 0.35), 0 2px 6px rgba(0, 0, 0, 0.4)`): the playhead disk. A 4px brand-tinted ring around a 14px sodium-chalk circle plus a small ground shadow. Use only on the timeline thumb.
 - **Playhead strand** (linear-gradient on `sodium-chalk` from 55% to 18% alpha, top-to-bottom): the vertical line crossing the timeline ruler. Not a `box-shadow`; the strand is a 1px-wide DOM element with a vertical alpha gradient. Reads at recording resolution.
 
@@ -229,13 +269,15 @@ Two surfaces use a real `box-shadow`:
 
 **Secondary action (Rewind, future ctrl-buttons).** A 36×36 square button, `rgba(255,255,255,0.06)` resting background, `rim-light-pewter` glyph, 10px radius. Hover lifts to `rgba(255,255,255,0.12)` and `sodium-chalk` glyph; no transform on hover. Used for non-primary transport actions. The rewind button returns the playhead to 0 while preserving the play state (paused stays paused), so it never duplicates the primary button's end-state replay.
 
-**Speed selector.** A 4-button mono-font segmented group inside a recessed `stagewell-black` 28% track (10px radius, 1px `--line-faint` inset ring, 3px padding). Each segment is `5px 9px` padding, 6px radius, default `foley-slate` text on transparent, active `sodium-chalk` text on `rgba(255,255,255,0.12)` background. Type is JetBrains Mono 11.5px / 600. Reads like a video editor's transport-rate selector.
+**Speed selector.** A 4-button mono-font segmented group inside a recessed `stagewell-black` 28% track (10px radius, 1px `--line-faint` inset ring, 3px padding). Each segment is `5px 9px` padding, 5px radius (`rounded.xs`), default `foley-slate` text on transparent, active `sodium-chalk` text on `rgba(255,255,255,0.12)` background. Type is JetBrains Mono 11.5px / 600. Reads like a video editor's transport-rate selector.
 
-**Tab toggle (Script / Setup).** A full-width two-segment strip across the top of the side panel: recessed `stagewell-black` 24% track, 5px padding, 4px gap, 1px `--line-faint` bottom hairline. Each tab flexes to half the panel width, 40px min-height, `9px 12px` padding, 7px radius, Jakarta 12.5px / 700, default `#aab3cf` text; active `sodium-chalk` text on `rgba(255,255,255,0.10)` with a 1px `--line-faint` inset ring.
+**Tab toggle (Script / Setup).** A full-width two-segment strip across the top of the side panel: recessed `stagewell-black` 24% track, 5px padding, 4px gap, 1px `--line-faint` bottom hairline. Each tab flexes to half the panel width, 40px min-height, `9px 12px` padding, 7px radius, Schibsted 12.5px / 700, default `#aab3cf` text; active `sodium-chalk` text on `rgba(255,255,255,0.10)` with a 1px `--line-faint` inset ring.
 
 ### Event-kind markers
 
-Non-move events surface as kind-colored dots and pins rather than filled chips. Scrubber marker pins and the move list's seek dots share one saturated palette — `#5d8fc9` move, `#f0b429` highlight, `#f08c2e` arrow, `#9b9b9b` clear, `#cf5d5d` reset/error — at 0.7 resting opacity, 1.0 on hover. The palette lives once in `markerColors` (`src/lib/tokens.ts`); the move-quality marks use the separate `annotationColors` set.
+Non-move events surface as kind-colored dots and pins rather than filled chips. Scrubber marker pins and the move list's seek dots share one saturated palette — `#5d8fc9` move, `#f0b429` highlight, `#f08c2e` arrow, `#9b9b9b` clear, `#cf5d5d` reset/error — pins resting at 0.85 opacity (1.0 on hover), dots dimmed at 0.5 until reached (0.95 after). The palette lives once in `markerColors` (`src/lib/tokens.ts`); the move-quality marks use the separate `annotationColors` set.
+
+**Kind is never color alone.** Each semantic family also carries a shape, decodable in grayscale. Pins: moves and `br`/`ml` are square-cut (2px hairline radius), annotation pens (highlight / arrow / clear) are capsules, structural breaks and script errors (reset / `st` / `fen` / error lines) are pointed pennants painted without clipping the button or its enlarged hit target. Dots: highlight squares off (1.5px radius), arrow points (a small triangle), clear hollows to a ring; moves need no dot — they are text.
 
 ### Containers (panels)
 
@@ -257,12 +299,12 @@ The full controls row is the project's signature component, carrying "Pro-Grade 
 
 The ruler stacks three rows over the rail:
 
-- **Pin row (top, 18px)**. Kind-colored marker buttons hang above the rail. Each pin is 5×16 at rest (5×22 on hover/focus), with a hairline 1px tail dropping 7px to the rail so the pin feels anchored. Pins are real `<button type="button">` elements with `aria-label="Seek to mm:ss: <event raw>"`, and a `::before` pseudo-element extends the hit area to 44×44 to clear WCAG 2.5.5 without disturbing visual rhythm.
+- **Pin row (top, 18px)**. Kind-colored, kind-shaped marker buttons hang above the rail (shape vocabulary under Event-kind markers; script-error lines pin here too, as vermillion pennants). Each pin is 5×16 at rest, growing on hover/focus via `transform: scaleY(1.375)` — never a height animation — with a hairline 1px tail dropping 7px to the rail so the pin feels anchored. The pin layer rides above the transparent scrub input (`z-index: 5`, `pointer-events: none` on the layer, `auto` on the pins) so a pin click seeks its exact event instead of raw-scrubbing near it. Pins are real `<button type="button">` elements with `aria-label="Seek to mm:ss: <event raw>"`; a `::before` pseudo-element extends the hit area to ~44×44, reaching up into the console's free padding and stopping at the rail's top edge so pin targets never steal the rail's own scrub clicks. The row is a `role="toolbar"` with one roving tab stop: Tab enters once, ←/→/Home/End walk the pins, Tab leaves — dozens of pins never cost dozens of Tab presses.
 - **Rail (middle, 6px)**. The same `tonal-white-08` track and `studio-steel-blue → camera-highlight-blue` linear-gradient fill as before. Pill radius (`999px`).
 - **Tick row (bottom, 14px)**. Mono-numeric time labels (10.5px / 500, foley-slate; the Label-tier size floor, anything smaller aliases on downscaled recordings) at adaptive intervals: every 5s for scripts ≤30s, every 10s ≤60s, every 15s ≤90s, every 30s ≤180s, every 60s above. Each label is preceded by a 1px `tonal-white-10` tick mark hung above it, anchoring the ruler visually.
 - **Playhead strand**. Above and across all three rows: a 1px-wide vertical line in `sodium-chalk` with a top-to-bottom alpha gradient (55% → 18%), capped at the rail center by a 14×14 sodium-chalk thumb wearing the Scrub-thumb halo. The strand reads at small recording resolutions; the thumb anchors precise scrub.
 
-Native `<input type="range">` is rendered transparent and stretched over the entire ruler; click-and-drag works anywhere in the console, and arrow keys move time at 1s steps via the global keyboard handler.
+Native `<input type="range">` is rendered transparent and stretched over the entire ruler; click-and-drag works anywhere in the console (pins excepted — they seek exactly), and arrow keys move time at 1s steps via the global keyboard handler. Because every mouse scrub parks focus on the range, the range mirrors the transport keys itself (Space toggles, ←/→ step 1s); scrubbing must never leave the keyboard dead.
 
 ### Navigation
 
@@ -280,12 +322,13 @@ A centered caption strip directly under the board, max-width matched to the boar
 
 The Script panel's Moves view renders the script as a PGN move list — the lichess analysis-panel convention restated in Gambit's chrome — instead of a flat one-event-per-row log:
 
-- **Mainline rows.** A `[num 30px] [white 1fr] [black 1fr]` grid, number rail on `tonal-white-04`, every move in JetBrains Mono 13px/600. A row that resumes on Black's move after an interruption shows the PGN "…" placeholder in the White cell. Each cell carries the move, its annotation dots, and a right-aligned 10px mono time.
+- **Mainline rows.** A `[num 30px] [white 1fr] [black 1fr]` grid, number rail on `tonal-white-04`, every move in JetBrains Mono 13px/600. A row that resumes on Black's move after an interruption shows the PGN "…" placeholder in the White cell. Each cell carries the move, its annotation dots, and a right-aligned 10.5px mono time.
 - **Variations.** A top-level `br … ml` block renders as an inset flow (`tonal-white-04` background, mono 11.5px, line-height 1.9): numbered move spans (`3.Bc4`, `3…Bc5`; the number reappears after any interruption), nested variations in parentheses, and a trailing `↩` that seeks to the `ml`. Move numbering derives from the position snapshots, so it stays correct across variations, FEN loads, and resets.
 - **Non-move events.** Highlights, arrows, and clears render as small kind-colored seek dots (same hues as the timeline pins) attached inline after the move they follow; tooltips carry time + body. Resets / `st` / `fen` are full-width vermillion section breaks; numbering restarts beneath them. Script errors stay loud as full rows.
-- **States.** Reached events read at full strength, not-yet-reached ones sit dimmed, and the current position (the last reached event) wears a solid steel-blue pill — Five Meanings: move — mirroring lichess's current-move highlight. Every event-mapped element carries `data-evi={event index}` so the highlight and the follow-scroll work regardless of nesting.
+- **States.** Reached events read at full strength, not-yet-reached ones sit dimmed, and the current position (the last reached event) wears a solid steel-blue pill — Five Meanings: move — mirroring lichess's current-move highlight. Every event-mapped element carries `data-evi={event index}` so the highlight and the follow-scroll work regardless of nesting. A move the snapshot builder rejected (illegal SAN, bad FEN) is flagged inline — error-tint ink plus a vermillion wavy underline and a tooltip — so a broken line is findable at a glance, not only in the errors band.
+- **Errors are playhead-independent.** The errors band always reflects the complete script error collection, and error lines pin on the timeline ruler as vermillion pennants: an author paused at 0:00 sees the invalid move at 0:37. Error visibility must never depend on where the playhead happens to sit.
 
-**Editable mode.** The list is a structured editor behind a Moves / Text segmented toggle (speed-group pattern; Text is the fallback for comments and exotic edits, choice persisted like the drafts). Every timed event pairs with a click-to-edit time chip (mono 10px on a faint `tonal-white-06` pill, so timestamps read as objects distinct from move numbers; input commits on Enter/blur, cancels on Escape, ↑/↓ nudges 0.1s) and a delete × that floats in as a corner badge on hover (stagewell-black disc, vermillion ring on hover) — it reserves no inline space, so the resting layout stays as compact as the read-only view. `br` gets no chip at all: its timestamp is ordering-only (the board looks identical for any value between the neighboring events), so exposing it would invite meaningless edits — only the `ml` side (the visible snap-back moment) is editable, via the `↩` chip and nested `)` chips. A variation block deletes as a whole via its own × at the block's top-right; `br`/`ml` never carry per-line deletes, so their pairing can't be half-deleted. Clicking a move still seeks, so the board previews the position being edited. The header hint is contextual: gesture help in Moves, line syntax in Text.
+**Editable mode.** The list is a structured editor behind a Moves / Text segmented toggle (speed-group pattern; Text is the fallback for comments and exotic edits, choice persisted like the drafts). Every timed event pairs with a click-to-edit time chip (mono 10.5px — the Label floor — on a faint `tonal-white-06` pill, so timestamps read as objects distinct from move numbers; input commits on Enter/blur, cancels on Escape, ↑/↓ nudges 0.1s; an unparseable value never rewrites the line and never vanishes silently — the chip flashes a vermillion fade, a pure color crossfade that stays under reduced motion) and a delete × that floats in as a corner badge on hover (stagewell-black disc, vermillion ring on hover) — it reserves no inline space, so the resting layout stays as compact as the read-only view. `br` gets no chip at all: its timestamp is ordering-only (the board looks identical for any value between the neighboring events), so exposing it would invite meaningless edits — only the `ml` side (the visible snap-back moment) is editable, via the `↩` chip and nested `)` chips. A variation block deletes as a whole via its own × at the block's top-right; `br`/`ml` never carry per-line deletes, so their pairing can't be half-deleted. Clicking a move still seeks, so the board previews the position being edited. The header hint is contextual: gesture help in Moves, line syntax in Text.
 
 ### Move List Follow-Scroll
 
@@ -306,7 +349,7 @@ Cursor is `grabbing` during a move drag and `crosshair` during an annotate gestu
 
 ### Do
 - **Do** keep chrome in the four-stop tonal ladder: `rgba(255,255,255,α)` at α ∈ {0.04, 0.06, 0.10, 0.12}. Anything outside this set should be a primitive accent color, not chrome.
-- **Do** set every numeric, every chess square, every SAN move, every script line in **JetBrains Mono**. Set every chrome label in **Plus Jakarta Sans**.
+- **Do** set every numeric, every chess square, every SAN move, every script line in **JetBrains Mono**. Set every chrome label in **Schibsted Grotesk**.
 - **Do** use the move/highlight/arrow/clear/reset color list for any event-related visual. The five hues are vocabulary, not decoration.
 - **Do** keep functional motion (`piece slide`, `arrow draw`, `capture flash`) and cut everything else. Decorative hover pulses, gradient sweeps, shimmer effects: forbidden.
 - **Do** clamp all chrome contrast to "quieter than the board". The board is the canvas. If chrome competes for attention in a screen recording, it is wrong.

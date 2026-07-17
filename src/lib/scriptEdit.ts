@@ -131,32 +131,38 @@ function retimeLine(text: string, line: number, t: number): string {
 // timestamp is rewritten in place (preserving attached comments); when it
 // crosses other events, the line is relocated to its time-sorted position so
 // the text stays readable top-to-bottom.
-export function setLineTime(text: string, line: number, t: number): string {
+type LineTimeEdit = { text: string; line: number | null };
+
+export function setLineTime(text: string, line: number, t: number): LineTimeEdit {
   // Decide and write on the same decisecond grid: the written stamp rounds,
   // so an unrounded decision could place the line on the other side of a
   // textual neighbor than the chronology check assumed.
-  t = Math.round(t * 10) / 10;
+  const roundedT = Math.round(t * 10) / 10;
   const lines = text.split('\n');
   const idx = line - 1;
-  if (idx < 0 || idx >= lines.length) return text;
+  if (idx < 0 || idx >= lines.length) return { text, line: null };
   let prev: number | null = null;
   for (let i = idx - 1; i >= 0 && prev == null; i--) prev = lineTime(lines[i]);
   let next: number | null = null;
   for (let i = idx + 1; i < lines.length && next == null; i++) next = lineTime(lines[i]);
-  if ((prev == null || prev <= t) && (next == null || t <= next)) {
-    return retimeLine(text, line, t);
+  if ((prev == null || prev <= roundedT) && (next == null || roundedT <= next)) {
+    lines[idx] = lines[idx].replace(
+      /^(\s*)\[[^\]]*\]/,
+      `$1${formatScriptTime(roundedT)}`,
+    );
+    return { text: lines.join('\n'), line };
   }
   const m = lines[idx].trim().match(/^\[\s*[0-9:.]+\s*\]\s*(.*)$/);
-  if (!m) return text;
+  if (!m) return { text, line: null };
   lines.splice(idx, 1);
-  return insertScriptLine(lines.join('\n'), t, m[1]);
+  return insertScriptLineInto(lines, roundedT, m[1]);
 }
 
 // Remove a set of script lines (1-based). Comments are left in place — their
 // attachment is the author's to manage in text mode.
 export function removeLines(text: string, targets: number[]): string {
   const lines = text.split('\n');
-  for (const line of [...targets].sort((a, b) => b - a)) {
+  for (const line of [...new Set(targets)].sort((a, b) => b - a)) {
     const idx = line - 1;
     if (idx >= 0 && idx < lines.length) lines.splice(idx, 1);
   }
@@ -168,9 +174,8 @@ export function removeLines(text: string, targets: number[]): string {
 // comment stays glued to the section it introduces (a run at the very top
 // of the file reads as a script header and stays put). With no later event
 // the line is appended at the end, before trailing blank lines.
-function insertScriptLine(text: string, t: number, body: string): string {
+function insertScriptLineInto(lines: string[], t: number, body: string): LineTimeEdit {
   const entry = `${formatScriptTime(t)} ${body}`;
-  const lines = text.split('\n');
   let insertAt = -1;
   let blockStart = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -187,7 +192,11 @@ function insertScriptLine(text: string, t: number, body: string): string {
     while (insertAt > 0 && lines[insertAt - 1].trim() === '') insertAt--;
   }
   lines.splice(insertAt, 0, entry);
-  return lines.join('\n');
+  return { text: lines.join('\n'), line: insertAt + 1 };
+}
+
+function insertScriptLine(text: string, t: number, body: string): string {
+  return insertScriptLineInto(text.split('\n'), t, body).text;
 }
 
 // ---------------------------------------------------------------------------

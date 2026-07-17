@@ -95,7 +95,26 @@ export function stateFromFEN(fen: string): GameState {
   }
 
   if (activeColor !== 'w' && activeColor !== 'b') throw new Error('Invalid FEN: active color must be w or b');
-  if (epText !== '-' && !/^[a-h][36]$/.test(epText)) throw new Error('Invalid FEN: bad en passant square');
+
+  let enPassant: string | null = null;
+  if (epText !== '-') {
+    if (!/^[a-h][36]$/.test(epText)) throw new Error('Invalid FEN: bad en passant square');
+    const ep = sqToIdx(epText);
+    const expectedRank = activeColor === 'w' ? 5 : 2;
+    const pawnRank = ep.r + (activeColor === 'w' ? -1 : 1);
+    const pawnSide: Side = activeColor === 'w' ? 'b' : 'w';
+    const pawn = board[pawnRank]?.[ep.f];
+    if (
+      ep.r !== expectedRank ||
+      board[ep.r][ep.f] !== null ||
+      !pawn ||
+      pawn.type !== 'p' ||
+      pawn.side !== pawnSide
+    ) {
+      throw new Error('Invalid FEN: inconsistent en passant square');
+    }
+    enPassant = epText;
+  }
 
   const halfmove = Number(halfmoveText);
   const fullmove = Number(fullmoveText);
@@ -106,7 +125,7 @@ export function stateFromFEN(fen: string): GameState {
     board,
     turn: activeColor,
     castling: parseCastling(castlingText),
-    enPassant: epText === '-' ? null : epText,
+    enPassant,
     halfmove,
     fullmove,
   };
@@ -167,9 +186,17 @@ function pieceTargets(board: Board, f: number, r: number, state?: GameState): Ta
       if (!inBounds(nf, nr)) continue;
       const t = board[nr][nf];
       if (t && t.side === opp) out.push([nf, nr]);
-      if (state && state.enPassant) {
+      if (state?.enPassant && !t) {
         const ep = sqToIdx(state.enPassant);
-        if (ep.f === nf && ep.r === nr) out.push([nf, nr, 'ep']);
+        const captured = board[r][nf];
+        if (
+          ep.f === nf &&
+          ep.r === nr &&
+          captured?.type === 'p' &&
+          captured.side === opp
+        ) {
+          out.push([nf, nr, 'ep']);
+        }
       }
     }
   } else if (p.type === 'n') {
@@ -369,27 +396,43 @@ export function legalMoves(state: GameState): Move[] {
 }
 
 export function parseSAN(san: string, state: GameState): Move | null {
-  const raw = san.replace(/[+#!?]+$/g, '').replace(/\s/g, '');
-  const moves = legalMoves(state);
+  const trimmed = san.trim();
+  if (/\s/.test(trimmed)) return null;
+  const raw = trimmed.replace(/[+#!?]+$/g, '');
+  const queensideCastle = /^O-O-O$/i.test(raw) || raw === '0-0-0';
+  const kingsideCastle = /^O-O$/i.test(raw) || raw === '0-0';
 
-  if (/^O-O-O$/i.test(raw) || raw === '0-0-0') {
+  let pieceMatch: RegExpMatchArray | null = null;
+  let pawnCaptureMatch: RegExpMatchArray | null = null;
+  let pawnMoveMatch: RegExpMatchArray | null = null;
+  if (!queensideCastle && !kingsideCastle) {
+    pieceMatch = raw.match(/^([NBRQK])([a-h])?([1-8])?(x)?([a-h][1-8])$/);
+    if (!pieceMatch) {
+      pawnCaptureMatch = raw.match(/^([a-h])x([a-h][1-8])(?:=([NBRQ]))?$/);
+      if (!pawnCaptureMatch) {
+        pawnMoveMatch = raw.match(/^([a-h][1-8])(?:=([NBRQ]))?$/);
+        if (!pawnMoveMatch) return null;
+      }
+    }
+  }
+
+  const moves = legalMoves(state);
+  if (queensideCastle) {
     return moves.find((m) => m.castle === 'Q') || null;
   }
-  if (/^O-O$/i.test(raw) || raw === '0-0') {
+  if (kingsideCastle) {
     return moves.find((m) => m.castle === 'K') || null;
   }
 
-  const re = /^([NBRQK])?([a-h])?([1-8])?(x)?([a-h][1-8])(=?([NBRQ]))?$/;
-  const m = raw.match(re);
-  if (!m) return null;
-  const pieceLetter = m[1];
-  const fromFile = m[2];
-  const fromRank = m[3];
-  const wantsCapture = !!m[4];
-  const to = m[5];
-  const promo = m[7] ? (m[7].toLowerCase() as PieceType) : null;
-  const pieceType: PieceType = pieceLetter ? (pieceLetter.toLowerCase() as PieceType) : 'p';
-  if (pieceType === 'p' && wantsCapture && !fromFile) return null;
+  const pieceType: PieceType = pieceMatch
+    ? (pieceMatch[1].toLowerCase() as PieceType)
+    : 'p';
+  const fromFile = pieceMatch?.[2] ?? pawnCaptureMatch?.[1];
+  const fromRank = pieceMatch?.[3];
+  const wantsCapture = pieceMatch ? !!pieceMatch[4] : !!pawnCaptureMatch;
+  const to = pieceMatch?.[5] ?? pawnCaptureMatch?.[2] ?? pawnMoveMatch![1];
+  const promotionMark = pawnCaptureMatch?.[3] ?? pawnMoveMatch?.[2];
+  const promo = promotionMark ? (promotionMark.toLowerCase() as PieceType) : null;
   const toIdx = sqToIdx(to);
 
   const candidates = moves.filter((mv) => {
@@ -401,16 +444,11 @@ export function parseSAN(san: string, state: GameState): Move | null {
     // SAN spec: `x` is present iff the move captures. Reject mismatches so
     // `Nxe4` won't bind a quiet move (and `Ne4` won't bind a capture).
     if (wantsCapture !== mv.capture) return false;
-    if (promo && mv.promotion !== promo) return false;
-    if (!promo && mv.promotion && pieceType === 'p') {
-      if (mv.promotion !== 'q') return false;
-    }
+    if ((mv.promotion ?? null) !== promo) return false;
     return true;
   });
 
-  if (candidates.length === 1) return candidates[0];
-  if (candidates.length === 0) return null;
-  return candidates[0];
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 // Serialize a legal move to SAN in the given position — the inverse of

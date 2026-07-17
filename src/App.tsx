@@ -27,13 +27,14 @@ import {
   fmtTime,
   lastEventIndexAt,
   parseScript,
-  type ParsedEvent,
-  type TimelineEvent,
+  type ErrorEvent,
 } from './lib/timeline';
 import { markerColors } from './lib/tokens';
+import { useRovingTabIndex } from './components/useRovingTabIndex';
 
 type Positions = Record<string, PiecePos>;
 type BoardSetup = { positions: Positions; chessState: Chess.GameState };
+type NarrationTrack = { url: string; name: string; duration: number };
 
 function positionsFromBoard(board: Chess.Board): Positions {
   const out: Positions = {};
@@ -180,8 +181,17 @@ function saveDraft(key: string, value: string): void {
 
 function useDraftText(key: string, fallback: string) {
   const [value, setValue] = useState(() => loadDraft(key, fallback));
+  // Debounced: a synchronous localStorage write per keystroke is jank waiting
+  // to happen on large scripts. The pagehide flush covers the tab closing
+  // inside the debounce window, so at most a blink of typing is at risk.
   useEffect(() => {
-    saveDraft(key, value);
+    const id = window.setTimeout(() => saveDraft(key, value), 300);
+    const flush = () => saveDraft(key, value);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener('pagehide', flush);
+    };
   }, [key, value]);
   return [value, setValue] as const;
 }
@@ -259,10 +269,12 @@ export default function App() {
   const standardSetup = useMemo(() => setupFromValidFen(Chess.STARTING_FEN), []);
   // Narration audio rides the playback clock. Session-only by design: object
   // URLs die with the page and audio blobs don't fit the localStorage drafts.
-  const [narration, setNarration] = useState<{ url: string; name: string; duration: number } | null>(
-    null,
-  );
+  const [narration, setNarration] = useState<NarrationTrack | null>(null);
   const [narrationError, setNarrationError] = useState<string | null>(null);
+  const pendingNarrationRef = useRef<{
+    url: string;
+    probe: HTMLAudioElement;
+  } | null>(null);
 
   const duration = useMemo(() => {
     const lastEvent = events[events.length - 1];
@@ -284,8 +296,8 @@ export default function App() {
   const [tab, setTab] = useState<'script' | 'setup'>('script');
   // Script panel view: PGN-style structured editor by default, raw text as
   // the fallback for comments and exotic edits. Persisted like the drafts.
-  const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'board');
-  const scriptView: 'board' | 'text' = scriptViewRaw === 'text' ? 'text' : 'board';
+  const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'moves');
+  const scriptView: 'moves' | 'text' = scriptViewRaw === 'text' ? 'text' : 'moves';
   const scriptTextRef = useRef(scriptText);
   scriptTextRef.current = scriptText;
   // Gesture callbacks are captured at pointer-down, but the pause-landing
@@ -295,6 +307,11 @@ export default function App() {
   // age-0 invisibility pitfall.
   const playingRef = useRef(playing);
   playingRef.current = playing;
+  // Same mirror for the clock: pauseToggle only reads `time` for its at-end
+  // restart branch, and a `time` dep would give it (and the window keydown
+  // listener downstream) a new identity every animation frame.
+  const timeRef = useRef(time);
+  timeRef.current = time;
   // Pre-insert script snapshot for one-step undo of the last board gesture or
   // structured edit. Hand edits clear it so undo never reverts typing.
   const [gestureUndo, setGestureUndo] = useState<string | null>(null);
@@ -350,35 +367,59 @@ export default function App() {
     });
   }, []);
 
-  const onNarrationFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = takeSelectedFile(e);
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    // Probe metadata off-DOM so a broken file never becomes the live track.
-    const probe = new Audio();
-    probe.preload = 'metadata';
-    probe.src = url;
-    probe.onloadedmetadata = () => {
-      const audioDuration = Number.isFinite(probe.duration) ? probe.duration : 0;
-      setNarrationError(null);
-      setNarration((prev) => {
-        if (prev) URL.revokeObjectURL(prev.url);
-        return { url, name: file.name, duration: audioDuration };
-      });
-    };
-    probe.onerror = () => {
-      URL.revokeObjectURL(url);
-      setNarrationError(`Could not decode audio file: "${file.name}"`);
-    };
+  const cancelPendingNarration = useCallback(() => {
+    const pending = pendingNarrationRef.current;
+    pendingNarrationRef.current = null;
+    if (!pending) return;
+    pending.probe.onloadedmetadata = null;
+    pending.probe.onerror = null;
+    URL.revokeObjectURL(pending.url);
   }, []);
 
+  const onNarrationFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = takeSelectedFile(e);
+      if (!file) return;
+      cancelPendingNarration();
+      const url = URL.createObjectURL(file);
+      // Probe metadata off-DOM so a broken file never becomes the live track.
+      // Only the latest selection may commit: a slow earlier probe must not
+      // overwrite a newer file or resurrect audio after Remove.
+      const probe = new Audio();
+      const pending = { url, probe };
+      pendingNarrationRef.current = pending;
+      probe.preload = 'metadata';
+      probe.src = url;
+      probe.onloadedmetadata = () => {
+        if (pendingNarrationRef.current !== pending) return;
+        pendingNarrationRef.current = null;
+        const audioDuration = Number.isFinite(probe.duration) ? probe.duration : 0;
+        setNarrationError(null);
+        setNarration({ url, name: file.name, duration: audioDuration });
+      };
+      probe.onerror = () => {
+        if (pendingNarrationRef.current !== pending) return;
+        pendingNarrationRef.current = null;
+        URL.revokeObjectURL(url);
+        setNarrationError(`Could not decode audio file: "${file.name}"`);
+      };
+    },
+    [cancelPendingNarration],
+  );
+
   const clearNarration = useCallback(() => {
+    cancelPendingNarration();
     setNarrationError(null);
-    setNarration((prev) => {
-      if (prev) URL.revokeObjectURL(prev.url);
-      return null;
-    });
-  }, []);
+    setNarration(null);
+  }, [cancelPendingNarration]);
+
+  // State owns the live URL: replacing or removing a track cleans up the
+  // previous one, and unmounting cleans up the current one.
+  useEffect(() => () => {
+    if (narration) URL.revokeObjectURL(narration.url);
+  }, [narration]);
+
+  useEffect(() => cancelPendingNarration, [cancelPendingNarration]);
 
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
@@ -459,10 +500,12 @@ export default function App() {
     // Checked king square, derived from chessState (never from a SAN `+`).
     // State-scoped, not transient: it persists until the position changes.
     check: BoardCheck | null;
-    errors: TimelineEvent[];
   };
 
-  const snapshots = useMemo<WorldSnap[]>(() => {
+  const { snapshots, scriptErrors } = useMemo<{
+    snapshots: WorldSnap[];
+    scriptErrors: ErrorEvent[];
+  }>(() => {
     type BranchSnap = WorldSnap & {
       line: number;
       t: number;
@@ -483,7 +526,7 @@ export default function App() {
     let lastCapture: CaptureFlash | null = null;
     // A custom Start FEN may already be a check position.
     let check: BoardCheck | null = checkAt(initialSetup.chessState, 0);
-    const errorAcc: TimelineEvent[] = [];
+    const errorAcc: ErrorEvent[] = [];
     const branchStack: BranchSnap[] = [];
 
     const list: WorldSnap[] = [];
@@ -496,7 +539,7 @@ export default function App() {
       lastCapture = null;
       check = checkAt(setup.chessState, t);
     };
-    const snapshot = (errors: TimelineEvent[] = errorAcc.slice()): WorldSnap => ({
+    const snapshot = (): WorldSnap => ({
       positions,
       chessState,
       lastMove,
@@ -504,10 +547,9 @@ export default function App() {
       arrows,
       lastCapture,
       check,
-      errors,
     });
 
-    list.push(snapshot([]));
+    list.push(snapshot());
 
     for (const ev of events) {
       if ('error' in ev) {
@@ -543,7 +585,7 @@ export default function App() {
             break;
           }
           case 'branch':
-            branchStack.push({ ...snapshot([]), line: ev.line, t: ev.t, raw: ev.raw });
+            branchStack.push({ ...snapshot(), line: ev.line, t: ev.t, raw: ev.raw });
             break;
           case 'mainline': {
             const snap = branchStack.pop();
@@ -600,21 +642,15 @@ export default function App() {
         raw: snap.raw,
       });
     }
-    if (branchStack.length > 0) {
-      // Rebuild the final snapshot (same board state, updated errors) rather
-      // than pushing an extra one: the world selector reads at most
-      // snapshots[events.length], so an appended slot is never reachable and
-      // the unpaired-br error would stay invisible forever.
-      list[list.length - 1] = snapshot();
-    }
-
-    return list;
+    return { snapshots: list, scriptErrors: errorAcc };
   }, [events, initialSetup, standardSetup]);
+
+  const reachedEventIndex = lastEventIndexAt(events, time);
 
   const world = useMemo(() => {
     // snapshots[i + 1] is the state AFTER events[i], so the reached index
     // maps straight to a snapshot slot.
-    const snap = snapshots[lastEventIndexAt(events, time) + 1];
+    const snap = snapshots[reachedEventIndex + 1];
 
     const visibleHighlights = snap.highlights
       .filter((h) => h.pinned || time - h.t < BOARD_OVERLAY_LIFETIME.highlight);
@@ -631,11 +667,18 @@ export default function App() {
       lastMove: snap.lastMove,
       highlights: visibleHighlights,
       arrows: visibleArrows,
-      errors: snap.errors,
       captureFlash,
       check: snap.check,
     };
-  }, [snapshots, events, time]);
+  }, [snapshots, reachedEventIndex, time]);
+
+  // Full-script errors are returned once beside the board snapshots. Keeping
+  // a growing copy on every snapshot made an all-error script retain O(N²)
+  // references even though no playhead-scoped consumer remained.
+  const errorLines = useMemo(
+    () => new Set(scriptErrors.map((er) => er.line)),
+    [scriptErrors],
+  );
 
   // landBetween with the boundary looked up from the current events — for
   // freshly written lines the events array is stale, so those callers pass
@@ -776,7 +819,11 @@ export default function App() {
   // events, and any structural damage surfaces as visible errors — same
   // snapshot-undo safety net as the gestures.
   const onRetimeEvent = useCallback(
-    (line: number, t: number) => commitScriptEdit(setLineTime(scriptText, line, t)),
+    (line: number, t: number) => {
+      const edit = setLineTime(scriptText, line, t);
+      commitScriptEdit(edit.text);
+      return edit.line;
+    },
     [scriptText, commitScriptEdit],
   );
 
@@ -793,33 +840,49 @@ export default function App() {
     setTime(0);
   }, []);
   const pauseToggle = useCallback(() => {
-    if (time >= duration) {
+    if (timeRef.current >= duration) {
       setTime(0);
       setPlaying(true);
     } else {
       setPlaying((p) => !p);
     }
-  }, [time, duration]);
+  }, [duration]);
+
+  // The one transport keymap (Space toggle, ←/→ ±1s), shared by the global
+  // shortcut listener and the scrub input's handler so the two can't drift
+  // from each other or from the footer's documentation. Returns whether the
+  // key was a transport key; preventDefault policy stays with each caller.
+  const handleTransportKey = useCallback(
+    (e: { code: string; repeat: boolean }): boolean => {
+      if (e.code === 'Space') {
+        if (!e.repeat) pauseToggle();
+        return true;
+      }
+      if (e.code === 'ArrowLeft') {
+        setTime((t) => Math.max(0, t - 1));
+        return true;
+      }
+      if (e.code === 'ArrowRight') {
+        setTime((t) => Math.min(duration, t + 1));
+        return true;
+      }
+      return false;
+    },
+    [pauseToggle, duration],
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (isInteractiveShortcutTarget(e.target)) return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (e.repeat) return;
-        pauseToggle();
-      }
-      if (e.code === 'ArrowLeft') setTime((t) => Math.max(0, t - 1));
-      if (e.code === 'ArrowRight') setTime((t) => Math.min(duration, t + 1));
+      // Space scrolls the page by default; the arrows keep their native
+      // scroll behavior at window level.
+      if (e.code === 'Space') e.preventDefault();
+      handleTransportKey(e);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [duration, pauseToggle]);
+  }, [handleTransportKey]);
 
-  const eventMarkers = useMemo(
-    () => events.filter((e): e is ParsedEvent => !('error' in e)),
-    [events],
-  );
   const ticks = useMemo(() => generateTicks(duration), [duration]);
 
   // Position context before each event (move numbering for the PGN list):
@@ -834,7 +897,7 @@ export default function App() {
     [events, snapshots],
   );
 
-  const activeSubtitle = useMemo(() => getActiveSubtitle(subtitleCues, time), [subtitleCues, time]);
+  const activeSubtitle = getActiveSubtitle(subtitleCues, time);
 
   // Replay panel follow-scroll: keep the event the playhead has reached
   // visible, like a video editor's timeline list. Manual reading wins:
@@ -854,10 +917,8 @@ export default function App() {
   // React fires no pointerleave when the hovered list unmounts (keyboard
   // tab/view switch), so the pause must reset when the list goes away.
   useEffect(() => {
-    if (tab !== 'script' || scriptView !== 'board') followPausedRef.current = false;
+    if (tab !== 'script' || scriptView !== 'moves') followPausedRef.current = false;
   }, [tab, scriptView]);
-
-  const reachedEventIndex = useMemo(() => lastEventIndexAt(events, time), [events, time]);
 
   useEffect(() => {
     if (!playing || followPausedRef.current) return;
@@ -887,27 +948,56 @@ export default function App() {
     : 'play';
   const playLabel = playState === 'pause' ? 'Pause' : playState === 'replay' ? 'Restart playback' : 'Play';
 
+  // One roving tab stop for the whole pin row (toolbar pattern): a script's
+  // dozens of pins must not each cost keyboard users a Tab press between the
+  // transport and the speed selector. Arrows walk pins; Tab leaves the row.
+  const pinsRef = useRef<HTMLDivElement | null>(null);
+  const pinsRoving = useRovingTabIndex(pinsRef, '.marker');
+
   // Event pins depend only on the parsed script, not the clock — memoized so
-  // 60Hz frames reuse the element and React bails out of the subtree.
+  // 60Hz frames reuse the element and React bails out of the subtree. Error
+  // lines pin too (vermillion pennants): a broken line is a timeline fact
+  // the author must be able to see and seek without scrubbing onto it.
   const timelinePins = useMemo(
     () => (
-      <div className="timeline-pins">
-        {eventMarkers.map((e, i) => (
-          <button
-            type="button"
-            key={i}
-            className="marker"
-            aria-label={`Seek to ${fmtTime(e.t, 'auto')}: ${e.raw}`}
-            onClick={() => seekEvent(e.t)}
-            style={{
-              left: `${(e.t / duration) * 100}%`,
-              color: markerColors[e.kind],
-            }}
-          />
-        ))}
+      <div
+        className="timeline-pins"
+        role="toolbar"
+        aria-orientation="horizontal"
+        aria-label="Event markers"
+        ref={pinsRef}
+        onKeyDown={pinsRoving.onKeyDown}
+        onFocus={pinsRoving.onFocus}
+      >
+        {events.map((e, i) => {
+          // Parse errors are error events; runtime errors (illegal SAN, bad
+          // FEN) stay move/fen events whose line the snapshot builder
+          // rejected. Both pin as vermillion pennants.
+          const kind = 'error' in e || errorLines.has(e.line) ? 'err' : e.kind;
+          const isErr = kind === 'err';
+          return (
+            <button
+              type="button"
+              key={i}
+              className="marker"
+              data-kind={kind}
+              title={isErr ? `L${e.line} ${e.raw} — script error` : e.raw}
+              aria-label={
+                isErr
+                  ? `Seek to ${fmtTime(e.t, 'auto')}: script error, line ${e.line}: ${e.raw}`
+                  : `Seek to ${fmtTime(e.t, 'auto')}: ${e.raw}`
+              }
+              onClick={() => seekEvent(e.t)}
+              style={{
+                left: `${(e.t / duration) * 100}%`,
+                color: markerColors[kind],
+              }}
+            />
+          );
+        })}
       </div>
     ),
-    [eventMarkers, duration, seekEvent],
+    [events, errorLines, duration, seekEvent, pinsRoving],
   );
 
   // Rendered at the bottom of whichever panel page is open: an error anywhere
@@ -915,9 +1005,11 @@ export default function App() {
   const errorsBlock = useMemo(() => (initialSetup.error ||
     narrationError ||
     scriptEditError ||
-    world.errors.length > 0 ||
+    scriptErrors.length > 0 ||
     subtitleResult.errors.length > 0) && (
-    <div className="errors" role="alert" aria-live="polite">
+    // role="status" (implicitly polite): errors persist and update as the
+    // user types — an assertive alert would interrupt every edit.
+    <div className="errors" role="status">
       {initialSetup.error && (
         <div className="err-row">
           <span className="err-line">FEN</span>
@@ -936,10 +1028,10 @@ export default function App() {
           <span>{scriptEditError}</span>
         </div>
       )}
-      {world.errors.map((er, i) => (
+      {scriptErrors.map((er, i) => (
         <div key={i} className="err-row">
           <span className="err-line">L{er.line}</span>
-          <span>{'error' in er ? er.error : ''}</span>
+          <span>{er.error}</span>
         </div>
       ))}
       {subtitleResult.errors.map((er, i) => (
@@ -953,7 +1045,7 @@ export default function App() {
     initialSetup.error,
     narrationError,
     scriptEditError,
-    world.errors,
+    scriptErrors,
     subtitleResult.errors,
     fenErrorId,
     narrationErrorId,
@@ -1082,6 +1174,13 @@ export default function App() {
                 step={0.01}
                 value={time}
                 onChange={(e) => setTime(parseFloat(e.target.value))}
+                onKeyDown={(e) => {
+                  // Every mouse scrub parks focus here, and the global
+                  // shortcuts ignore focused inputs — so the transport keymap
+                  // is mirrored, with the range's native 0.01-step arrow
+                  // handling suppressed on handled keys.
+                  if (handleTransportKey(e)) e.preventDefault();
+                }}
                 className="scrub-input"
                 aria-label="Timeline position"
                 aria-valuetext={`${fmtTime(time, 'always')} of ${fmtTime(duration, 'always')}`}
@@ -1158,8 +1257,8 @@ export default function App() {
                       <button
                         type="button"
                         className="view-btn"
-                        aria-pressed={scriptView === 'board'}
-                        onClick={() => setScriptView('board')}
+                        aria-pressed={scriptView === 'moves'}
+                        onClick={() => setScriptView('moves')}
                       >
                         Moves
                       </button>
@@ -1202,11 +1301,12 @@ export default function App() {
                   </p>
                 )}
               </div>
-              {scriptView === 'board' ? (
+              {scriptView === 'moves' ? (
                 <MoveList
                   events={events}
                   states={moveStates}
                   reachedEventIndex={reachedEventIndex}
+                  errorLines={errorLines}
                   onSeek={seekEvent}
                   listRef={editListRef}
                   labelId={editorLabelId}

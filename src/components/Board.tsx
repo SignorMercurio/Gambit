@@ -11,7 +11,7 @@ import {
   type BoardGesture,
 } from '../lib/boardGesture';
 import type { MoveAnnotation } from '../lib/timeline';
-import { annotationColors, annotationInk, tokens } from '../lib/tokens';
+import { annotationColors, annotationInk, fontUi, tokens } from '../lib/tokens';
 
 const SQ = 100;
 const BOARD_SIZE = SQ * 8;
@@ -311,6 +311,53 @@ const CHECK_GLOW_DEFS = (
   </defs>
 );
 
+// The 64 base squares never change — hoisted like CHECK_GLOW_DEFS so the
+// per-frame render diffs one constant element instead of 64 rects.
+const SQUARE_RECTS = SQUARES.map(({ f, r, isLight }) => (
+  <rect
+    key={`${f}-${r}`}
+    x={f * SQ}
+    y={(7 - r) * SQ}
+    width={SQ}
+    height={SQ}
+    fill={isLight ? tokens.squareLight : tokens.squareDark}
+  />
+));
+
+// Coordinates sit above enlarged Staunty pieces so file/rank labels remain
+// visible in recordings, but below annotation arrows. Fully static: the
+// whole layer is one hoisted element.
+const COORD_LAYER = (
+  <svg
+    viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+    aria-hidden="true"
+    style={{
+      position: 'absolute',
+      inset: 0,
+      width: '100%',
+      height: '100%',
+      pointerEvents: 'none',
+      zIndex: 2,
+    }}
+  >
+    {COORD_LABELS.map((c, i) => (
+      <text
+        key={`coord-${i}`}
+        x={c.x}
+        y={c.y}
+        fontFamily="ui-sans-serif, system-ui"
+        fontSize="14"
+        fontWeight="700"
+        textAnchor={c.anchor}
+        fill={c.isLight ? tokens.coordOnLight : tokens.coordOnDark}
+        opacity="0.95"
+      >
+        {c.text}
+      </text>
+    ))}
+  </svg>
+);
+
 // Best-effort: capture keeps the gesture tracking when the pointer leaves
 // the board, but a pointer can go inactive between down and capture, and
 // browsers throw for it. The gesture still works without capture.
@@ -556,16 +603,7 @@ export function Board({
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
         >
           {CHECK_GLOW_DEFS}
-          {SQUARES.map(({ f, r, isLight }) => (
-            <rect
-              key={`${f}-${r}`}
-              x={f * SQ}
-              y={(7 - r) * SQ}
-              width={SQ}
-              height={SQ}
-              fill={isLight ? tokens.squareLight : tokens.squareDark}
-            />
-          ))}
+          {SQUARE_RECTS}
 
           {lastMove &&
             (
@@ -657,36 +695,7 @@ export function Board({
           })}
         </div>
 
-        {/* Coordinates sit above enlarged Staunty pieces so file/rank labels
-           remain visible in recordings, but below annotation arrows. */}
-        <svg
-          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: 2,
-          }}
-        >
-          {COORD_LABELS.map((c, i) => (
-            <text
-              key={`coord-${i}`}
-              x={c.x}
-              y={c.y}
-              fontFamily="ui-sans-serif, system-ui"
-              fontSize="14"
-              fontWeight="700"
-              textAnchor={c.anchor}
-              fill={c.isLight ? tokens.coordOnLight : tokens.coordOnDark}
-              opacity="0.95"
-            >
-              {c.text}
-            </text>
-          ))}
-        </svg>
+        {COORD_LAYER}
 
         {/* arrows overlay — sits above pieces so annotations land on top */}
         <svg
@@ -814,7 +823,7 @@ export function Board({
                   <text
                     x={cx}
                     y={cy + (isWide ? 0 : 1)}
-                    fontFamily="'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif"
+                    fontFamily={fontUi}
                     fontSize={isWide ? 22 : 38}
                     fontWeight={900}
                     letterSpacing={0}

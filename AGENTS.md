@@ -34,6 +34,7 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - `src/components/Board.tsx`: board rendering, pieces, highlights, arrows, coordinates, capture flash, annotation badges, editing gesture layer.
 - `src/components/MoveList.tsx`: PGN-style move list — numbered mainline rows, inset variation flows, kind-colored seek dots. The Script tab's Moves view: a structured editor with per-event time chips, deletes, and whole-variation delete; auto-follows the playhead only while playback runs. Memoized — the parent re-renders per animation frame, so past/current state derives from `reachedEventIndex`, never from the raw clock.
 - `src/components/Piece.tsx`: piece image mapping.
+- `src/components/useRovingTabIndex.ts`: shared roving-tabindex hook (WAI-ARIA toolbar pattern) used by the timeline pin row and the Moves-view list — one Tab stop per group, arrows walk controls, imperative tabIndex so arrow presses never re-render the subtree.
 - `src/lib/chess.ts`: minimal chess state engine, legal move generation, SAN parsing and serialization.
 - `src/lib/boardGesture.ts`: pure in-flight gesture state that captures move/arrow/highlight commit callbacks at pointer-down so playback cannot change the position or playhead used at pointer-up.
 - `src/lib/subtitles.ts`: SRT subtitle parsing and cue validation.
@@ -65,6 +66,7 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - Preserve the current color vocabulary: blue for moves, amber for highlights, persimmon for arrows, neutral for structural events, vermillion for errors/resets.
 - Arrows and highlights must survive downscaled video. Test at the real board size, not just in code.
 - Use stable dimensions for board overlays and transport controls so playback does not shift layout.
+- Keep the recording artifact at 720px on ordinary 800–900px-tall laptop viewports; only genuinely short desktop viewports (height ≤760px) may use the 560px working fallback. Prefer page scroll over silently shrinking a normal recording frame into the 500px range.
 - Respect `prefers-reduced-motion`: decorative motion should reduce; functional piece movement can remain.
 
 ## Chess And Timeline Pitfalls

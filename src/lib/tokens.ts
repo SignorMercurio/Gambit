@@ -10,11 +10,12 @@ export const tokens = {
   coordOnLight: '#5d8fc9',
   coordOnDark: '#f1ecde',
 
-  // Board overlays. Last-move amber needs a higher alpha on the blue dark
-  // squares: at 0.32 the mix lands on a desaturated sage that no longer
-  // reads as amber, especially after a 480p recording downscale.
+  // Board overlays. Last-move amber needs per-square-color alphas: too low
+  // and the mix desaturates until it stops reading as amber — on blue squares
+  // below ~0.52, on cream squares below ~0.42 (0.32 drifted toward a pale
+  // olive butter) — especially after a 480p recording downscale.
   boardHighlight: 'rgba(255, 213, 79, 0.55)',
-  boardLastMoveOnLight: 'rgba(255, 213, 79, 0.32)',
+  boardLastMoveOnLight: 'rgba(255, 213, 79, 0.42)',
   boardLastMoveOnDark: 'rgba(255, 213, 79, 0.52)',
   boardArrow: 'rgba(255, 170, 60, 0.85)',
   // Check glow under the checked king: studio-vermillion radial, dense at
@@ -53,9 +54,12 @@ export const annotationInk = '#f1ecde';
 
 // Marker colors keyed by event kind. move/highlight/arrow/clear/reset are the
 // Five Meanings palette; branch/mainline are structural events shown in
-// neutral rim-light-pewter so they don't compete with chess content.
+// neutral rim-light-pewter so they don't compete with chess content. 'err'
+// covers parse-error events and lines the snapshot builder rejected —
+// semantically distinct from reset even while both wear vermillion today.
 import type { ParsedEvent } from './timeline';
-export const markerColors: Record<ParsedEvent['kind'], string> = {
+export type MarkerKind = ParsedEvent['kind'] | 'err';
+export const markerColors: Record<MarkerKind, string> = {
   move: '#5d8fc9',
   highlight: '#f0b429',
   arrow: '#f08c2e',
@@ -63,16 +67,12 @@ export const markerColors: Record<ParsedEvent['kind'], string> = {
   reset: '#cf5d5d',
   start: '#cf5d5d',
   fen: '#cf5d5d',
+  err: '#cf5d5d',
   branch: '#c8d0e6',
   mainline: '#c8d0e6',
 };
 
-// Human-readable piece names (for accessible alt text).
-export const pieceNames: Record<string, string> = {
-  p: 'pawn',
-  r: 'rook',
-  n: 'knight',
-  b: 'bishop',
-  q: 'queen',
-  k: 'king',
-};
+// Chrome UI font stack — mirrored by --font-ui in styles.css :root, because
+// SVG text attributes (the annotation badge) can't read CSS custom properties.
+export const fontUi =
+  "'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif";

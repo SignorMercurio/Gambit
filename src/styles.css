@@ -1,4 +1,26 @@
 /* =====================================================================
+   Self-hosted fonts (latin subsets, variable weight). No network fonts:
+   first paint must not depend on a CDN, and the app must keep its voice
+   behind blocked font hosts. Files live in public/fonts/; index.html
+   preloads the same two files — keep the paths in sync.
+   ===================================================================== */
+
+@font-face {
+  font-family: 'Schibsted Grotesk';
+  src: url('/fonts/schibsted-grotesk-var.woff2') format('woff2');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-var.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* =====================================================================
    Design tokens (single source of truth for chrome). Mirrored in
    src/lib/tokens.ts for the JS/SVG layer.
    ===================================================================== */
@@ -85,6 +107,7 @@
     0 8px 18px -14px rgba(15, 21, 37, 0.9);
 
   /* Radii */
+  --radius-hairline: 2px;
   --radius-xs: 5px;
   --radius-sm: 7px;
   --radius-md: 10px;
@@ -98,6 +121,9 @@
 
   /* Layout */
   --artifact-width: 720px;
+  /* The recording artifact stays 720px on ordinary laptop viewports. Width
+     caps still shrink it on phones; only the genuinely short-viewport rule
+     near the end of the file opts into the 560px fallback. */
   --artifact-fit-width: var(--artifact-width);
   --main-column-gap: 20px;
   --main-row-gap: 16px;
@@ -117,6 +143,10 @@
   --duration-capture-flash: 500ms;
   --duration-chrome: 120ms;
   --duration-state: 150ms;
+
+  /* Chrome UI font stack (mirrored as fontUi in src/lib/tokens.ts for the
+     SVG layer, which can't read custom properties). */
+  --font-ui: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
@@ -139,7 +169,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
   background: var(--surface-app);
   color: var(--color-sodium-chalk);
   min-height: 100%;
@@ -288,7 +318,7 @@ body {
   max-width: 58ch;
   margin: 0;
   font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
-    'Microsoft YaHei', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+    'Microsoft YaHei', var(--font-ui);
   font-size: 21px;
   font-weight: 600;
   line-height: 1.36;
@@ -384,6 +414,12 @@ body {
   position: relative;
   width: 100%;
   height: 100%;
+  /* Pins ride above the transparent scrub input (z-index 4) so clicking a
+     pin seeks its exact event instead of raw-scrubbing just before it. The
+     layer itself passes clicks through; only the pins (and their extended
+     hit areas) capture. */
+  z-index: 5;
+  pointer-events: none;
 }
 
 .timeline-rail {
@@ -468,17 +504,40 @@ body {
 .marker {
   position: absolute;
   top: 50%;
-  transform: translate(-50%, -50%);
+  /* The centering translate lives here only; hover growth flips the
+     --marker-grow factor (a transform scale, never a height animation). */
+  transform: translate(-50%, -50%) scaleY(var(--marker-grow, 1));
   width: 5px;
   height: 16px;
   border: 0;
   padding: 0;
   background: currentColor;
-  border-radius: 2px;
+  border-radius: var(--radius-hairline);
   cursor: pointer;
   opacity: 0.85;
-  transition: opacity var(--duration-state), height var(--duration-state);
+  transition: opacity var(--duration-state), transform var(--duration-state);
   color: var(--color-stage-mist);
+  pointer-events: auto;
+}
+/* Kind is never color alone: annotation pins (hl / arrow / clear) read as
+   capsules, structural breaks (rs / st / fen) and script errors read as
+   pointed pennants, moves and br/ml stay square-cut. Decodable in grayscale. */
+.marker[data-kind='highlight'],
+.marker[data-kind='arrow'],
+.marker[data-kind='clear'] {
+  border-radius: var(--radius-pill);
+}
+.marker[data-kind='reset'],
+.marker[data-kind='start'],
+.marker[data-kind='fen'],
+.marker[data-kind='err'] {
+  border-radius: 0;
+  /* Paint the pennant without clipping the button: clip-path would also clip
+     ::before, collapsing the promised 44px hit target back to 5×16. */
+  background:
+    linear-gradient(to bottom right, transparent 48%, currentColor 52%) top left / 50% 30% no-repeat,
+    linear-gradient(to bottom left, transparent 48%, currentColor 52%) top right / 50% 30% no-repeat,
+    linear-gradient(currentColor, currentColor) bottom / 100% 70% no-repeat;
 }
 .marker::after {
   /* hairline tail dropping from the marker bottom toward the rail */
@@ -495,11 +554,14 @@ body {
 .marker::before {
   content: '';
   position: absolute;
-  inset: -22px -20px;
+  /* Hit extension reaches up into the console's free padding and stops at
+     the rail's top edge below — a pin's 44px target must never steal the
+     rail's own scrub clicks. */
+  inset: -22px -20px -6px;
 }
 .marker:hover, .marker:focus-visible {
   opacity: 1;
-  height: 22px;
+  --marker-grow: 1.375;
 }
 
 .scrub-input {
@@ -511,6 +573,13 @@ body {
   cursor: pointer;
   margin: 0;
   z-index: 4;
+}
+/* The input is opacity-0, so its own focus ring is invisible (opacity applies
+   to the outline too). Keyboard focus must show on the painted chrome: ring
+   the playhead thumb instead. */
+.timeline:has(.scrub-input:focus-visible) .playhead-thumb {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .speed-group {
@@ -525,7 +594,7 @@ body {
   background: transparent;
   color: var(--color-foley-slate);
   padding: 5px 9px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11.5px; font-weight: 600;
   transition: color var(--duration-state), background var(--duration-state);
@@ -537,8 +606,10 @@ body {
 .speed-btn[aria-pressed='true'],
 .view-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
 /* Hit-area extension: visual ~28×22, hit zone reaches 44 vertically to clear
-   WCAG 2.5.5. Inner padding stays tight so the segmented group reads. */
-.speed-btn::before {
+   WCAG 2.5.5. Inner padding stays tight so the segmented groups read. Shared
+   with the view toggle, like the hover/pressed states above. */
+.speed-btn::before,
+.view-btn::before {
   content: '';
   position: absolute;
   inset: -11px -6px;
@@ -621,7 +692,7 @@ body {
 }
 .fen-field label {
   color: var(--color-rim-light-pewter);
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -698,7 +769,7 @@ body {
 .subtitle-editor-head label,
 .upload-btn {
   color: var(--color-rim-light-pewter);
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -802,7 +873,7 @@ body {
   background: var(--tonal-white-04);
 }
 .pgn-cell {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 1px 2px;
   min-width: 0; padding: 2px 6px 2px 4px;
 }
 .pgn-cell.pgn-gap {
@@ -818,6 +889,15 @@ body {
   transition: background var(--duration-chrome), color var(--duration-chrome);
 }
 .pgn-mv.past { color: var(--color-rim-light-pewter); }
+/* A line the snapshot builder rejected (illegal SAN, bad FEN) is flagged
+   inline, not only in the errors band: vermillion ink plus a wavy strand,
+   so the broken move is findable at a glance while paused anywhere. */
+.pgn-mv.has-error,
+.pgn-var-mv.has-error {
+  color: var(--color-error-text);
+  text-decoration: underline wavy rgba(207, 93, 93, 0.8) 1px;
+  text-underline-offset: 3px;
+}
 /* The hover and current-pill states are shared with variation moves so the
    signature current-position style can't drift between the two lists. */
 .pgn-mv:hover,
@@ -850,6 +930,27 @@ body {
 }
 .pgn-dot.current { opacity: 1; }
 .pgn-dot.current::before { box-shadow: 0 0 0 1.5px currentColor; }
+/* Hit-area extension (::before is taken by the dot core). */
+.pgn-dot::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+}
+/* Kind is never color alone (same doctrine as the timeline pins): highlight
+   dots square off, arrow dots point, clear dots hollow to a ring. */
+.pgn-dot[data-kind='highlight']::before { border-radius: 1.5px; }
+.pgn-dot[data-kind='arrow']::before {
+  border-radius: 0;
+  clip-path: polygon(12% 8%, 96% 50%, 12% 92%);
+}
+.pgn-dot[data-kind='clear']::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.pgn-dot[data-kind='clear'].current::before {
+  box-shadow: inset 0 0 0 1.5px currentColor, 0 0 0 1.5px currentColor;
+}
 .pgn-var {
   position: relative;
   margin: 3px 0; padding: 5px 10px 5px 26px;
@@ -871,9 +972,15 @@ body {
 .pgn-var-mv.current .pgn-varnum { color: var(--color-chip-text-blue); }
 .pgn-paren { color: var(--color-foley-slate); opacity: 0.8; }
 .pgn-ret {
+  position: relative;
   border: 0; background: transparent; cursor: pointer;
   font: inherit; color: var(--color-foley-slate);
   padding: 1px 5px; border-radius: var(--radius-xs); opacity: 0.7;
+}
+.pgn-ret::before {
+  content: '';
+  position: absolute;
+  inset: -4px -2px;
 }
 .pgn-ret:hover { opacity: 1; background: var(--row-hover-bg); color: var(--color-sodium-chalk); }
 .pgn-ret.current { opacity: 1; background: var(--tonal-white-10); color: var(--color-sodium-chalk); }
@@ -925,17 +1032,19 @@ body {
 /* Script-panel view toggle: Moves (structured) / Text (fallback). Mirrors
    the speed-group segmented pattern. */
 .view-toggle {
-  display: inline-flex; gap: 2px; padding: 2px;
+  display: inline-flex; gap: 2px; padding: 3px;
   border-radius: var(--radius-pill); background: var(--tonal-white-06);
 }
 .view-btn {
+  position: relative;
   border: 0; background: transparent; cursor: pointer;
   padding: 3px 10px; border-radius: var(--radius-pill);
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: uppercase;
   color: var(--color-foley-slate);
   transition: background var(--duration-chrome), color var(--duration-chrome);
 }
+/* Hit-area extension lives with .speed-btn::before (shared segmented pattern). */
 /* Hover/pressed states live with .speed-btn (shared segmented pattern). */
 /* Editable PGN view: every event pairs with a click-to-edit time chip and a
    hover-revealed delete ×; a variation block deletes as a whole via its own
@@ -945,27 +1054,60 @@ body {
    move numbers they sit next to. margin-left: auto keeps the chip pushed to
    the right edge inside full-width rows (dividers). */
 .pgn-time-edit {
+  position: relative;
   margin-left: auto; flex: 0 0 auto;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px; color: var(--color-foley-slate);
+  /* Label-tier floor: 10.5px is the smallest type in the system. */
+  font-size: 10.5px; color: var(--color-foley-slate);
   border: 0; cursor: pointer;
   background: var(--tonal-white-06);
   padding: 1px 4px; border-radius: var(--radius-pill);
   opacity: 0.9;
 }
+/* Hit-area extension to the 24px floor (WCAG 2.5.8); visual pill stays tiny
+   so timestamps keep reading as metadata. */
+.pgn-time-edit::before {
+  content: '';
+  position: absolute;
+  inset: -4px -3px;
+}
 .pgn-time-edit:hover { background: var(--tonal-white-10); color: var(--color-sodium-chalk); opacity: 1; }
+/* Rejected edit feedback: a vermillion fade on the chip instead of a silent
+   revert. Pure color crossfade (no movement), so it stays under reduced
+   motion; the class clears on animationend. */
+.pgn-time-edit.chip-rejected {
+  animation: chip-reject 650ms ease-out;
+}
+@keyframes chip-reject {
+  0%, 35% {
+    background: rgba(207, 93, 93, 0.4);
+    color: var(--color-error-text);
+    box-shadow: 0 0 0 1px rgba(207, 93, 93, 0.7);
+  }
+}
 .pgn-time-input {
   width: 66px; height: 20px; padding: 0 5px;
   border: 1px solid var(--line-soft); border-radius: var(--radius-xs);
   background: var(--well-20); color: var(--color-sodium-chalk);
-  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
 }
 .pgn-x {
+  position: relative;
   flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
   width: 16px; height: 16px; padding: 0; border-radius: var(--radius-xs);
   color: var(--color-foley-slate); font-size: 12px; line-height: 1;
   opacity: 0;
+  /* A hidden destructive control must not be a click target: while invisible
+     it is also click-through, so its (extended) hit zone can never swallow a
+     press meant for the move next to it. Reveal restores both. */
+  pointer-events: none;
   transition: opacity var(--duration-chrome), color var(--duration-chrome), background var(--duration-chrome);
+}
+/* Hit-area extension to the 24px floor once revealed. */
+.pgn-x::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 .pgn-x:hover { color: var(--color-studio-vermillion); background: var(--tonal-white-08); }
 /* Inside tokens and variation blocks the × floats as a corner badge on
@@ -989,11 +1131,12 @@ body {
 .pgn-tok:hover > .pgn-x,
 .pgn-divider:hover .pgn-x,
 .pgn-error:hover .pgn-x,
-.pgn-var:hover > .pgn-x { opacity: 1; }
+.pgn-var:hover > .pgn-x { opacity: 1; pointer-events: auto; }
 /* Keyboard focus must reveal the destructive control the same way hover
    does — opacity: 0 would otherwise hide the focused button outline too. */
 .pgn-x:focus-visible {
   opacity: 1;
+  pointer-events: auto;
   outline: 1px solid var(--color-camera-highlight-blue);
   outline-offset: 1px;
 }
@@ -1021,16 +1164,12 @@ body {
   }
 }
 
-/* Two-column desktop: fit the whole workspace (header, board, subtitle track,
-   console, footer) inside the viewport height so the board and the
-   transport are always on screen together. The board scales continuously
-   between its 720px cap and 560px floor; 410px is the worst-case vertical
-   chrome budget around it (the tighter ≤920px chrome makes this slightly
-   conservative on short windows, never insufficient). The min-width guard
-   must match the single-column stack point at 1380px below/above. */
-@media (min-width: 1381px) {
+/* Only genuinely short desktop viewports trade recording size for a 560px
+   working board. Ordinary 800–900px laptop heights keep the 720px artifact;
+   the page may scroll rather than silently shrinking a recording frame. */
+@media (min-width: 1081px) and (max-height: 760px) {
   :root {
-    --artifact-fit-width: min(var(--artifact-width), max(560px, calc(100dvh - 410px)));
+    --artifact-fit-width: 560px;
   }
 }
 
@@ -1053,6 +1192,27 @@ body {
   .controls {
     gap: 12px;
     padding: 10px 14px;
+  }
+}
+
+/* Short laptops tighten chrome without changing the recording artifact. */
+@media (max-height: 840px) {
+  :root {
+    --subtitle-track-height: 48px;
+    --main-row-gap: 10px;
+  }
+
+  .app {
+    padding-top: 12px;
+    padding-bottom: 10px;
+    gap: 10px;
+  }
+
+  .logo, .logo img { width: 44px; height: 44px; }
+  .logo { border-radius: 14px; }
+
+  .controls {
+    padding: 8px 14px;
   }
 }
 
@@ -1124,7 +1284,7 @@ body {
    The cinematic hover scale on the play button is decorative; remove it. */
 @media (prefers-reduced-motion: reduce) {
   .play-btn:hover, .play-btn:active { transform: none; }
-  .marker:hover, .marker:focus-visible { height: 14px; }
+  .marker:hover, .marker:focus-visible { --marker-grow: 1; }
   .capture-flash {
     opacity: min(var(--capture-opacity, 0), 0.42);
     transform: scale(1);

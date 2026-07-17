@@ -11,7 +11,7 @@
 // through ml). Edits are reported as script-text transforms, never applied
 // to board state directly.
 
-import { memo, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Side } from '../lib/chess';
 import {
   eventBody,
@@ -20,13 +20,12 @@ import {
   parseTime,
   splitSanAnnotation,
   type MoveAnnotation,
-  type ParsedEvent,
   type TimelineEvent,
 } from '../lib/timeline';
-import { markerColors } from '../lib/tokens';
+import { markerColors, type MarkerKind } from '../lib/tokens';
+import { useRovingTabIndex } from './useRovingTabIndex';
 
-type MarkKind = ParsedEvent['kind'] | 'err';
-type Mark = { i: number; kind: MarkKind; t: number; line: number; body: string };
+type Mark = { i: number; kind: MarkerKind; t: number; line: number; body: string };
 type Cell = {
   i: number;
   t: number;
@@ -38,6 +37,9 @@ type Cell = {
 // `gap` marks a row that resumes on Black's move after an interruption — the
 // White cell renders the PGN "…" placeholder.
 type Row = { num: number; white: Cell | null; black: Cell | null; gap: boolean };
+type FocusRequest = { kind: 'line'; line: number } | { kind: 'index'; index: number };
+
+const ROVING_SELECTOR = 'button, .pgn-time-input';
 
 type FlowNode =
   | {
@@ -226,10 +228,6 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
   return blocks;
 }
 
-function dotColor(kind: MarkKind): string {
-  return kind === 'err' ? markerColors.reset : markerColors[kind];
-}
-
 // Click-to-edit timestamp chip. The input commits on Enter/blur, cancels on
 // Escape, and ↑/↓ nudge by 0.1s without committing — a commit re-parses the
 // script, so live-nudging would unmount the input mid-edit. All chip math
@@ -241,25 +239,35 @@ function TimeChip({
   line,
   label,
   onRetime,
+  onRestoreFocus,
 }: {
   t: number;
   line: number;
   label: string;
-  onRetime: (line: number, t: number) => void;
+  onRetime: (line: number, t: number) => number | null;
+  onRestoreFocus: (line: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState('');
+  // A rejected commit flashes the chip vermillion instead of reverting
+  // silently; the class clears itself on animationend.
+  const [rejected, setRejected] = useState(false);
   const cancelled = useRef(false);
+  const restoreFocus = useRef(false);
   const deci = Math.max(0, Math.round(t * 10));
+
   if (!editing) {
     return (
       <button
         type="button"
-        className="pgn-time-edit"
+        className={`pgn-time-edit${rejected ? ' chip-rejected' : ''}`}
+        data-script-line={line}
         title={`Edit time of ${label}`}
         aria-label={`Edit time of ${label}, currently ${fmtDeci(deci, 'always')}`}
+        onAnimationEnd={() => setRejected(false)}
         onClick={() => {
           cancelled.current = false;
+          setRejected(false);
           setVal(fmtDeci(deci, 'always'));
           setEditing(true);
         }}
@@ -278,9 +286,11 @@ function TimeChip({
       onChange={(e) => setVal(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
+          restoreFocus.current = true;
           e.currentTarget.blur();
         } else if (e.key === 'Escape') {
           cancelled.current = true;
+          restoreFocus.current = true;
           e.currentTarget.blur();
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault();
@@ -293,10 +303,23 @@ function TimeChip({
       }}
       onBlur={() => {
         setEditing(false);
-        if (cancelled.current) return;
-        const parsed = parseTime(val.trim());
-        if (Number.isFinite(parsed) && parsed >= 0 && Math.round(parsed * 10) !== deci) {
-          onRetime(line, parsed);
+        let focusLine = line;
+        if (!cancelled.current) {
+          const trimmed = val.trim();
+          if (trimmed !== '') {
+            const parsed = parseTime(trimmed);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+              // Unparseable input never rewrites the line, but it must not
+              // vanish without a trace either.
+              setRejected(true);
+            } else if (Math.round(parsed * 10) !== deci) {
+              focusLine = onRetime(line, parsed) ?? line;
+            }
+          }
+        }
+        if (restoreFocus.current) {
+          restoreFocus.current = false;
+          onRestoreFocus(focusLine);
         }
       }}
     />
@@ -307,10 +330,13 @@ type MoveListProps = {
   events: TimelineEvent[];
   states: MoveState[];
   reachedEventIndex: number;
+  // Lines the snapshot builder rejected (illegal SAN, bad FEN): their move
+  // cells get inline error styling so the errors band isn't the only flag.
+  errorLines: ReadonlySet<number>;
   onSeek: (t: number) => void;
-  listRef: React.Ref<HTMLDivElement>;
+  listRef: React.RefObject<HTMLDivElement>;
   labelId: string;
-  onRetime: (line: number, t: number) => void;
+  onRetime: (line: number, t: number) => number | null;
   onDelete: (lines: number[]) => void;
   onPointerEnter?: (e: React.PointerEvent) => void;
   onPointerLeave?: (e: React.PointerEvent) => void;
@@ -324,6 +350,7 @@ export const MoveList = memo(function MoveList({
   events,
   states,
   reachedEventIndex,
+  errorLines,
   onSeek,
   listRef,
   labelId,
@@ -333,9 +360,46 @@ export const MoveList = memo(function MoveList({
   onPointerLeave,
 }: MoveListProps) {
   const blocks = useMemo(() => buildBlocks(events, states), [events, states]);
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+
+  // Roving tabindex over every control in the list (same mechanism as the
+  // timeline pins): a script's worth of moves, chips, and deletes must cost
+  // keyboard users one Tab stop, not three per event. The hook's observer
+  // keeps the invariant across the time chip's child-local button↔input
+  // swaps, and the chip input's keys stay its own (the hook only handles
+  // keys from buttons).
+  const roving = useRovingTabIndex(listRef, ROVING_SELECTOR, {
+    verticalArrows: true,
+    // Time inputs participate in the single-stop sweep, but keep their own
+    // ArrowUp/ArrowDown editing behavior instead of navigating the toolbar.
+    keySelector: 'button',
+  });
+
+  // Editing can relocate a script line, while deleting unmounts the focused
+  // control entirely. Restore at list level after React commits the new DOM:
+  // a retime follows the transform's resulting script line; a delete selects
+  // the nearest surviving control at the same DOM index.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const container = listRef.current;
+    if (!container) return;
+    let target: HTMLElement | null | undefined;
+    if (focusRequest.kind === 'line') {
+      target = container.querySelector<HTMLElement>(
+        `[data-script-line="${focusRequest.line}"]`,
+      );
+    } else {
+      const controls = roving.getControls();
+      target = controls[Math.min(focusRequest.index, controls.length - 1)];
+    }
+    (target ?? container).focus();
+    setFocusRequest(null);
+  }, [focusRequest, listRef, roving]);
 
   const stateClass = (i: number) =>
     `${i <= reachedEventIndex ? 'past' : ''} ${i === reachedEventIndex ? 'current' : ''}`;
+  const restoreLineFocus = (line: number) =>
+    setFocusRequest({ kind: 'line', line });
 
   const deleteX = (lines: number[], label: string) => (
     <button
@@ -343,7 +407,14 @@ export const MoveList = memo(function MoveList({
       className="pgn-x"
       title={`Delete ${label}`}
       aria-label={`Delete ${label}`}
-      onClick={() => onDelete(lines)}
+      onClick={(e) => {
+        const controls = roving.getControls();
+        setFocusRequest({
+          kind: 'index',
+          index: Math.max(0, controls.indexOf(e.currentTarget)),
+        });
+        onDelete(lines);
+      }}
     >
       ×
     </button>
@@ -364,7 +435,15 @@ export const MoveList = memo(function MoveList({
   ) => (
     <span key={key} className="pgn-tok">
       {inner}
-      {(opts?.chip ?? true) && <TimeChip t={t} line={line} label={label} onRetime={onRetime} />}
+      {(opts?.chip ?? true) && (
+        <TimeChip
+          t={t}
+          line={line}
+          label={label}
+          onRetime={onRetime}
+          onRestoreFocus={restoreLineFocus}
+        />
+      )}
       {(opts?.del ?? true) && deleteX([line], label)}
     </span>
   );
@@ -374,9 +453,10 @@ export const MoveList = memo(function MoveList({
       <button
         type="button"
         className={`pgn-dot ${stateClass(m.i)}`}
+        data-kind={m.kind}
         data-evi={m.i}
         aria-current={m.i === reachedEventIndex ? 'step' : undefined}
-        style={{ color: dotColor(m.kind) }}
+        style={{ color: markerColors[m.kind] }}
         title={`${fmtTime(m.t, 'auto')} · ${m.body}`}
         aria-label={`Seek to ${fmtTime(m.t, 'auto')}: ${m.body}`}
         onClick={() => onSeek(m.t)}
@@ -396,18 +476,22 @@ export const MoveList = memo(function MoveList({
     );
   };
 
-  const moveBtn = (c: Cell) => (
-    <button
-      type="button"
-      className={`pgn-mv ${stateClass(c.i)}`}
-      data-evi={c.i}
-      aria-current={c.i === reachedEventIndex ? 'step' : undefined}
-      aria-label={`Seek to ${fmtTime(c.t, 'auto')}: ${c.san}`}
-      onClick={() => onSeek(c.t)}
-    >
-      {sanLabel(c.san, c.annotation)}
-    </button>
-  );
+  const moveBtn = (c: Cell) => {
+    const hasError = errorLines.has(c.line);
+    return (
+      <button
+        type="button"
+        className={`pgn-mv ${stateClass(c.i)}${hasError ? ' has-error' : ''}`}
+        data-evi={c.i}
+        aria-current={c.i === reachedEventIndex ? 'step' : undefined}
+        title={hasError ? 'This line has a script error' : undefined}
+        aria-label={`Seek to ${fmtTime(c.t, 'auto')}: ${c.san}${hasError ? ' (script error)' : ''}`}
+        onClick={() => onSeek(c.t)}
+      >
+        {sanLabel(c.san, c.annotation)}
+      </button>
+    );
+  };
 
   const cell = (c: Cell | null, gap: boolean) =>
     c ? (
@@ -422,14 +506,17 @@ export const MoveList = memo(function MoveList({
   const flowNode = (n: FlowNode) => {
     switch (n.type) {
       case 'mv': {
+        const hasError = errorLines.has(n.line);
         const btn = (
           <button
             type="button"
-            className={`pgn-var-mv ${stateClass(n.i)}`}
+            className={`pgn-var-mv ${stateClass(n.i)}${hasError ? ' has-error' : ''}`}
             data-evi={n.i}
             aria-current={n.i === reachedEventIndex ? 'step' : undefined}
-            aria-label={`Seek to ${fmtTime(n.t, 'auto')}: ${n.san}`}
-            title={fmtTime(n.t, 'auto')}
+            aria-label={`Seek to ${fmtTime(n.t, 'auto')}: ${n.san}${
+              hasError ? ' (script error)' : ''
+            }`}
+            title={hasError ? 'This line has a script error' : fmtTime(n.t, 'auto')}
             onClick={() => onSeek(n.t)}
           >
             {n.showNum && (
@@ -484,9 +571,13 @@ export const MoveList = memo(function MoveList({
     <div
       ref={listRef}
       className="event-list"
+      role="toolbar"
+      tabIndex={-1}
       aria-labelledby={labelId}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
+      onFocus={roving.onFocus}
+      onKeyDown={roving.onKeyDown}
     >
       {events.length === 0 && (
         <p className="pgn-empty">
@@ -528,7 +619,13 @@ export const MoveList = memo(function MoveList({
                 >
                   <span className="pgn-divider-body">{b.body}</span>
                 </button>
-                <TimeChip t={b.t} line={b.line} label={b.body} onRetime={onRetime} />
+                <TimeChip
+                  t={b.t}
+                  line={b.line}
+                  label={b.body}
+                  onRetime={onRetime}
+                  onRestoreFocus={restoreLineFocus}
+                />
                 {deleteX([b.line], b.body)}
               </div>
             );

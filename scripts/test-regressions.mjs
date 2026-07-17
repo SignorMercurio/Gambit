@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'vite';
 
 const vite = await createServer({
@@ -11,11 +12,14 @@ const vite = await createServer({
 
 try {
   const { parseScript } = await vite.ssrLoadModule('/src/lib/timeline.ts');
-  const { nextFreeTime, planLineInsert, planMoveGesture } = await vite.ssrLoadModule(
-    '/src/lib/scriptEdit.ts',
-  );
+  const { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime } =
+    await vite.ssrLoadModule('/src/lib/scriptEdit.ts');
   const { beginAnnotationGesture, beginMoveGesture, finishBoardGesture } =
     await vite.ssrLoadModule('/src/lib/boardGesture.ts');
+  const { syncRovingTabStops } = await vite.ssrLoadModule(
+    '/src/components/useRovingTabIndex.ts',
+  );
+  const Chess = await vite.ssrLoadModule('/src/lib/chess.ts');
 
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
   const events = parseScript(saturated);
@@ -116,6 +120,74 @@ try {
   finishBoardGesture(annotationGesture, 'c4'); // same square: highlight
   finishBoardGesture(annotationGesture, 'f7'); // dragged away: arrow
   assert.deepEqual(annotationCalls, ['highlight:c4', 'arrow:c4-f7']);
+
+  // SAN is conservative: ambiguous or coordinate-like input must surface as
+  // a script error instead of silently choosing a legal move, and promotions
+  // must name the promoted piece explicitly.
+  const ambiguous = Chess.stateFromFEN('4k3/8/8/8/8/1N3N2/8/4K3 w - - 0 1');
+  assert.equal(Chess.parseSAN('Nd2', ambiguous), null, 'ambiguous SAN must be rejected');
+  assert.deepEqual(Chess.parseSAN('Nbd2', ambiguous)?.from, [1, 2]);
+  for (const longPawnMove of ['e2e4', 'ee4', '2e4', 'e 4']) {
+    assert.equal(
+      Chess.parseSAN(longPawnMove, Chess.initialState()),
+      null,
+      `non-SAN pawn move ${longPawnMove} must be rejected`,
+    );
+  }
+  assert.deepEqual(Chess.parseSAN('e4', Chess.initialState())?.to, [4, 3]);
+
+  const promotion = Chess.stateFromFEN('7k/P7/8/8/8/8/8/7K w - - 0 1');
+  assert.equal(Chess.parseSAN('a8', promotion), null, 'promotion piece must be explicit');
+  assert.equal(Chess.parseSAN('a8=Q', promotion)?.promotion, 'q');
+
+  // FEN en-passant metadata is a trust boundary. A side/rank mismatch used
+  // to let axb3 remove both white pawns; malformed FEN must fail visibly and
+  // forged GameState input must still be rejected by move generation.
+  assert.throws(
+    () => Chess.stateFromFEN('7k/8/8/8/8/8/PP6/4K3 w - b3 0 1'),
+    /en passant/i,
+  );
+  const forgedEp = Chess.stateFromFEN('7k/8/8/8/8/8/PP6/4K3 w - - 0 1');
+  forgedEp.enPassant = 'b3';
+  assert.equal(Chess.parseSAN('axb3', forgedEp), null);
+  const validEp = Chess.stateFromFEN('7k/8/8/3pP3/8/8/8/7K w - d6 0 1');
+  assert.equal(Chess.parseSAN('exd6', validEp)?.enPassant, true);
+
+  // Defensive line deletion treats its input as a set. Duplicate line ids
+  // must not cascade into deleting the following authored line.
+  assert.equal(
+    removeLines('[00:01] e4\n[00:02] e5\n[00:03] Nf3', [2, 2]),
+    '[00:01] e4\n[00:03] Nf3',
+  );
+
+  // A retime that crosses another event reports the transformed line number.
+  // The Moves toolbar uses that stable script location to restore focus to
+  // the edited chip instead of whichever index-keyed React child was reused.
+  assert.deepEqual(
+    setLineTime('[00:01] hl e4\n[00:02] hl d4', 1, 3),
+    { text: '[00:02] hl d4\n[00:03] hl e4', line: 2 },
+  );
+
+  const rovingControls = [{ tabIndex: 0 }, { tabIndex: 0 }, { tabIndex: 0 }];
+  assert.equal(syncRovingTabStops(rovingControls, 1), 1);
+  assert.deepEqual(
+    rovingControls.map((control) => control.tabIndex),
+    [-1, 0, -1],
+    'a mixed button/input toolbar must retain exactly one tab stop',
+  );
+
+  // Recording layout is an authored invariant: normal laptop heights keep
+  // the 720px artifact, while only genuinely short desktop viewports use the
+  // 560px fallback. Guard the real CSS surface so the old dvh formulas cannot
+  // quietly return.
+  const styles = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.match(styles, /--artifact-fit-width:\s*var\(--artifact-width\)/);
+  assert.match(styles, /@media \(max-width:\s*1380px\)/);
+  assert.match(
+    styles,
+    /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
+  );
+  assert.doesNotMatch(styles, /--artifact-fit-width:[^;]*100dvh/);
 } finally {
   await vite.close();
 }
