@@ -11,15 +11,23 @@ const vite = await createServer({
 });
 
 try {
-  const { parseScript } = await vite.ssrLoadModule('/src/lib/timeline.ts');
-  const { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime } =
-    await vite.ssrLoadModule('/src/lib/scriptEdit.ts');
-  const { beginAnnotationGesture, beginMoveGesture, finishBoardGesture } =
-    await vite.ssrLoadModule('/src/lib/boardGesture.ts');
-  const { syncRovingTabStops } = await vite.ssrLoadModule(
-    '/src/components/useRovingTabIndex.ts',
-  );
-  const Chess = await vite.ssrLoadModule('/src/lib/chess.ts');
+  // Independent entry points: load them concurrently (the module graph
+  // dedupes shared deps), and read the stylesheet in the same batch.
+  const [
+    { parseScript },
+    { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
+    { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
+    { syncRovingTabStops },
+    Chess,
+    styles,
+  ] = await Promise.all([
+    vite.ssrLoadModule('/src/lib/timeline.ts'),
+    vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
+    vite.ssrLoadModule('/src/lib/boardGesture.ts'),
+    vite.ssrLoadModule('/src/components/useRovingTabIndex.ts'),
+    vite.ssrLoadModule('/src/lib/chess.ts'),
+    readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+  ]);
 
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
   const events = parseScript(saturated);
@@ -100,8 +108,9 @@ try {
   // finishBoardGesture commit routing: a move commits only onto a legal
   // target square, and an annotation resolves to a highlight on its own
   // square, an arrow elsewhere, nothing off-board.
+  const owner = { pointerId: 1, buttonBit: 1 };
   const moveCalls = [];
-  const moveGesture = beginMoveGesture('g1', new Set(['f3']), (from, to) =>
+  const moveGesture = beginMoveGesture(owner, 'g1', new Set(['f3']), (from, to) =>
     moveCalls.push(`${from}-${to}`),
   );
   finishBoardGesture(moveGesture, 'e5'); // not a legal target
@@ -112,6 +121,7 @@ try {
 
   const annotationCalls = [];
   const annotationGesture = beginAnnotationGesture(
+    owner,
     'c4',
     (from, to) => annotationCalls.push(`arrow:${from}-${to}`),
     (square) => annotationCalls.push(`highlight:${square}`),
@@ -180,7 +190,6 @@ try {
   // the 720px artifact, while only genuinely short desktop viewports use the
   // 560px fallback. Guard the real CSS surface so the old dvh formulas cannot
   // quietly return.
-  const styles = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
   assert.match(styles, /--artifact-fit-width:\s*var\(--artifact-width\)/);
   assert.match(styles, /@media \(max-width:\s*1380px\)/);
   assert.match(

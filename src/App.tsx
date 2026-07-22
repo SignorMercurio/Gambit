@@ -179,6 +179,15 @@ function saveDraft(key: string, value: string): void {
   }
 }
 
+// Render-mirrored ref: always the latest committed value, for callbacks that
+// must read state at call time without taking it as a dep (which would
+// re-identify them — and re-subscribe listeners — on every change).
+function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
+
 function useDraftText(key: string, fallback: string) {
   const [value, setValue] = useState(() => loadDraft(key, fallback));
   // Debounced: a synchronous localStorage write per keystroke is jank waiting
@@ -298,20 +307,15 @@ export default function App() {
   // the fallback for comments and exotic edits. Persisted like the drafts.
   const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'moves');
   const scriptView: 'moves' | 'text' = scriptViewRaw === 'text' ? 'text' : 'moves';
-  const scriptTextRef = useRef(scriptText);
-  scriptTextRef.current = scriptText;
-  // Gesture callbacks are captured at pointer-down, but the pause-landing
-  // rule must follow the transport state at release: playback can flip
-  // mid-drag (Space, auto-pause at the end), and landing by the captured
-  // value would park a paused board exactly on the event's timestamp — the
-  // age-0 invisibility pitfall.
-  const playingRef = useRef(playing);
-  playingRef.current = playing;
-  // Same mirror for the clock: pauseToggle only reads `time` for its at-end
-  // restart branch, and a `time` dep would give it (and the window keydown
-  // listener downstream) a new identity every animation frame.
-  const timeRef = useRef(time);
-  timeRef.current = time;
+  const scriptTextRef = useLatest(scriptText);
+  // The pause-landing rule must follow the transport state at release, not
+  // the pointer-down snapshot: playback can flip mid-drag (Space, auto-pause
+  // at the end), and landing by the captured value would park a paused board
+  // exactly on the event's timestamp — the age-0 invisibility pitfall.
+  const playingRef = useLatest(playing);
+  // pauseToggle reads the clock only for its at-end restart branch; a `time`
+  // dep would re-identify it (and the window keydown listener) every frame.
+  const timeRef = useLatest(time);
   // Pre-insert script snapshot for one-step undo of the last board gesture or
   // structured edit. Hand edits clear it so undo never reverts typing.
   const [gestureUndo, setGestureUndo] = useState<string | null>(null);
@@ -371,8 +375,8 @@ export default function App() {
     const pending = pendingNarrationRef.current;
     pendingNarrationRef.current = null;
     if (!pending) return;
-    pending.probe.onloadedmetadata = null;
-    pending.probe.onerror = null;
+    // Nulling the ref is the whole cancel: both probe handlers open with an
+    // identity guard against it, so a late fire is already a no-op.
     URL.revokeObjectURL(pending.url);
   }, []);
 

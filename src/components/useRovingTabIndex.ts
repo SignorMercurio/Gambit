@@ -71,10 +71,7 @@ export function useRovingTabIndex<T extends HTMLElement>(
       const els = controls();
       const nextCursor = els.indexOf(e.target);
       if (nextCursor < 0) return;
-      const prev = els[cursorRef.current];
-      if (prev && prev !== e.target) prev.tabIndex = -1;
-      cursorRef.current = nextCursor;
-      e.target.tabIndex = 0;
+      cursorRef.current = syncRovingTabStops(els, nextCursor);
     },
     [controls, selector],
   );

@@ -21,6 +21,20 @@ function formatScriptTime(t: number): string {
   return `[${fmtDeci(Math.max(0, Math.round(t * 10)), 'auto')}]`;
 }
 
+// The one decisecond-boundary vocabulary for every scanner below: `capDeci`
+// converts an exclusive upper bound to grid units, `firstDeciAbove` yields
+// the first grid slot strictly above a (possibly off-grid, possibly
+// infinite) time — grid rounding must never slip a stamp back across the
+// previous event.
+const capDeci = (limit: number): number =>
+  Number.isFinite(limit) ? Math.round(limit * 10) : Infinity;
+
+function firstDeciAbove(t: number): number {
+  if (!Number.isFinite(t)) return 0;
+  const deci = Math.max(0, Math.round(t * 10));
+  return deci / 10 > t ? deci : deci + 1;
+}
+
 // Timestamps already used by script lines, on the decisecond grid.
 function takenDeciseconds(text: string): Set<number> {
   const taken = new Set<number>();
@@ -48,7 +62,7 @@ export function nextFreeTime(
   floor = -Infinity,
 ): number | null {
   const taken = takenDeciseconds(text);
-  const limitDeci = Number.isFinite(limit) ? Math.round(limit * 10) : Infinity;
+  const limitDeci = capDeci(limit);
   const scan = (step: number, cap: number): number | null => {
     let deci = Math.max(0, Math.round(t * 10));
     // The paused playhead often rests 0.05s before the next event (the
@@ -58,7 +72,7 @@ export function nextFreeTime(
     // previewed, so start one tick under the cap instead; if that slot is
     // taken the grid truly is saturated and the caller reports a conflict.
     if (Number.isFinite(cap) && deci >= cap) deci = Math.max(0, cap - 1);
-    while (deci / 10 <= floor) deci += 1;
+    deci = Math.max(deci, firstDeciAbove(floor));
     while (taken.has(deci)) deci += step;
     return deci < cap ? deci / 10 : null;
   };
@@ -79,13 +93,10 @@ function findSlots(
   floor = -Infinity,
 ): number[] | null {
   const taken = takenDeciseconds(text);
-  const limitDeci = Number.isFinite(limit) ? Math.round(limit * 10) : Infinity;
+  const limitDeci = capDeci(limit);
   const layout = (gapsDeci: number[]): number[] | null => {
     const slots: number[] = [];
-    let t = Math.max(0, Math.round(from * 10));
-    // Same rule as nextFreeTime: rounding must not slip the first slot back
-    // across the previous event's (possibly off-grid) timestamp.
-    while (t / 10 <= floor) t += 1;
+    let t = Math.max(Math.round(from * 10), firstDeciAbove(floor));
     for (let i = 0; i <= gapsDeci.length; i++) {
       while (taken.has(t)) t += 1;
       if (t >= limitDeci) return null;
@@ -108,8 +119,8 @@ function findSlots(
 // into whatever slot is free just before the move.
 function nearestFreeTimeBelow(text: string, t: number, floor: number): number | null {
   const taken = takenDeciseconds(text);
-  const floorDeci = Math.max(-1, Math.round(floor * 10));
-  for (let d = Math.round(t * 10) - 1; d > floorDeci; d--) {
+  const lowest = firstDeciAbove(floor);
+  for (let d = Math.round(t * 10) - 1; d >= lowest; d--) {
     if (!taken.has(d)) return d / 10;
   }
   return null;
@@ -146,11 +157,7 @@ export function setLineTime(text: string, line: number, t: number): LineTimeEdit
   let next: number | null = null;
   for (let i = idx + 1; i < lines.length && next == null; i++) next = lineTime(lines[i]);
   if ((prev == null || prev <= roundedT) && (next == null || roundedT <= next)) {
-    lines[idx] = lines[idx].replace(
-      /^(\s*)\[[^\]]*\]/,
-      `$1${formatScriptTime(roundedT)}`,
-    );
-    return { text: lines.join('\n'), line };
+    return { text: retimeLine(text, line, roundedT), line };
   }
   const m = lines[idx].trim().match(/^\[\s*[0-9:.]+\s*\]\s*(.*)$/);
   if (!m) return { text, line: null };
@@ -259,6 +266,9 @@ export function planMoveGesture(
   matchesScripted: (scriptedSan: string) => boolean,
 ): MoveGesturePlan {
   const prevIdx = lastEventIndexAt(events, time);
+  // Every stamp this planner lays out is floored strictly after the event
+  // the playhead sits on — the one boundary all three layout paths share.
+  const prevT = events[prevIdx]?.t ?? -Infinity;
   let stateEv: ParsedEvent | null = null;
   let stateIdx = -1;
   for (let i = prevIdx + 1; i < events.length; i++) {
@@ -289,7 +299,6 @@ export function planMoveGesture(
   if (stateEv.kind === 'mainline') {
     const afterMl = events[stateIdx + 1];
     const cap = afterMl ? afterMl.t : Infinity;
-    const prevT = events[prevIdx]?.t ?? -Infinity;
     const slot = findSlots(
       scriptText,
       time,
@@ -330,15 +339,14 @@ export function planMoveGesture(
   // generated `ml` would be absorbed into the variation and silently
   // reverted by the mainline restore.
   const boundT = events[prevIdx + 1]?.t ?? Infinity;
-  const wrapFloor = events[prevIdx]?.t ?? -Infinity;
   let placed: { brT: number; mvT: number; mlT: number } | null = null;
-  const pair = findSlots(scriptText, time, [1], boundT, wrapFloor);
+  const pair = findSlots(scriptText, time, [1], boundT, prevT);
   if (pair) {
-    const brT = nearestFreeTimeBelow(scriptText, pair[0], prevIdx >= 0 ? events[prevIdx].t : -1);
+    const brT = nearestFreeTimeBelow(scriptText, pair[0], prevT);
     if (brT != null) placed = { brT, mvT: pair[0], mlT: pair[1] };
   }
   if (!placed) {
-    const slots = findSlots(scriptText, time, [0.5, 1], boundT, wrapFloor);
+    const slots = findSlots(scriptText, time, [0.5, 1], boundT, prevT);
     if (slots) placed = { brT: slots[0], mvT: slots[1], mlT: slots[2] };
   }
   if (!placed) return planLineInsert(events, scriptText, time, san);

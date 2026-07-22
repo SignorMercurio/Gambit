@@ -399,30 +399,19 @@ export function parseSAN(san: string, state: GameState): Move | null {
   const trimmed = san.trim();
   if (/\s/.test(trimmed)) return null;
   const raw = trimmed.replace(/[+#!?]+$/g, '');
-  const queensideCastle = /^O-O-O$/i.test(raw) || raw === '0-0-0';
-  const kingsideCastle = /^O-O$/i.test(raw) || raw === '0-0';
-
-  let pieceMatch: RegExpMatchArray | null = null;
-  let pawnCaptureMatch: RegExpMatchArray | null = null;
-  let pawnMoveMatch: RegExpMatchArray | null = null;
-  if (!queensideCastle && !kingsideCastle) {
-    pieceMatch = raw.match(/^([NBRQK])([a-h])?([1-8])?(x)?([a-h][1-8])$/);
-    if (!pieceMatch) {
-      pawnCaptureMatch = raw.match(/^([a-h])x([a-h][1-8])(?:=([NBRQ]))?$/);
-      if (!pawnCaptureMatch) {
-        pawnMoveMatch = raw.match(/^([a-h][1-8])(?:=([NBRQ]))?$/);
-        if (!pawnMoveMatch) return null;
-      }
-    }
+  if (/^O-O-O$/i.test(raw) || raw === '0-0-0') {
+    return legalMoves(state).find((m) => m.castle === 'Q') || null;
+  }
+  if (/^O-O$/i.test(raw) || raw === '0-0') {
+    return legalMoves(state).find((m) => m.castle === 'K') || null;
   }
 
-  const moves = legalMoves(state);
-  if (queensideCastle) {
-    return moves.find((m) => m.castle === 'Q') || null;
-  }
-  if (kingsideCastle) {
-    return moves.find((m) => m.castle === 'K') || null;
-  }
+  const pieceMatch = raw.match(/^([NBRQK])([a-h])?([1-8])?(x)?([a-h][1-8])$/);
+  const pawnCaptureMatch = pieceMatch
+    ? null
+    : raw.match(/^([a-h])x([a-h][1-8])(?:=([NBRQ]))?$/);
+  const pawnMoveMatch =
+    pieceMatch || pawnCaptureMatch ? null : raw.match(/^([a-h][1-8])(?:=([NBRQ]))?$/);
 
   const pieceType: PieceType = pieceMatch
     ? (pieceMatch[1].toLowerCase() as PieceType)
@@ -430,10 +419,15 @@ export function parseSAN(san: string, state: GameState): Move | null {
   const fromFile = pieceMatch?.[2] ?? pawnCaptureMatch?.[1];
   const fromRank = pieceMatch?.[3];
   const wantsCapture = pieceMatch ? !!pieceMatch[4] : !!pawnCaptureMatch;
-  const to = pieceMatch?.[5] ?? pawnCaptureMatch?.[2] ?? pawnMoveMatch![1];
+  // Every accepted form names a destination, so "no destination" means no
+  // form matched — reject before generating a single move.
+  const to = pieceMatch?.[5] ?? pawnCaptureMatch?.[2] ?? pawnMoveMatch?.[1];
+  if (!to) return null;
   const promotionMark = pawnCaptureMatch?.[3] ?? pawnMoveMatch?.[2];
   const promo = promotionMark ? (promotionMark.toLowerCase() as PieceType) : null;
   const toIdx = sqToIdx(to);
+
+  const moves = legalMoves(state);
 
   const candidates = moves.filter((mv) => {
     if (mv.castle) return false;
