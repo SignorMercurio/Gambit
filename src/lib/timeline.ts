@@ -70,13 +70,18 @@ export type ParsedEvent =
   | { t: number; kind: 'start'; line: number; raw: string }
   | { t: number; kind: 'fen'; fen: string; line: number; raw: string }
   | { t: number; kind: 'branch'; line: number; raw: string }
-  | { t: number; kind: 'mainline'; line: number; raw: string };
+  | { t: number; kind: 'mainline'; line: number; raw: string }
+  | { t: number; kind: 'mind'; line: number; raw: string }
+  | { t: number; kind: 'reveal'; line: number; raw: string };
 
 export type ErrorEvent = { t: number; error: string; line: number; raw: string; kind?: undefined };
 
 export type TimelineEvent = ParsedEvent | ErrorEvent;
 
-type SimpleEventKind = Extract<ParsedEvent['kind'], 'clear' | 'reset' | 'start' | 'branch' | 'mainline'>;
+type SimpleEventKind = Extract<
+  ParsedEvent['kind'],
+  'clear' | 'reset' | 'start' | 'branch' | 'mainline' | 'mind' | 'reveal'
+>;
 
 const SIMPLE_COMMANDS: Record<string, SimpleEventKind> = {
   cl: 'clear',
@@ -90,6 +95,8 @@ const SIMPLE_COMMANDS: Record<string, SimpleEventKind> = {
   branch: 'branch',
   ml: 'mainline',
   mainline: 'mainline',
+  mind: 'mind',
+  reveal: 'reveal',
 };
 
 function toArrowEvent(t: number, line: number, raw: string, match: RegExpMatchArray): ParsedEvent {
@@ -156,6 +163,10 @@ export function eventBody(e: ParsedEvent): string {
       return 'begin variation';
     case 'mainline':
       return 'end variation';
+    case 'mind':
+      return "mind's eye";
+    case 'reveal':
+      return 'reveal board';
   }
 }
 

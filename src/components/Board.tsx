@@ -27,6 +27,12 @@ const ARROW_DRAW_DURATION = 0.34;
 const BADGE_DELAY = 0.08;
 const BADGE_IN_DURATION = 0.18;
 
+// Mind's-eye mode: the narrator's mental sketch. Only squares the script has
+// named (`touches`: square → last-named time) render pieces; the rest of the
+// board sinks into the void. Derived entirely from events + time in App's
+// snapshot walk, so it restores across br/ml like every other board state.
+export type MindWorld = { since: number; touches: ReadonlyMap<string, number> };
+
 type BoardProps = {
   positions: Record<string, PiecePos>;
   lastMove: LastMove | null;
@@ -34,6 +40,10 @@ type BoardProps = {
   arrows: BoardArrow[];
   captureFlash: CaptureFlash | null;
   check: BoardCheck | null;
+  mind: MindWorld | null;
+  // Time of the `reveal` that ended the last mind phase — the full board
+  // fades in from the ghost floor instead of popping (-Infinity: no fade).
+  revealedAt: number;
   time: number;
   // Interactive editing (Script tab only). Gestures never draw directly —
   // they report intents that App records as script lines, so the script
@@ -208,6 +218,33 @@ function pieceVisual(p: PiecePos, time: number) {
   return { f, r, opacity, scale, isMoving, isCapturedFading };
 }
 
+// Mind's-eye visibility: a freshly named square renders its piece at full
+// strength, then settles to a ghost — the sketch accumulates rather than
+// vanishing. Unnamed squares render nothing at all. After `reveal`, the full
+// board fades up from the ghost floor instead of popping in. The ghost floor
+// must survive downscaled video (DESIGN rule), hence the conservative 0.35.
+const MIND_FRESH_S = 1.2;
+const MIND_SETTLE_S = 3;
+const MIND_GHOST = 0.35;
+const REVEAL_FADE_S = 0.45;
+
+function mindPieceStrength(
+  mind: MindWorld | null,
+  revealedAt: number,
+  sq: string,
+  time: number,
+): number {
+  if (!mind) {
+    return Math.min(1, MIND_GHOST + ((time - revealedAt) / REVEAL_FADE_S) * (1 - MIND_GHOST));
+  }
+  const touched = mind.touches.get(sq);
+  if (touched == null) return 0;
+  const age = time - touched;
+  if (age < MIND_FRESH_S) return 1;
+  const settled = (age - MIND_FRESH_S) / (MIND_SETTLE_S - MIND_FRESH_S);
+  return Math.max(MIND_GHOST, 1 - settled * (1 - MIND_GHOST));
+}
+
 function captureFlashVisual(age: number) {
   const p = clamp01(age / BOARD_OVERLAY_LIFETIME.captureFlash);
   const fadeIn = timedProgress(age, BOARD_OVERLAY_LIFETIME.captureFlash * 0.32);
@@ -317,6 +354,7 @@ const CHECK_GLOW_DEFS = (
 const SQUARE_RECTS = SQUARES.map(({ f, r, isLight }) => (
   <rect
     key={`${f}-${r}`}
+    className={isLight ? 'sq--light' : 'sq--dark'}
     x={f * SQ}
     y={(7 - r) * SQ}
     width={SQ}
@@ -330,6 +368,7 @@ const SQUARE_RECTS = SQUARES.map(({ f, r, isLight }) => (
 // whole layer is one hoisted element.
 const COORD_LAYER = (
   <svg
+    className="board-coords"
     viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
     aria-hidden="true"
     style={{
@@ -476,6 +515,8 @@ export function Board({
   arrows,
   captureFlash,
   check,
+  mind,
+  revealedAt,
   time,
   interactive,
   legalTargets,
@@ -566,7 +607,7 @@ export function Board({
     <div className="board-wrap">
       <div
         ref={boardRef}
-        className="board"
+        className={mind ? 'board board--mind' : 'board'}
         role="img"
         aria-label="Chess board"
         onPointerDown={onGesturePointerDown}
@@ -657,6 +698,8 @@ export function Board({
           style={{ position: 'absolute', inset: 0, zIndex: 1 }}
         >
           {Object.entries(positions).map(([id, p]) => {
+            const strength = mindPieceStrength(mind, revealedAt, idxToSq(p.f, p.r), time);
+            if (strength <= 0) return null;
             const visual = pieceVisual(p, time);
             const tx = visual.f * 100;
             const ty = (7 - visual.r) * 100;
@@ -671,7 +714,7 @@ export function Board({
                   width: '12.5%',
                   height: '12.5%',
                   transform: `translate3d(${tx}%, ${ty}%, 0) scale(${visual.scale})`,
-                  opacity: visual.opacity,
+                  opacity: visual.opacity * strength,
                   pointerEvents: 'none',
                   zIndex: visual.isMoving ? 5 : visual.isCapturedFading ? 4 : 1,
                   willChange: visual.isMoving || visual.isCapturedFading ? 'transform, opacity' : 'auto',

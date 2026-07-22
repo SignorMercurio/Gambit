@@ -10,6 +10,7 @@ import {
   type BoardHighlight,
   type CaptureFlash,
   type LastMove,
+  type MindWorld,
   type PiecePos,
 } from './components/Board';
 import * as Chess from './lib/chess';
@@ -504,6 +505,14 @@ export default function App() {
     // Checked king square, derived from chessState (never from a SAN `+`).
     // State-scoped, not transient: it persists until the position changes.
     check: BoardCheck | null;
+    // Mind's-eye mode: while non-null, only squares the script has "named"
+    // (moves, captures, highlights, arrow endpoints, checked kings) render
+    // pieces; everything else stays dark. `touches` maps square → the time
+    // it was last named, so recency drives the fresh→ghost fade.
+    mind: MindWorld | null;
+    // Time of the `reveal` that ended the last mind phase — drives the
+    // deterministic full-board fade-in (-Infinity when never revealed).
+    revealedAt: number;
   };
 
   const { snapshots, scriptErrors } = useMemo<{
@@ -530,8 +539,19 @@ export default function App() {
     let lastCapture: CaptureFlash | null = null;
     // A custom Start FEN may already be a check position.
     let check: BoardCheck | null = checkAt(initialSetup.chessState, 0);
+    let mind: MindWorld | null = null;
+    let revealedAt = Number.NEGATIVE_INFINITY;
     const errorAcc: ErrorEvent[] = [];
     const branchStack: BranchSnap[] = [];
+
+    // Name squares into the mental sketch (rebound, never mutated, so prior
+    // snapshots keep their own maps). A no-op outside mind mode.
+    const touch = (t: number, ...sqs: (string | null | undefined)[]) => {
+      if (!mind) return;
+      const touches = new Map(mind.touches);
+      for (const sq of sqs) if (sq) touches.set(sq, t);
+      mind = { since: mind.since, touches };
+    };
 
     const list: WorldSnap[] = [];
     const applySetup = (setup: Pick<WorldSnap, 'positions' | 'chessState'>, t: number) => {
@@ -542,6 +562,9 @@ export default function App() {
       arrows = [];
       lastCapture = null;
       check = checkAt(setup.chessState, t);
+      // A position reset empties the sketch: the narrator starts over in the
+      // dark. The mode itself persists — only `reveal` lifts it.
+      if (mind) mind = { since: t, touches: new Map() };
     };
     const snapshot = (): WorldSnap => ({
       positions,
@@ -551,6 +574,8 @@ export default function App() {
       arrows,
       lastCapture,
       check,
+      mind,
+      revealedAt,
     });
 
     list.push(snapshot());
@@ -565,9 +590,11 @@ export default function App() {
               ...highlights,
               ...ev.squares.map((sq) => ({ sq, t: ev.t, pinned: ev.pinned })),
             ];
+            touch(ev.t, ...ev.squares);
             break;
           case 'arrow':
             arrows = [...arrows, { from: ev.from, to: ev.to, t: ev.t, pinned: ev.pinned }];
+            touch(ev.t, ev.from, ev.to);
             break;
           case 'clear':
             highlights = [];
@@ -608,9 +635,22 @@ export default function App() {
               arrows = snap.arrows;
               lastCapture = snap.lastCapture;
               check = snap.check;
+              mind = snap.mind;
+              revealedAt = snap.revealedAt;
             }
             break;
           }
+          case 'mind':
+            // Entering the mind's eye starts an empty sketch — the board
+            // sinks into darkness and only named squares resurface.
+            mind = { since: ev.t, touches: new Map() };
+            break;
+          case 'reveal':
+            if (mind) {
+              mind = null;
+              revealedAt = ev.t;
+            }
+            break;
           case 'move': {
             const mv = Chess.parseSAN(ev.san, chessState);
             if (!mv) {
@@ -629,6 +669,18 @@ export default function App() {
                 annotation: ev.annotation,
               };
               if (moved.captureFlash) lastCapture = { ...moved.captureFlash, id: `${ev.line}` };
+              // A move names everything it disturbs into the sketch: both of
+              // its squares, an en-passant victim's square, the castling
+              // rook's path, and the king a check lights up.
+              touch(
+                ev.t,
+                Chess.idxToSq(mv.from[0], mv.from[1]),
+                Chess.idxToSq(mv.to[0], mv.to[1]),
+                moved.captureFlash ? Chess.idxToSq(moved.captureFlash.f, moved.captureFlash.r) : null,
+                mv.castle ? Chess.idxToSq(mv.castle === 'K' ? 7 : 0, mv.from[1]) : null,
+                mv.castle ? Chess.idxToSq(mv.castle === 'K' ? 5 : 3, mv.from[1]) : null,
+                check ? check.sq : null,
+              );
             }
             break;
           }
@@ -673,6 +725,8 @@ export default function App() {
       arrows: visibleArrows,
       captureFlash,
       check: snap.check,
+      mind: snap.mind,
+      revealedAt: snap.revealedAt,
     };
   }, [snapshots, reachedEventIndex, time]);
 
@@ -1080,6 +1134,8 @@ export default function App() {
             arrows={world.arrows}
             captureFlash={world.captureFlash}
             check={world.check}
+            mind={world.mind}
+            revealedAt={world.revealedAt}
             time={time}
             interactive={tab === 'script'}
             legalTargets={legalTargets}

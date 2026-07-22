@@ -131,6 +131,21 @@ try {
   finishBoardGesture(annotationGesture, 'f7'); // dragged away: arrow
   assert.deepEqual(annotationCalls, ['highlight:c4', 'arrow:c4-f7']);
 
+  // Mind's-eye events parse as simple keywords, and a generated line
+  // round-trips: the planners treat them like any other structural event.
+  const mindScript = '[00:01] mind\n[00:02] e4\n[00:05] reveal';
+  const mindEvents = parseScript(mindScript);
+  assert.deepEqual(
+    mindEvents.map((e) => e.kind),
+    ['mind', 'move', 'reveal'],
+  );
+  const mindInsert = planLineInsert(mindEvents, mindScript, 3, 'hl e4');
+  assert.equal(mindInsert.kind, 'edit');
+  assert.ok(
+    mindInsert.t > 2 && mindInsert.t < 5,
+    'a gesture stamp stays strictly between the move and the reveal',
+  );
+
   // SAN is conservative: ambiguous or coordinate-like input must surface as
   // a script error instead of silently choosing a legal move, and promotions
   // must name the promoted piece explicitly.

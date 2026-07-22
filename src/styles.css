@@ -149,6 +149,10 @@
      SVG layer, which can't read custom properties). */
   --font-ui: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* Mind's-eye void: two near-blacks a hair apart so the grid stays barely
+     perceptible while the sketch's pieces carry all the light. */
+  --mind-void-light: #181f33;
+  --mind-void-dark: #131a2b;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
@@ -297,6 +301,18 @@ body {
 }
 .board-wrap { grid-row: 1; }
 .subtitle-strip { grid-row: 2; }
+
+/* Mind's-eye mode: the board sinks into a near-black void — Board renders
+   only the pieces the script has named; these rules carry the surface. The
+   fill transition is the sink/reveal moment itself. */
+.board .sq--light,
+.board .sq--dark {
+  transition: fill 600ms ease;
+}
+.board--mind .sq--light { fill: var(--mind-void-light); }
+.board--mind .sq--dark { fill: var(--mind-void-dark); }
+.board .board-coords { transition: opacity 600ms ease; }
+.board--mind .board-coords { opacity: 0.35; }
 
 .subtitle-strip {
   min-height: var(--subtitle-track-height);
@@ -526,7 +542,9 @@ body {
    pointed pennants, moves and br/ml stay square-cut. Decodable in grayscale. */
 .marker[data-kind='highlight'],
 .marker[data-kind='arrow'],
-.marker[data-kind='clear'] {
+.marker[data-kind='clear'],
+.marker[data-kind='mind'],
+.marker[data-kind='reveal'] {
   border-radius: var(--radius-pill);
 }
 .marker[data-kind='reset'],
@@ -1286,6 +1304,7 @@ body {
    The cinematic hover scale on the play button is decorative; remove it. */
 @media (prefers-reduced-motion: reduce) {
   .play-btn:hover, .play-btn:active { transform: none; }
+  .board .sq--light, .board .sq--dark, .board .board-coords { transition: none; }
   .marker:hover, .marker:focus-visible { --marker-grow: 1; }
   .capture-flash {
     opacity: min(var(--capture-opacity, 0), 0.42);

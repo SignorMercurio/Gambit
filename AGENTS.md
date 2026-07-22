@@ -38,7 +38,7 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - `src/lib/chess.ts`: minimal chess state engine, legal move generation, SAN parsing and serialization.
 - `src/lib/boardGesture.ts`: pure in-flight gesture state that captures move/arrow/highlight commit callbacks at pointer-down so playback cannot change the position or playhead used at pointer-up.
 - `src/lib/subtitles.ts`: SRT subtitle parsing and cue validation.
-- `src/lib/timeline.ts`: timestamped script parsing. Short syntax is primary: `hl`, direct arrows like `f3->e5`, `cl`, `rs`, `st`, `br`, `ml`; legacy long commands remain accepted. Also home of the playhead→event-index rule (`lastEventIndexAt`).
+- `src/lib/timeline.ts`: timestamped script parsing. Short syntax is primary: `hl`, direct arrows like `f3->e5`, `cl`, `rs`, `st`, `br`, `ml`, `mind`, `reveal`; legacy long commands remain accepted. Also home of the playhead→event-index rule (`lastEventIndexAt`).
 - `src/lib/scriptEdit.ts`: gesture-to-script text writer — timestamp formatting, collision stepping, time-sorted line insertion that preserves comments and formatting — plus the pure gesture planners (`planLineInsert`, `planMoveGesture`): branch-aware move policy that returns new script text and landing boundaries, leaving the React commit to `App`.
 - `src/lib/tokens.ts`: JS/SVG-facing design tokens mirrored from CSS.
 - `src/styles.css`: visual system and responsive layout.
@@ -78,6 +78,7 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - `reset` should restore the configured Start FEN; `start` should restore the standard initial chess position. Both clear transient visuals such as capture flash, arrows, highlights, and last move.
 - Branch/mainline snapshots should restore board state and overlays without mutating prior snapshots.
 - `br`'s timestamp is ordering-only: it renders nothing, so any value between the neighboring events is equivalent. `ml`'s timestamp is meaningful — it is the visible moment the board snaps back to the main line. UI should let users edit `ml` times but not surface `br` times as editable.
+- Mind's-eye mode (`mind` … `reveal`) renders the narrator's mental sketch: the board sinks into a near-black void and only squares the script has named show pieces — a move names its from/to squares, the captured square, the castling rook's path, and the checked king; `hl` and arrows name their squares. Named pieces settle from full strength to a ghost floor; `cl` clears alarms but leaves ghosts; `rs`/`st`/`fen` empty the sketch while staying dark; `reveal` lifts the mode with a deterministic fade-in. The whole thing is derived state (events + time) computed in the snapshot walk, so br/ml restores it like any other board state and script + FEN + time still fully determine every frame.
 - Subtitle cues should extend playback duration when they outlast the chess script and render below the board, never over it.
 - Event-anchored seeks must not land exactly on the event's timestamp while paused: every timed visual derives from `time - event.t`, so at age 0 the moved piece, highlight, and arrow are all invisible. Land just past the event (the `seekEvent` helper: +0.5s, clamped before the next event), the same convention gesture inserts use.
 

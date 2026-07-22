@@ -164,7 +164,9 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
       }
       case 'highlight':
       case 'arrow':
-      case 'clear': {
+      case 'clear':
+      case 'mind':
+      case 'reveal': {
         const mark: Mark = { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) };
         if (varNodes) {
           varNodes.push({ type: 'mark', mark });

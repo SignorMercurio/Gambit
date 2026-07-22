@@ -70,6 +70,8 @@ export const markerColors: Record<MarkerKind, string> = {
   err: '#cf5d5d',
   branch: '#c8d0e6',
   mainline: '#c8d0e6',
+  mind: '#9b9b9b',
+  reveal: '#9b9b9b',
 };
 
 // Chrome UI font stack — mirrored by --font-ui in styles.css :root, because

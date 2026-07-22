@@ -345,6 +345,10 @@ With the Script tab active, the board accepts mouse gestures that write script l
 
 Cursor is `grabbing` during a move drag and `crosshair` during an annotate gesture. Mouse-only by design: right-button gestures need a mouse, and the tool is a desktop screen-recording workflow.
 
+### Mind's-Eye Mode (`mind` … `reveal`)
+
+The board as the narrator's mental sketch, for blindfold-style lessons. Between `mind` and `reveal` the squares sink to the void pair (`--mind-void-light` #181f33 / `--mind-void-dark` #131a2b — a hair apart so the grid stays barely perceptible), coordinates dim to 0.35, and only pieces on squares the script has named render: fresh at full strength, settling to a 0.35 ghost floor that must stay legible in downscaled video. Highlights, arrows, capture flash, and the check glow keep their normal vocabulary — in the void they carry all the light, which is the point: the sketch shows exactly what the narration is tracking. Alarms meant to persist across the sketch use the pinned forms (`hl f7 pin`, `c4->f7 pin`). `reveal` lifts the void with a 600ms fill transition while pieces fade up from the ghost floor — the "open your eyes" beat. Both transitions collapse under `prefers-reduced-motion`.
+
 ## 6. Do's and Don'ts
 
 ### Do
