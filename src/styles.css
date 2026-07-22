@@ -151,8 +151,9 @@
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
   /* Mind's-eye void: two near-blacks a hair apart so the grid stays barely
      perceptible while the sketch's pieces carry all the light. */
-  --mind-void-light: #181f33;
-  --mind-void-dark: #131a2b;
+  --mind-void-light: #101628;
+  --mind-void-dark: #0f1526;
+  --mind-coord-ink: #c8d0e6;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
@@ -304,15 +305,17 @@ body {
 
 /* Mind's-eye mode: the board sinks into a near-black void — Board renders
    only the pieces the script has named; these rules carry the surface. The
-   fill transition is the sink/reveal moment itself. */
+   fill transition is the sink/reveal moment itself. The two void fills are
+   deliberately near-identical: the grid all but disappears, and orientation
+   comes from the coordinates, which swap to a single bright ink. */
 .board .sq--light,
 .board .sq--dark {
   transition: fill 600ms ease;
 }
 .board--mind .sq--light { fill: var(--mind-void-light); }
 .board--mind .sq--dark { fill: var(--mind-void-dark); }
-.board .board-coords { transition: opacity 600ms ease; }
-.board--mind .board-coords { opacity: 0.35; }
+.board .board-coords text { transition: fill 600ms ease; }
+.board--mind .board-coords text { fill: var(--mind-coord-ink); }
 
 .subtitle-strip {
   min-height: var(--subtitle-track-height);
@@ -1304,7 +1307,7 @@ body {
    The cinematic hover scale on the play button is decorative; remove it. */
 @media (prefers-reduced-motion: reduce) {
   .play-btn:hover, .play-btn:active { transform: none; }
-  .board .sq--light, .board .sq--dark, .board .board-coords { transition: none; }
+  .board .sq--light, .board .sq--dark, .board .board-coords text { transition: none; }
   .marker:hover, .marker:focus-visible { --marker-grow: 1; }
   .capture-flash {
     opacity: min(var(--capture-opacity, 0), 0.42);

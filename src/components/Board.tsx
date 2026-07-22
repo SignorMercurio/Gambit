@@ -218,14 +218,14 @@ function pieceVisual(p: PiecePos, time: number) {
   return { f, r, opacity, scale, isMoving, isCapturedFading };
 }
 
-// Mind's-eye visibility: a freshly named square renders its piece at full
-// strength, then settles to a ghost — the sketch accumulates rather than
-// vanishing. Unnamed squares render nothing at all. After `reveal`, the full
-// board fades up from the ghost floor instead of popping in. The ghost floor
-// must survive downscaled video (DESIGN rule), hence the conservative 0.35.
-const MIND_FRESH_S = 1.2;
-const MIND_SETTLE_S = 3;
-const MIND_GHOST = 0.35;
+// Mind's-eye visibility: what isn't rehearsed is forgotten. A freshly named
+// square renders its piece at full strength, then fades to nothing on a
+// forgetting curve — unless the square is actively tracked: a lit highlight
+// or arrow endpoint (the pinned alarms) or a live check IS the rehearsal, so
+// those pieces hold at full strength for as long as the overlay lasts. After
+// `reveal`, the full board fades up from darkness.
+const MIND_FRESH_S = 1.5;
+const MIND_FORGET_S = 8;
 const REVEAL_FADE_S = 0.45;
 
 function mindPieceStrength(
@@ -233,16 +233,17 @@ function mindPieceStrength(
   revealedAt: number,
   sq: string,
   time: number,
+  rehearsed: ReadonlySet<string>,
 ): number {
   if (!mind) {
-    return Math.min(1, MIND_GHOST + ((time - revealedAt) / REVEAL_FADE_S) * (1 - MIND_GHOST));
+    return Math.min(1, (time - revealedAt) / REVEAL_FADE_S);
   }
+  if (rehearsed.has(sq)) return 1;
   const touched = mind.touches.get(sq);
   if (touched == null) return 0;
   const age = time - touched;
   if (age < MIND_FRESH_S) return 1;
-  const settled = (age - MIND_FRESH_S) / (MIND_SETTLE_S - MIND_FRESH_S);
-  return Math.max(MIND_GHOST, 1 - settled * (1 - MIND_GHOST));
+  return Math.max(0, 1 - (age - MIND_FRESH_S) / (MIND_FORGET_S - MIND_FRESH_S));
 }
 
 function captureFlashVisual(age: number) {
@@ -598,6 +599,25 @@ export function Board({
   const lastMoveOpacity = lastMove ? timedProgress(time - lastMove.t, 0.12) : 0;
   const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
   const checkIdx = check ? sqToIdx(check.sq) : null;
+
+  // Squares under a currently-visible highlight, arrow endpoint, or live
+  // check: the alarm itself is the rehearsal, so those pieces resist the
+  // forgetting curve for as long as the overlay lasts. Uses the same
+  // visibility test the overlays render with.
+  const rehearsed = new Set<string>();
+  if (mind) {
+    for (const h of highlights) {
+      if (overlayOpacity(time - h.t, BOARD_OVERLAY_LIFETIME.highlight, h.pinned) > 0)
+        rehearsed.add(h.sq);
+    }
+    for (const a of arrows) {
+      if (overlayOpacity(time - a.t, BOARD_OVERLAY_LIFETIME.arrow, a.pinned) > 0) {
+        rehearsed.add(a.from);
+        rehearsed.add(a.to);
+      }
+    }
+    if (check) rehearsed.add(check.sq);
+  }
   const flash =
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
       ? captureFlashVisual(time - captureFlash.t)
@@ -698,7 +718,7 @@ export function Board({
           style={{ position: 'absolute', inset: 0, zIndex: 1 }}
         >
           {Object.entries(positions).map(([id, p]) => {
-            const strength = mindPieceStrength(mind, revealedAt, idxToSq(p.f, p.r), time);
+            const strength = mindPieceStrength(mind, revealedAt, idxToSq(p.f, p.r), time, rehearsed);
             if (strength <= 0) return null;
             const visual = pieceVisual(p, time);
             const tx = visual.f * 100;
