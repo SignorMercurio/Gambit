@@ -221,11 +221,12 @@ function pieceVisual(p: PiecePos, time: number) {
 // Mind's-eye visibility: what isn't rehearsed is forgotten. A freshly named
 // square renders its piece at full strength, then fades to nothing on a
 // forgetting curve — unless the square is actively tracked: a lit highlight
-// or arrow endpoint (the pinned alarms) or a live check IS the rehearsal, so
-// those pieces hold at full strength for as long as the overlay lasts. After
-// `reveal`, the full board fades up from darkness.
+// (the pinned alarm) or a live check IS the rehearsal, so those pieces hold
+// at full strength for as long as the overlay lasts. Arrows keep only their
+// own light — a pinned attack line can outlive the memory of the attacker.
+// After `reveal`, the full board fades up from darkness.
 const MIND_FRESH_S = 1.5;
-const MIND_FORGET_S = 8;
+const MIND_FORGET_S = 3;
 const REVEAL_FADE_S = 0.45;
 
 function mindPieceStrength(
@@ -600,21 +601,16 @@ export function Board({
   const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
   const checkIdx = check ? sqToIdx(check.sq) : null;
 
-  // Squares under a currently-visible highlight, arrow endpoint, or live
-  // check: the alarm itself is the rehearsal, so those pieces resist the
-  // forgetting curve for as long as the overlay lasts. Uses the same
-  // visibility test the overlays render with.
+  // Squares under a currently-visible highlight or live check: the alarm
+  // itself is the rehearsal, so those pieces resist the forgetting curve for
+  // as long as the overlay lasts. Arrows deliberately hold nothing — the
+  // attack line persists while its endpoints fade. Uses the same visibility
+  // test the overlays render with.
   const rehearsed = new Set<string>();
   if (mind) {
     for (const h of highlights) {
       if (overlayOpacity(time - h.t, BOARD_OVERLAY_LIFETIME.highlight, h.pinned) > 0)
         rehearsed.add(h.sq);
-    }
-    for (const a of arrows) {
-      if (overlayOpacity(time - a.t, BOARD_OVERLAY_LIFETIME.arrow, a.pinned) > 0) {
-        rehearsed.add(a.from);
-        rehearsed.add(a.to);
-      }
     }
     if (check) rehearsed.add(check.sq);
   }
