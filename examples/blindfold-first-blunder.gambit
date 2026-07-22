@@ -1,0 +1,33 @@
+# Blindfold puzzle: who blundered first?
+# 1. e4 c5 2. Bc4 a6 3. Qh5 Nf6 4. Qxc5 Nc6 5. Nc3 b5 6. Bb3 b4 *
+#
+# Act 1 (mind's eye): the board sinks into darkness; only what the
+# narration names surfaces. Pinned alarms stay lit until `cl`.
+[00:02] mind
+[00:08] e4
+[00:12] c5
+[00:18] Bc4
+[00:20] c4->f7 pin
+[00:23] hl f7 pin
+[00:30] a6
+[00:38] Qh5
+[00:40] h5->f7 pin
+# The wrong answer: attacks the queen, ignores the alarm.
+[00:48] Nf6??
+# The punishment White missed, shown in the dark.
+[00:56] br
+[00:58] Qxf7#
+[01:10] ml
+[01:14] cl
+# The second blunder, then the noise moves.
+[01:16] Qxc5??
+[01:28] Nc6
+[01:32] Nc3
+[01:36] b5
+[01:40] Bb3
+[01:44] b4
+# Act 3: open your eyes and settle the account.
+[02:00] reveal
+[02:10] br
+[02:12] Nd5
+[02:22] ml
