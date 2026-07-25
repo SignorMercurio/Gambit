@@ -227,24 +227,35 @@ function pieceVisual(p: PiecePos, time: number) {
 // After `reveal`, the full board fades up from darkness.
 const MIND_FRESH_S = 1.5;
 const MIND_FORGET_S = 3;
+const MIND_SINK_S = 0.6;
 const REVEAL_FADE_S = 0.45;
 
-function mindPieceStrength(
-  mind: MindWorld | null,
-  revealedAt: number,
-  sq: string,
-  time: number,
-  rehearsed: ReadonlySet<string>,
-): number {
-  if (!mind) {
-    return Math.min(1, (time - revealedAt) / REVEAL_FADE_S);
-  }
-  if (rehearsed.has(sq)) return 1;
-  const touched = mind.touches.get(sq);
+// How deep the void is right now, on the playback clock like every other
+// timed visual: `mind` sinks it, `reveal` lifts it. Deliberately not a CSS
+// transition — that runs on wall time, so scrubbing across the event while
+// paused would show a frame that depends on how the playhead got there
+// instead of on script + FEN + time.
+export function mindSink(mind: MindWorld | null, revealedAt: number, time: number): number {
+  if (mind) return timedProgress(time - mind.since, MIND_SINK_S);
+  // Never in mind mode: revealedAt is -Infinity, so the age saturates and the
+  // board reads fully lit without a sentinel branch.
+  return 1 - timedProgress(time - revealedAt, MIND_SINK_S);
+}
+
+// One frame of the sketch: the touch map plus the squares whose alarm is lit
+// right now. Built only while the board is dark, so the lit path never carries
+// it and no empty-set stand-in is needed.
+type MindFrame = { touches: ReadonlyMap<string, number>; rehearsed: ReadonlySet<string> };
+
+function mindPieceStrength(frame: MindFrame, sq: string, time: number): number {
+  if (frame.rehearsed.has(sq)) return 1;
+  const touched = frame.touches.get(sq);
   if (touched == null) return 0;
   const age = time - touched;
   if (age < MIND_FRESH_S) return 1;
-  return Math.max(0, 1 - (age - MIND_FRESH_S) / (MIND_FORGET_S - MIND_FRESH_S));
+  // Linear, unlike the eased board fades: the forgetting curve is the
+  // feature's subject, so it stays legible rather than snapping away.
+  return clamp01(1 - (age - MIND_FRESH_S) / (MIND_FORGET_S - MIND_FRESH_S));
 }
 
 function captureFlashVisual(age: number) {
@@ -351,52 +362,73 @@ const CHECK_GLOW_DEFS = (
   </defs>
 );
 
-// The 64 base squares never change — hoisted like CHECK_GLOW_DEFS so the
-// per-frame render diffs one constant element instead of 64 rects.
-const SQUARE_RECTS = SQUARES.map(({ f, r, isLight }) => (
-  <rect
-    key={`${f}-${r}`}
-    className={isLight ? 'sq--light' : 'sq--dark'}
-    x={f * SQ}
-    y={(7 - r) * SQ}
-    width={SQ}
-    height={SQ}
-    fill={isLight ? tokens.squareLight : tokens.squareDark}
-  />
-));
+// One square pair per surface. Both sets are hoisted so a steady frame diffs
+// a single constant element instead of 64 rects.
+const squareRects = (light: string, dark: string) =>
+  SQUARES.map(({ f, r, isLight }) => (
+    <rect
+      key={`${f}-${r}`}
+      x={f * SQ}
+      y={(7 - r) * SQ}
+      width={SQ}
+      height={SQ}
+      fill={isLight ? light : dark}
+    />
+  ));
+const SQUARE_RECTS = squareRects(tokens.squareLight, tokens.squareDark);
+// The void layer: the same 64 squares in near-black, faded in over the lit
+// board by `mindSink`. A layer rather than a fill swap so the sink follows the
+// playback clock (and so overlays keep landing on top of it). VOID_G is the
+// fully-sunk steady state — the whole mind phase after the 0.6s ramp.
+const VOID_RECTS = squareRects(tokens.mindVoidLight, tokens.mindVoidDark);
+const VOID_G = <g>{VOID_RECTS}</g>;
 
 // Coordinates sit above enlarged Staunty pieces so file/rank labels remain
-// visible in recordings, but below annotation arrows. Fully static: the
-// whole layer is one hoisted element.
+// visible in recordings, but below annotation arrows. Two hoisted sets of the
+// same labels: the board ink, and the bright mind's-eye ink that cross-fades
+// in with the void (in the dark, the coordinates are the only orientation
+// left, so they must read at full strength).
+// `ink` null means the per-square board pair; a color means the one bright
+// mind's-eye ink.
+const coordTexts = (ink: string | null) =>
+  COORD_LABELS.map((c, i) => (
+    <text
+      key={`coord-${i}`}
+      x={c.x}
+      y={c.y}
+      fontFamily="ui-sans-serif, system-ui"
+      fontSize="14"
+      fontWeight="700"
+      textAnchor={c.anchor}
+      fill={ink ?? (c.isLight ? tokens.coordOnLight : tokens.coordOnDark)}
+      opacity="0.95"
+    >
+      {c.text}
+    </text>
+  ));
+const COORD_TEXTS = coordTexts(null);
+const COORD_TEXTS_MIND = coordTexts(tokens.mindCoordInk);
+
+const COORD_LAYER_STYLE: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  pointerEvents: 'none',
+  zIndex: 2,
+};
+
+// Both steady states are whole hoisted layers, so every frame outside the
+// 0.6s ramp — which is every frame of an ordinary script — bails out on
+// element identity instead of reconciling 16 labels.
 const COORD_LAYER = (
-  <svg
-    className="board-coords"
-    viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-    aria-hidden="true"
-    style={{
-      position: 'absolute',
-      inset: 0,
-      width: '100%',
-      height: '100%',
-      pointerEvents: 'none',
-      zIndex: 2,
-    }}
-  >
-    {COORD_LABELS.map((c, i) => (
-      <text
-        key={`coord-${i}`}
-        x={c.x}
-        y={c.y}
-        fontFamily="ui-sans-serif, system-ui"
-        fontSize="14"
-        fontWeight="700"
-        textAnchor={c.anchor}
-        fill={c.isLight ? tokens.coordOnLight : tokens.coordOnDark}
-        opacity="0.95"
-      >
-        {c.text}
-      </text>
-    ))}
+  <svg className="board-coords" viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={COORD_LAYER_STYLE}>
+    {COORD_TEXTS}
+  </svg>
+);
+const COORD_LAYER_MIND = (
+  <svg className="board-coords" viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={COORD_LAYER_STYLE}>
+    {COORD_TEXTS_MIND}
   </svg>
 );
 
@@ -601,19 +633,33 @@ export function Board({
   const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
   const checkIdx = check ? sqToIdx(check.sq) : null;
 
-  // Squares under a currently-visible highlight or live check: the alarm
-  // itself is the rehearsal, so those pieces resist the forgetting curve for
-  // as long as the overlay lasts. Arrows deliberately hold nothing — the
-  // attack line persists while its endpoints fade. Uses the same visibility
-  // test the overlays render with.
-  const rehearsed = new Set<string>();
-  if (mind) {
-    for (const h of highlights) {
-      if (overlayOpacity(time - h.t, BOARD_OVERLAY_LIFETIME.highlight, h.pinned) > 0)
-        rehearsed.add(h.sq);
-    }
-    if (check) rehearsed.add(check.sq);
+  // Which highlights are lit, resolved once: the rects render from this list
+  // and mind mode's rehearsal reads it, so "is this alarm showing" has exactly
+  // one answer per frame.
+  const litHighlights: { h: BoardHighlight; age: number; opacity: number }[] = [];
+  for (const h of highlights) {
+    const age = time - h.t;
+    const opacity = overlayOpacity(age, BOARD_OVERLAY_LIFETIME.highlight, h.pinned);
+    if (opacity > 0) litHighlights.push({ h, age, opacity });
   }
+
+  // While dark, squares under a lit highlight or a live check are being
+  // rehearsed by the alarm itself, so their pieces resist the forgetting curve
+  // for as long as the overlay lasts. Arrows deliberately hold nothing — the
+  // attack line persists while its endpoints fade.
+  let mindFrame: MindFrame | null = null;
+  if (mind) {
+    const rehearsed = new Set<string>();
+    for (const { h } of litHighlights) rehearsed.add(h.sq);
+    if (check) rehearsed.add(check.sq);
+    mindFrame = { touches: mind.touches, rehearsed };
+  }
+
+  const sink = mindSink(mind, revealedAt, time);
+  // Outside mind mode every piece shares one strength (the reveal fade-up, or
+  // a saturated 1 for scripts that never darken), so it is computed once here
+  // instead of per piece per frame.
+  const revealStrength = timedProgress(time - revealedAt, REVEAL_FADE_S);
   const flash =
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
       ? captureFlashVisual(time - captureFlash.t)
@@ -623,7 +669,7 @@ export function Board({
     <div className="board-wrap">
       <div
         ref={boardRef}
-        className={mind ? 'board board--mind' : 'board'}
+        className="board"
         role="img"
         aria-label="Chess board"
         onPointerDown={onGesturePointerDown}
@@ -650,7 +696,13 @@ export function Board({
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
         >
           {CHECK_GLOW_DEFS}
-          {SQUARE_RECTS}
+          {/* Once the void is fully sunk it is opaque, so the lit squares
+             underneath are pure cost — drop them for the rest of the phase. */}
+          {sink < 1 && SQUARE_RECTS}
+
+          {/* The void sinks in over the lit squares; every overlay below
+             renders on top of it, so the alarms keep carrying the light. */}
+          {sink >= 1 ? VOID_G : sink > 0 ? <g opacity={sink}>{VOID_RECTS}</g> : null}
 
           {lastMove &&
             (
@@ -670,11 +722,8 @@ export function Board({
               />
             ))}
 
-          {highlights.map((h, i) => {
+          {litHighlights.map(({ h, age, opacity }, i) => {
             const { f, r } = sqToIdx(h.sq);
-            const age = time - h.t;
-            const opacity = overlayOpacity(age, BOARD_OVERLAY_LIFETIME.highlight, h.pinned);
-            if (opacity <= 0) return null;
             const cx = f * SQ + SQ / 2;
             const cy = (7 - r) * SQ + SQ / 2;
             const scale = 0.94 + timedProgress(age, HIGHLIGHT_FADE_IN) * 0.06;
@@ -714,7 +763,9 @@ export function Board({
           style={{ position: 'absolute', inset: 0, zIndex: 1 }}
         >
           {Object.entries(positions).map(([id, p]) => {
-            const strength = mindPieceStrength(mind, revealedAt, idxToSq(p.f, p.r), time, rehearsed);
+            const strength = mindFrame
+              ? mindPieceStrength(mindFrame, idxToSq(p.f, p.r), time)
+              : revealStrength;
             if (strength <= 0) return null;
             const visual = pieceVisual(p, time);
             const tx = visual.f * 100;
@@ -744,7 +795,24 @@ export function Board({
           })}
         </div>
 
-        {COORD_LAYER}
+        {/* Mid-ramp only: an opaque base with one fading layer over it, the
+           same compositing rule the squares use. Cross-fading both at once
+           would dip the labels to ~72% coverage at the midpoint. */}
+        {sink <= 0 ? (
+          COORD_LAYER
+        ) : sink >= 1 ? (
+          COORD_LAYER_MIND
+        ) : (
+          <svg
+            className="board-coords"
+            viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+            aria-hidden="true"
+            style={COORD_LAYER_STYLE}
+          >
+            {COORD_TEXTS}
+            <g opacity={sink}>{COORD_TEXTS_MIND}</g>
+          </svg>
+        )}
 
         {/* arrows overlay — sits above pieces so annotations land on top */}
         <svg

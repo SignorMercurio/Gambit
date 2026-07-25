@@ -128,6 +128,9 @@
   --main-column-gap: 20px;
   --main-row-gap: 16px;
   --side-panel-width: clamp(560px, 32vw, 620px);
+  /* Present-mode move list: narrower than the editor panel — it holds only a
+     numbered mainline, no FEN field or textarea. */
+  --present-pgn-width: clamp(220px, 22vw, 320px);
   --subtitle-track-height: 64px;
   /* Overlap between the board's bottom edge and the subtitle strip. The strip
      rides up by this much, so the side panel — which bottom-aligns with the
@@ -149,11 +152,6 @@
      SVG layer, which can't read custom properties). */
   --font-ui: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-  /* Mind's-eye void: two near-blacks a hair apart so the grid stays barely
-     perceptible while the sketch's pieces carry all the light. */
-  --mind-void-light: #101628;
-  --mind-void-dark: #0f1526;
-  --mind-coord-ink: #c8d0e6;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
@@ -207,9 +205,41 @@ body {
    ===================================================================== */
 
 .header {
-  display: flex; align-items: center;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
 .title-block { display: flex; align-items: center; gap: 14px; }
+/* Ghost buttons for present mode: the header's enter-present button and the
+   floating transport's PGN/Exit toggles. The quiet tonal pair and its hover
+   are the transport's (see .ctrl-btn) — shared by selector so the treatment
+   can't drift; only label type, size and shape are local. */
+.present-btn,
+.present-toggle,
+.exit-present-btn {
+  position: relative;
+  border: 0; cursor: pointer;
+  font-family: var(--font-ui);
+  font-weight: 700; letter-spacing: 0;
+  transition: background var(--duration-state), color var(--duration-state);
+}
+/* Hit-area extension: the visual stays small, the hit zone reaches 44 — the
+   convention every sub-44px control here follows (.ctrl-btn, .speed-btn,
+   .upload-btn). */
+.present-btn::before,
+.present-toggle::before,
+.exit-present-btn::before {
+  content: '';
+  position: absolute;
+  inset: -5px -4px;
+}
+.present-toggle::before,
+.exit-present-btn::before { inset: -7px -4px; }
+/* Top-right of the header, enters present mode. */
+.present-btn {
+  flex: 0 0 auto;
+  height: 34px; padding: 0 15px;
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+}
 .logo {
   width: 52px; height: 52px;
   border-radius: 16px;
@@ -303,20 +333,6 @@ body {
 .board-wrap { grid-row: 1; }
 .subtitle-strip { grid-row: 2; }
 
-/* Mind's-eye mode: the board sinks into a near-black void — Board renders
-   only the pieces the script has named; these rules carry the surface. The
-   fill transition is the sink/reveal moment itself. The two void fills are
-   deliberately near-identical: the grid all but disappears, and orientation
-   comes from the coordinates, which swap to a single bright ink. */
-.board .sq--light,
-.board .sq--dark {
-  transition: fill 600ms ease;
-}
-.board--mind .sq--light { fill: var(--mind-void-light); }
-.board--mind .sq--dark { fill: var(--mind-void-dark); }
-.board .board-coords text { transition: fill 600ms ease; }
-.board--mind .board-coords text { fill: var(--mind-coord-ink); }
-
 .subtitle-strip {
   min-height: var(--subtitle-track-height);
   margin-top: calc(-1 * var(--board-seam));
@@ -388,12 +404,20 @@ body {
 .play-btn:hover { transform: scale(1.04); }
 .play-btn:active { transform: scale(0.96); }
 
-.ctrl-btn {
-  width: 36px; height: 36px;
+.ctrl-btn { width: 36px; height: 36px; }
+/* The quiet secondary-control pair: 6% white idle, 12% on hover, pewter ink
+   brightening to chalk. Shared with present mode's ghost buttons. */
+.ctrl-btn,
+.present-btn,
+.present-toggle,
+.exit-present-btn {
   background: var(--tonal-white-06);
   color: var(--color-rim-light-pewter);
 }
-.ctrl-btn:hover { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
+.ctrl-btn:hover,
+.present-btn:hover,
+.present-toggle:hover,
+.exit-present-btn:hover { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
 /* Hit-area extension: visual stays 36, hit zone reaches 44. */
 .ctrl-btn::before {
   content: '';
@@ -642,14 +666,14 @@ body {
    Side panel
    ===================================================================== */
 
-.side-col {
+/* The side panel surface, shared with present mode's move list so the panel
+   wash, rim and radius have one definition and can't drift. Both span the
+   board + subtitle rows: the panel bottom lines up with the subtitle strip's
+   bottom, above the full-width controls bar. */
+.side-col,
+.present-moves {
   grid-column: 2;
-  /* Spans the board + subtitle rows so the panel bottom lines up with the
-     subtitle strip's bottom, above the full-width controls bar. The strip is
-     pulled up by --board-seam, ending that much above its grid track; give
-     the same back here so the two bottom edges stay flush. */
   grid-row: 1 / 3;
-  margin-bottom: var(--board-seam);
   align-self: stretch;
   background: var(--surface-panel);
   border: 1px solid var(--line-soft);
@@ -661,8 +685,13 @@ body {
      subtitle row's auto maximum. */
   contain: size;
   display: flex; flex-direction: column;
-  backdrop-filter: blur(8px);
   box-shadow: inset 0 1px 0 var(--rim-light);
+}
+.side-col {
+  /* The strip is pulled up by --board-seam, ending that much above its grid
+     track; give the same back here so the two bottom edges stay flush. */
+  margin-bottom: var(--board-seam);
+  backdrop-filter: blur(8px);
 }
 @media (max-width: 1380px) {
   .main {
@@ -903,15 +932,24 @@ body {
   font-family: var(--font-mono); font-size: 12.5px;
   color: var(--color-foley-slate); padding-left: 11px;
 }
+/* Move-cell ink, shared with present mode's read-only list. The editor's
+   button resets stay below: .present-mv is a span, and cursor:pointer on it
+   would promise a click that does nothing. */
+.pgn-mv,
+.present-mv {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--color-foley-slate);
+  border-radius: var(--radius-xs);
+}
 .pgn-mv {
   border: 0; background: transparent; cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: 13px; font-weight: 600;
-  color: var(--color-foley-slate);
-  padding: 3px 7px; border-radius: var(--radius-xs);
+  font-size: 13px;
+  padding: 3px 7px;
   transition: background var(--duration-chrome), color var(--duration-chrome);
 }
-.pgn-mv.past { color: var(--color-rim-light-pewter); }
+.pgn-mv.past,
+.present-mv.past { color: var(--color-rim-light-pewter); }
 /* A line the snapshot builder rejected (illegal SAN, bad FEN) is flagged
    inline, not only in the errors band: vermillion ink plus a wavy strand,
    so the broken move is findable at a glance while paused anywhere. */
@@ -922,11 +960,13 @@ body {
   text-underline-offset: 3px;
 }
 /* The hover and current-pill states are shared with variation moves so the
-   signature current-position style can't drift between the two lists. */
+   signature current-position style can't drift; the read-only present list
+   joins the current pill (and .past above), but has no hover. */
 .pgn-mv:hover,
 .pgn-var-mv:hover { background: var(--row-hover-bg); color: var(--color-sodium-chalk); }
 .pgn-mv.current,
-.pgn-var-mv.current {
+.pgn-var-mv.current,
+.present-mv.current {
   background: var(--color-studio-steel-blue);
   color: var(--color-sodium-chalk);
 }
@@ -1302,13 +1342,116 @@ body {
   .controls .speed-group { grid-row: 3; grid-column: 1 / -1; justify-self: center; }
 }
 
+/* =====================================================================
+   Present mode: a distraction-free recording/presentation view. Editing
+   chrome (header, side panel, footer) hides, the board grows and centers,
+   the transport becomes a floating bar that fades out while playback runs
+   and the pointer is idle. Purely a view layer — the board is still fully
+   determined by script + FEN + time.
+   ===================================================================== */
+.app--present .header,
+.app--present .side-col,
+.app--present .footer {
+  display: none;
+}
+/* The board keeps the authored recording size (720px, or the 560px
+   short-desktop fallback via the existing height media query); with the
+   editing chrome gone it simply has more room. Present must NOT introduce a
+   dvh shrink formula on --artifact-fit-width — the recording frame is a fixed
+   authored size and the page scrolls on a short window. That invariant is
+   guarded by scripts/test-regressions.mjs. */
+/* minmax(0, …) rather than a bare track: these selectors outrank the
+   max-width:1380px `1fr` collapse at every width (0,2,0 beats 0,1,0, and media
+   queries add no specificity), so a fixed track would keep demanding 720px on
+   a narrow window — overflowing .main, which body's overflow-x:hidden then
+   center-crops with no scrollbar. The max stays the authored size, so ordinary
+   desktop widths are unchanged; only a window too narrow to seat it shrinks,
+   exactly as edit mode already does via 1fr + .board-wrap's max-width. */
+.app--present .main {
+  grid-template-columns: minmax(0, var(--artifact-fit-width));
+}
+/* With the move list alongside: board at its authored width + narrow panel
+   (~1040px total, narrower than the editor layout that already ships). */
+.app--present-pgn .main {
+  grid-template-columns: minmax(0, var(--artifact-fit-width)) var(--present-pgn-width);
+}
+
+/* Floating transport: fixed, centered near the bottom, out of the grid flow
+   so hiding it never reflows the board. Reuses the same .controls element
+   (single transport), overriding its edit-mode grid with a simple flex bar. */
+.app--present .controls {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  /* Tracks the board it sits under, including the short-viewport fallback —
+     a literal 720px here would outgrow a 560px board. */
+  width: min(var(--artifact-fit-width), 92vw);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  /* Opaque over the animating board so the base .controls backdrop blur can be
+     dropped — a fixed blur over a board that repaints every frame forces the
+     compositor to re-blur on the 60Hz path, exactly while recording. */
+  background: var(--surface-console), var(--color-stagewell-indigo);
+  backdrop-filter: none;
+  transition: opacity var(--duration-state);
+}
+.app--present .timeline { flex: 1; min-width: 0; }
+/* Idle during playback: fade the bar and hide the cursor for a clean frame;
+   any pointer move re-arms the chrome (App toggles .app--idle). */
+.app--idle { cursor: none; }
+.app--idle .controls { opacity: 0; pointer-events: none; }
+
+.present-controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+/* Shared ghost recipe, hover and hit area live with .present-btn in the
+   header block. */
+.present-toggle,
+.exit-present-btn {
+  height: 30px; padding: 0 11px;
+  border-radius: var(--radius-sm);
+  font-size: 11px; text-transform: uppercase;
+}
+.present-toggle[aria-pressed='true'] {
+  background: var(--color-studio-steel-blue);
+  color: var(--color-sodium-chalk);
+}
+
+/* Read-only mainline move list. Takes the shared panel surface (see the
+   .side-col rule); no blur, unlike the editor panel — only the flat app
+   background sits behind it, so the compositor work would buy nothing and
+   this rides beside an animating board during a recording. */
+.present-moves-scroll {
+  width: 100%;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+.present-row {
+  display: grid;
+  grid-template-columns: 34px 1fr 1fr;
+  align-items: baseline;
+  min-height: 32px;
+}
+.present-num {
+  font-family: var(--font-mono);
+  font-size: 12.5px; font-weight: 500;
+  color: var(--color-foley-slate);
+}
+.present-mv {
+  font-size: 15px;
+  padding: 3px 8px;
+  justify-self: start;
+}
+/* .past / .current pill colors are shared with the editor list (see .pgn-mv). */
+
 /* Reduced motion: cut decorative animation, keep functional motion (piece
    slides + arrow draw) but tighten so it's snappier and less attention-grabbing.
    The cinematic hover scale on the play button is decorative; remove it. */
 @media (prefers-reduced-motion: reduce) {
   .play-btn:hover, .play-btn:active { transform: none; }
-  .board .sq--light, .board .sq--dark, .board .board-coords text { transition: none; }
   .marker:hover, .marker:focus-visible { --marker-grow: 1; }
+  .app--present .controls { transition: none; }
   .capture-flash {
     opacity: min(var(--capture-opacity, 0), 0.42);
     transform: scale(1);

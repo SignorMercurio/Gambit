@@ -17,6 +17,8 @@ import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { MoveList } from './components/MoveList';
+import { PresentationMoves } from './components/PresentationMoves';
+import { scrollEviIntoView } from './lib/scrollEventIntoView';
 import {
   planLineInsert,
   planMoveGesture,
@@ -70,11 +72,21 @@ function movePosition(
   positions: Positions,
   mv: Chess.Move,
   t: number,
-): { positions: Positions; captureFlash: Omit<CaptureFlash, 'id'> | null } {
+): {
+  positions: Positions;
+  captureFlash: Omit<CaptureFlash, 'id'> | null;
+  // Every square this move disturbs, in board notation — the mover's two, an
+  // en-passant victim's, and the castling rook's path. Returned here because
+  // this is the one place that already resolves them; the mind's-eye sketch
+  // names exactly these squares (plus the checked king, which is a property of
+  // the resulting position rather than of the move).
+  touched: string[];
+} {
   const out: Positions = {};
   for (const [k, v] of Object.entries(positions)) out[k] = { ...v };
   const [ff, fr] = mv.from;
   const [tf, tr] = mv.to;
+  const touched = [Chess.idxToSq(ff, fr), Chess.idxToSq(tf, tr)];
 
   let moverId: string | null = null;
   for (const [k, v] of Object.entries(out)) {
@@ -88,6 +100,7 @@ function movePosition(
     const capF = tf;
     const capR = mv.enPassant ? fr : tr;
     captureFlash = { f: capF, r: capR, t };
+    touched.push(Chess.idxToSq(capF, capR));
     for (const [k, v] of Object.entries(out)) {
       if (k === moverId) continue;
       if (!v.captured && v.f === capF && v.r === capR) {
@@ -111,6 +124,7 @@ function movePosition(
     const homeRank = tr;
     const rookFromF = mv.castle === 'K' ? 7 : 0;
     const rookToF = mv.castle === 'K' ? 5 : 3;
+    touched.push(Chess.idxToSq(rookFromF, homeRank), Chess.idxToSq(rookToF, homeRank));
     for (const [k, v] of Object.entries(out)) {
       if (!v.captured && v.f === rookFromF && v.r === homeRank && v.type === 'r') {
         out[k] = {
@@ -124,7 +138,7 @@ function movePosition(
       }
     }
   }
-  return { positions: out, captureFlash };
+  return { positions: out, captureFlash, touched };
 }
 
 function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
@@ -157,7 +171,12 @@ const DRAFT_KEYS = {
   subtitles: 'gambit:draft:subtitles',
   fen: 'gambit:draft:start-fen',
   scriptView: 'gambit:draft:script-view',
+  presentPgn: 'gambit:draft:present-pgn',
 } as const;
+
+// Idle timeout before present-mode chrome (floating transport + cursor) fades
+// out during playback, video-player style.
+const PRESENT_IDLE_MS = 2000;
 
 const SCRIPT_CHANGED_DURING_GESTURE_ERROR =
   'Cannot record this gesture because the script changed while the pointer was held. Try again from the updated position.';
@@ -308,6 +327,16 @@ export default function App() {
   // the fallback for comments and exotic edits. Persisted like the drafts.
   const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'moves');
   const scriptView: 'moves' | 'text' = scriptViewRaw === 'text' ? 'text' : 'moves';
+  // Present mode: a distraction-free view for screen recording. The editing
+  // chrome (header, side panel, footer) hides and the board grows; an optional
+  // read-only mainline PGN can ride alongside. Purely a view flag — the board
+  // stays determined by script + FEN + time.
+  const [present, setPresent] = useState(false);
+  const [presentPgnRaw, setPresentPgn] = useDraftText(DRAFT_KEYS.presentPgn, '0');
+  const presentPgn = presentPgnRaw === '1';
+  // Chrome (floating transport + cursor) fades out while present + playing +
+  // pointer idle; any pointer move brings it back.
+  const [chromeHidden, setChromeHidden] = useState(false);
   const scriptTextRef = useLatest(scriptText);
   // The pause-landing rule must follow the transport state at release, not
   // the pointer-down snapshot: playback can flip mid-drag (Space, auto-pause
@@ -563,8 +592,10 @@ export default function App() {
       lastCapture = null;
       check = checkAt(setup.chessState, t);
       // A position reset empties the sketch: the narrator starts over in the
-      // dark. The mode itself persists — only `reveal` lifts it.
-      if (mind) mind = { since: t, touches: new Map() };
+      // dark. The mode itself persists — only `reveal` lifts it — so `since`
+      // carries over untouched: it times the sink, and restarting it here
+      // would flash the board back to the lit palette on an empty position.
+      if (mind) mind = { since: mind.since, touches: new Map() };
     };
     const snapshot = (): WorldSnap => ({
       positions,
@@ -642,8 +673,10 @@ export default function App() {
           }
           case 'mind':
             // Entering the mind's eye starts an empty sketch — the board
-            // sinks into darkness and only named squares resurface.
-            mind = { since: ev.t, touches: new Map() };
+            // sinks into darkness and only named squares resurface. Re-entering
+            // while already dark clears the sketch but keeps the original
+            // `since`: the sink is a phase clock, not a per-sketch one.
+            mind = { since: mind ? mind.since : ev.t, touches: new Map() };
             break;
           case 'reveal':
             if (mind) {
@@ -669,18 +702,9 @@ export default function App() {
                 annotation: ev.annotation,
               };
               if (moved.captureFlash) lastCapture = { ...moved.captureFlash, id: `${ev.line}` };
-              // A move names everything it disturbs into the sketch: both of
-              // its squares, an en-passant victim's square, the castling
-              // rook's path, and the king a check lights up.
-              touch(
-                ev.t,
-                Chess.idxToSq(mv.from[0], mv.from[1]),
-                Chess.idxToSq(mv.to[0], mv.to[1]),
-                moved.captureFlash ? Chess.idxToSq(moved.captureFlash.f, moved.captureFlash.r) : null,
-                mv.castle ? Chess.idxToSq(mv.castle === 'K' ? 7 : 0, mv.from[1]) : null,
-                mv.castle ? Chess.idxToSq(mv.castle === 'K' ? 5 : 3, mv.from[1]) : null,
-                check ? check.sq : null,
-              );
+              // A move names everything it disturbs into the sketch, plus the
+              // king a check lights up.
+              touch(ev.t, ...moved.touched, check?.sq);
             }
             break;
           }
@@ -906,6 +930,39 @@ export default function App() {
     }
   }, [duration]);
 
+  const enterPresent = useCallback(() => setPresent(true), []);
+  const exitPresent = useCallback(() => setPresent(false), []);
+  const togglePresentPgn = useCallback(
+    () => setPresentPgn((v) => (v === '1' ? '0' : '1')),
+    [setPresentPgn],
+  );
+
+  // Present-mode chrome auto-hide: fade the floating transport and cursor
+  // after the pointer is idle during playback; any pointer move brings them
+  // back. Re-arms on play/pause so pausing always reveals the chrome. The
+  // pointer handler fires at sample rate during a recording, so it dispatches
+  // only on a real reveal — the board is already re-rendering every frame, and
+  // a redundant setState here would schedule a second pass on top of it.
+  const chromeHiddenRef = useLatest(chromeHidden);
+  useEffect(() => {
+    if (!present) {
+      setChromeHidden(false);
+      return;
+    }
+    let timer = 0;
+    const arm = () => {
+      if (chromeHiddenRef.current) setChromeHidden(false);
+      window.clearTimeout(timer);
+      if (playing) timer = window.setTimeout(() => setChromeHidden(true), PRESENT_IDLE_MS);
+    };
+    arm();
+    window.addEventListener('pointermove', arm, { passive: true });
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointermove', arm);
+    };
+  }, [present, playing, chromeHiddenRef]);
+
   // The one transport keymap (Space toggle, ←/→ ±1s), shared by the global
   // shortcut listener and the scrub input's handler so the two can't drift
   // from each other or from the footer's documentation. Returns whether the
@@ -931,6 +988,15 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // Escape leaves present mode from anywhere — the chrome that would host
+      // an Exit button may be faded out, so the key must always work. Not
+      // guarded on `present`: leaving it out of the deps keeps this listener
+      // from re-subscribing on every toggle, and exiting when already out is
+      // a no-op.
+      if (e.key === 'Escape') {
+        setPresent(false);
+        return;
+      }
       if (isInteractiveShortcutTarget(e.target)) return;
       // Space scrolls the page by default; the arrows keep their native
       // scroll behavior at window level.
@@ -980,6 +1046,7 @@ export default function App() {
 
   useEffect(() => {
     if (!playing || followPausedRef.current) return;
+    // Null in present mode, where the panel is unmounted — no mode flag needed.
     const list = editListRef.current;
     if (!list) return;
     if (reachedEventIndex < 0) {
@@ -987,16 +1054,8 @@ export default function App() {
       return;
     }
     // The PGN list nests event elements, so the reached event is located by
-    // its data-evi attribute rather than by child index.
-    const row = list.querySelector<HTMLElement>(`[data-evi="${reachedEventIndex}"]`);
-    if (!row) return;
-    const listRect = list.getBoundingClientRect();
-    const rowRect = row.getBoundingClientRect();
-    if (rowRect.top < listRect.top) {
-      list.scrollTop += rowRect.top - listRect.top;
-    } else if (rowRect.bottom > listRect.bottom) {
-      list.scrollTop += rowRect.bottom - listRect.bottom;
-    }
+    // its data-evi attribute (shared helper); playback/hover gating is above.
+    scrollEviIntoView(list, reachedEventIndex);
   }, [reachedEventIndex, playing, tab, scriptView]);
 
   const playState: 'play' | 'pause' | 'replay' = playing
@@ -1110,7 +1169,16 @@ export default function App() {
   ]);
 
   return (
-    <div className="app">
+    <div
+      className={[
+        'app',
+        present && 'app--present',
+        present && presentPgn && 'app--present-pgn',
+        present && chromeHidden && 'app--idle',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {/* Narration track: invisible, driven entirely by the playback clock. */}
       {narration && <audio ref={audioRef} src={narration.url} preload="auto" />}
       <header className="header">
@@ -1123,6 +1191,14 @@ export default function App() {
             <div className="app-sub">Chess timeline renderer</div>
           </div>
         </div>
+        <button
+          type="button"
+          className="present-btn"
+          onClick={enterPresent}
+          aria-label="Enter present mode"
+        >
+          Present
+        </button>
       </header>
 
       <main className="main">
@@ -1137,7 +1213,7 @@ export default function App() {
             mind={world.mind}
             revealedAt={world.revealedAt}
             time={time}
-            interactive={tab === 'script'}
+            interactive={tab === 'script' && !present}
             legalTargets={legalTargets}
             onMoveGesture={onMoveGesture}
             onArrowGesture={onArrowGesture}
@@ -1261,229 +1337,270 @@ export default function App() {
                 </button>
               ))}
             </div>
+
+            {/* Present-only controls: they ride the floating transport, so
+               they auto-hide with the rest of the chrome during recording. */}
+            {present && (
+              <div className="present-controls">
+                <button
+                  type="button"
+                  className="present-toggle"
+                  aria-pressed={presentPgn}
+                  onClick={togglePresentPgn}
+                  aria-label="Toggle move list"
+                >
+                  PGN
+                </button>
+                <button
+                  type="button"
+                  className="exit-present-btn"
+                  onClick={exitPresent}
+                  aria-label="Exit present mode (Escape)"
+                >
+                  Exit
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        <aside className="side-col">
-          <div
-            className="mode-tabs"
-            role="tablist"
-            aria-orientation="horizontal"
-            aria-label="Side panel mode"
-            onKeyDown={onTabKeyDown}
-          >
-            <button
-              type="button"
-              role="tab"
-              id={scriptTabId}
-              aria-controls={panelId}
-              aria-selected={tab === 'script'}
-              tabIndex={tab === 'script' ? 0 : -1}
-              ref={scriptTabRef}
-              className="tab-btn"
-              onClick={() => setTab('script')}
+        {present && presentPgn && (
+          <PresentationMoves
+            events={events}
+            states={moveStates}
+            reachedEventIndex={reachedEventIndex}
+          />
+        )}
+
+        {/* Unmounted rather than hidden in present mode: display:none would
+           keep the whole editor — including MoveList, which rebuilds at every
+           event crossing — reconciling on the 60Hz recording path for a panel
+           nobody can see. Nothing is lost; script, subtitles, FEN and the file
+           names are all App state. */}
+        {!present && (
+          <aside className="side-col">
+            <div
+              className="mode-tabs"
+              role="tablist"
+              aria-orientation="horizontal"
+              aria-label="Side panel mode"
+              onKeyDown={onTabKeyDown}
             >
-              Script
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id={setupTabId}
-              aria-controls={panelId}
-              aria-selected={tab === 'setup'}
-              tabIndex={tab === 'setup' ? 0 : -1}
-              ref={setupTabRef}
-              className="tab-btn"
-              onClick={() => setTab('setup')}
+              <button
+                type="button"
+                role="tab"
+                id={scriptTabId}
+                aria-controls={panelId}
+                aria-selected={tab === 'script'}
+                tabIndex={tab === 'script' ? 0 : -1}
+                ref={scriptTabRef}
+                className="tab-btn"
+                onClick={() => setTab('script')}
+              >
+                Script
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id={setupTabId}
+                aria-controls={panelId}
+                aria-selected={tab === 'setup'}
+                tabIndex={tab === 'setup' ? 0 : -1}
+                ref={setupTabRef}
+                className="tab-btn"
+                onClick={() => setTab('setup')}
+              >
+                Setup
+              </button>
+            </div>
+            {/* One tabpanel shell for both pages: the ARIA wiring and the
+               errors-stay-visible rule live here once, not per page. */}
+            <div
+              className="editor"
+              role="tabpanel"
+              id={panelId}
+              aria-labelledby={tab === 'script' ? scriptTabId : setupTabId}
             >
-              Setup
-            </button>
-          </div>
-          {/* One tabpanel shell for both pages: the ARIA wiring and the
-             errors-stay-visible rule live here once, not per page. */}
-          <div
-            className="editor"
-            role="tabpanel"
-            id={panelId}
-            aria-labelledby={tab === 'script' ? scriptTabId : setupTabId}
-          >
-            {tab === 'script' ? (
-              <>
-              <div className="panel-header">
-                <div className="panel-title-row">
-                  <h2 className="panel-title" id={editorLabelId}>Script</h2>
-                  <div className="subtitle-actions">
-                    <div className="view-toggle" role="group" aria-label="Script view mode">
-                      <button
-                        type="button"
-                        className="view-btn"
-                        aria-pressed={scriptView === 'moves'}
-                        onClick={() => setScriptView('moves')}
-                      >
-                        Moves
-                      </button>
-                      <button
-                        type="button"
-                        className="view-btn"
-                        aria-pressed={scriptView === 'text'}
-                        onClick={() => setScriptView('text')}
-                      >
-                        Text
-                      </button>
-                    </div>
-                    {scriptFileName && <span className="subtitle-file">{scriptFileName}</span>}
-                    {gestureUndo != null && (
-                      <button
-                        type="button"
-                        className="upload-btn"
-                        aria-label="Undo last board edit"
-                        onClick={undoGestureLine}
-                      >
-                        Undo
-                      </button>
-                    )}
-                    <ImportButton
-                      id={scriptFileInputId}
-                      accept=".gambit,.txt,text/plain"
-                      label="Import script file"
-                      onChange={onScriptFileChange}
-                    />
-                  </div>
-                </div>
-                {/* One hint per view: syntax belongs to Text, gestures to Moves. */}
-                {scriptView === 'text' ? (
-                  <p className="panel-hint">
-                    [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · fen · br / ml
-                  </p>
-                ) : (
-                  <p className="panel-hint">
-                    Drag to move · right-drag arrow · right-click highlight
-                  </p>
-                )}
-              </div>
-              {scriptView === 'moves' ? (
-                <MoveList
-                  events={events}
-                  states={moveStates}
-                  reachedEventIndex={reachedEventIndex}
-                  errorLines={errorLines}
-                  onSeek={seekEvent}
-                  listRef={editListRef}
-                  labelId={editorLabelId}
-                  onRetime={onRetimeEvent}
-                  onDelete={onDeleteEvents}
-                  onPointerEnter={pauseFollowOnHover}
-                  onPointerLeave={resumeFollowOnLeave}
-                />
-              ) : (
-                <textarea
-                  id="script-text"
-                  className="script-textarea"
-                  spellCheck={false}
-                  value={scriptText}
-                  aria-labelledby={editorLabelId}
-                  onChange={(e) => {
-                    setScriptText(e.target.value);
-                    setScriptFileName(null);
-                    // A hand edit invalidates the gesture-undo snapshot: undoing
-                    // past it would silently revert the user's typing too.
-                    setGestureUndo(null);
-                    setScriptEditError(null);
-                  }}
-                />
-              )}
-              </>
-            ) : (
-              <>
-              <div className="panel-header">
-                <div className="panel-title-row">
-                  <h2 className="panel-title">Setup</h2>
-                </div>
-              </div>
-              <div className="fen-field">
-                <label htmlFor="start-fen">Start FEN</label>
-                <input
-                  id="start-fen"
-                  type="text"
-                  spellCheck={false}
-                  value={fenText}
-                  aria-invalid={initialSetup.error ? true : undefined}
-                  aria-describedby={initialSetup.error ? fenErrorId : undefined}
-                  aria-errormessage={initialSetup.error ? fenErrorId : undefined}
-                  onChange={(e) => setFenText(e.target.value)}
-                />
-              </div>
-              <section className="subtitle-editor grow" aria-labelledby={subtitleLabelId}>
-                <div className="subtitle-editor-head">
-                  <label id={subtitleLabelId} htmlFor="subtitle-text">Subtitles</label>
-                  <div className="subtitle-actions">
-                    {subtitleFileName && <span className="subtitle-file">{subtitleFileName}</span>}
-                    <ImportButton
-                      id={subtitleFileInputId}
-                      accept=".srt,text/plain"
-                      label="Import subtitle file"
-                      onChange={onSubtitleFileChange}
-                    />
-                  </div>
-                </div>
-                <textarea
-                  id="subtitle-text"
-                  className="subtitle-textarea"
-                  spellCheck={false}
-                  value={subtitleText}
-                  onChange={(e) => {
-                    setSubtitleText(e.target.value);
-                    setSubtitleFileName(null);
-                  }}
-                  placeholder={'1\n00:00:01,000 --> 00:00:04,000\nCentral control is established.'}
-                />
-              </section>
-              <section className="subtitle-editor" aria-labelledby={narrationLabelId}>
-                <div className="subtitle-editor-head">
-                  <label id={narrationLabelId} htmlFor={narrationFileInputId}>Narration audio</label>
-                  <div className="subtitle-actions">
-                    {narration && (
-                      <>
-                        <span className="subtitle-file">{narration.name}</span>
-                        {/* Duration outside the truncating span: metrics never
-                           tail-truncate into an ellipsis. */}
-                        <span className="narration-duration">
-                          {fmtTime(narration.duration, 'always')}
-                        </span>
+              {tab === 'script' ? (
+                <>
+                <div className="panel-header">
+                  <div className="panel-title-row">
+                    <h2 className="panel-title" id={editorLabelId}>Script</h2>
+                    <div className="subtitle-actions">
+                      <div className="view-toggle" role="group" aria-label="Script view mode">
+                        <button
+                          type="button"
+                          className="view-btn"
+                          aria-pressed={scriptView === 'moves'}
+                          onClick={() => setScriptView('moves')}
+                        >
+                          Moves
+                        </button>
+                        <button
+                          type="button"
+                          className="view-btn"
+                          aria-pressed={scriptView === 'text'}
+                          onClick={() => setScriptView('text')}
+                        >
+                          Text
+                        </button>
+                      </div>
+                      {scriptFileName && <span className="subtitle-file">{scriptFileName}</span>}
+                      {gestureUndo != null && (
                         <button
                           type="button"
                           className="upload-btn"
-                          aria-label="Remove narration audio"
-                          onClick={clearNarration}
+                          aria-label="Undo last board edit"
+                          onClick={undoGestureLine}
                         >
-                          Remove
+                          Undo
                         </button>
-                      </>
-                    )}
-                    <ImportButton
-                      id={narrationFileInputId}
-                      accept="audio/*"
-                      label="Import narration audio file"
-                      describedBy={narrationError ? narrationErrorId : undefined}
-                      onChange={onNarrationFileChange}
-                    />
+                      )}
+                      <ImportButton
+                        id={scriptFileInputId}
+                        accept=".gambit,.txt,text/plain"
+                        label="Import script file"
+                        onChange={onScriptFileChange}
+                      />
+                    </div>
+                  </div>
+                  {/* One hint per view: syntax belongs to Text, gestures to Moves. */}
+                  {scriptView === 'text' ? (
+                    <p className="panel-hint">
+                      [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · fen · br / ml
+                    </p>
+                  ) : (
+                    <p className="panel-hint">
+                      Drag to move · right-drag arrow · right-click highlight
+                    </p>
+                  )}
+                </div>
+                {scriptView === 'moves' ? (
+                  <MoveList
+                    events={events}
+                    states={moveStates}
+                    reachedEventIndex={reachedEventIndex}
+                    errorLines={errorLines}
+                    onSeek={seekEvent}
+                    listRef={editListRef}
+                    labelId={editorLabelId}
+                    onRetime={onRetimeEvent}
+                    onDelete={onDeleteEvents}
+                    onPointerEnter={pauseFollowOnHover}
+                    onPointerLeave={resumeFollowOnLeave}
+                  />
+                ) : (
+                  <textarea
+                    id="script-text"
+                    className="script-textarea"
+                    spellCheck={false}
+                    value={scriptText}
+                    aria-labelledby={editorLabelId}
+                    onChange={(e) => {
+                      setScriptText(e.target.value);
+                      setScriptFileName(null);
+                      // A hand edit invalidates the gesture-undo snapshot: undoing
+                      // past it would silently revert the user's typing too.
+                      setGestureUndo(null);
+                      setScriptEditError(null);
+                    }}
+                  />
+                )}
+                </>
+              ) : (
+                <>
+                <div className="panel-header">
+                  <div className="panel-title-row">
+                    <h2 className="panel-title">Setup</h2>
                   </div>
                 </div>
-                <p className="panel-hint narration-hint">
-                  Follows the timeline. Session-only; re-import after a reload.
-                </p>
-              </section>
-              </>
-            )}
-            {errorsBlock}
-          </div>
-        </aside>
+                <div className="fen-field">
+                  <label htmlFor="start-fen">Start FEN</label>
+                  <input
+                    id="start-fen"
+                    type="text"
+                    spellCheck={false}
+                    value={fenText}
+                    aria-invalid={initialSetup.error ? true : undefined}
+                    aria-describedby={initialSetup.error ? fenErrorId : undefined}
+                    aria-errormessage={initialSetup.error ? fenErrorId : undefined}
+                    onChange={(e) => setFenText(e.target.value)}
+                  />
+                </div>
+                <section className="subtitle-editor grow" aria-labelledby={subtitleLabelId}>
+                  <div className="subtitle-editor-head">
+                    <label id={subtitleLabelId} htmlFor="subtitle-text">Subtitles</label>
+                    <div className="subtitle-actions">
+                      {subtitleFileName && <span className="subtitle-file">{subtitleFileName}</span>}
+                      <ImportButton
+                        id={subtitleFileInputId}
+                        accept=".srt,text/plain"
+                        label="Import subtitle file"
+                        onChange={onSubtitleFileChange}
+                      />
+                    </div>
+                  </div>
+                  <textarea
+                    id="subtitle-text"
+                    className="subtitle-textarea"
+                    spellCheck={false}
+                    value={subtitleText}
+                    onChange={(e) => {
+                      setSubtitleText(e.target.value);
+                      setSubtitleFileName(null);
+                    }}
+                    placeholder={'1\n00:00:01,000 --> 00:00:04,000\nCentral control is established.'}
+                  />
+                </section>
+                <section className="subtitle-editor" aria-labelledby={narrationLabelId}>
+                  <div className="subtitle-editor-head">
+                    <label id={narrationLabelId} htmlFor={narrationFileInputId}>Narration audio</label>
+                    <div className="subtitle-actions">
+                      {narration && (
+                        <>
+                          <span className="subtitle-file">{narration.name}</span>
+                          {/* Duration outside the truncating span: metrics never
+                             tail-truncate into an ellipsis. */}
+                          <span className="narration-duration">
+                            {fmtTime(narration.duration, 'always')}
+                          </span>
+                          <button
+                            type="button"
+                            className="upload-btn"
+                            aria-label="Remove narration audio"
+                            onClick={clearNarration}
+                          >
+                            Remove
+                          </button>
+                        </>
+                      )}
+                      <ImportButton
+                        id={narrationFileInputId}
+                        accept="audio/*"
+                        label="Import narration audio file"
+                        describedBy={narrationError ? narrationErrorId : undefined}
+                        onChange={onNarrationFileChange}
+                      />
+                    </div>
+                  </div>
+                  <p className="panel-hint narration-hint">
+                    Follows the timeline. Session-only; re-import after a reload.
+                  </p>
+                </section>
+                </>
+              )}
+              {errorsBlock}
+            </div>
+          </aside>
+        )}
       </main>
 
-      <footer className="footer">
-        <span>Space play/pause · ←/→ ±1s · Click event or marker to seek</span>
-        <span> · Staunty pieces by sadsnake1 (CC BY-NC-SA 4.0)</span>
-      </footer>
+      {!present && (
+        <footer className="footer">
+          <span>Space play/pause · ←/→ ±1s · Click event or marker to seek</span>
+          <span> · Staunty pieces by sadsnake1 (CC BY-NC-SA 4.0)</span>
+        </footer>
+      )}
     </div>
   );
 }

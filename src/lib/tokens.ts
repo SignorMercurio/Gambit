@@ -10,6 +10,15 @@ export const tokens = {
   coordOnLight: '#5d8fc9',
   coordOnDark: '#f1ecde',
 
+  // Mind's-eye void: what the squares sink to between `mind` and `reveal`.
+  // The pair is near-identical on purpose — the grid all but disappears and
+  // orientation moves to the coordinates, which swap to one bright ink
+  // (rim-light-pewter). JS-only, unlike the surface colors above: the sink is
+  // derived from the playback clock, so it cannot be a CSS transition.
+  mindVoidLight: '#101628',
+  mindVoidDark: '#0f1526',
+  mindCoordInk: '#c8d0e6',
+
   // Board overlays. Last-move amber needs per-square-color alphas: too low
   // and the mix desaturates until it stops reading as amber — on blue squares
   // below ~0.52, on cream squares below ~0.42 (0.32 drifted toward a pale

@@ -18,6 +18,8 @@ try {
     { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
     { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
     { syncRovingTabStops },
+    { buildMainline },
+    { mindSink },
     Chess,
     styles,
   ] = await Promise.all([
@@ -25,6 +27,8 @@ try {
     vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
     vite.ssrLoadModule('/src/lib/boardGesture.ts'),
     vite.ssrLoadModule('/src/components/useRovingTabIndex.ts'),
+    vite.ssrLoadModule('/src/components/PresentationMoves.tsx'),
+    vite.ssrLoadModule('/src/components/Board.tsx'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
   ]);
@@ -193,6 +197,31 @@ try {
     { text: '[00:02] hl d4\n[00:03] hl e4', line: 2 },
   );
 
+  // Present mode's mainline walk must close its pending row at a reset. The
+  // fullmove counters on either side of one routinely coincide (most FENs are
+  // fullmove 1), so pairing on the number alone glued a post-reset Black move
+  // into the pre-reset White move's row.
+  const presRows = buildMainline(
+    [
+      { kind: 'move', san: 'e4', t: 1, line: 1 },
+      { kind: 'reset', t: 2, line: 2 },
+      { kind: 'move', san: 'Nc6', t: 3, line: 3 },
+    ],
+    [
+      { turn: 'w', fullmove: 1 },
+      { turn: 'w', fullmove: 1 },
+      { turn: 'b', fullmove: 1 },
+    ],
+  );
+  assert.deepEqual(
+    presRows.map((r) => [r.num, r.white?.text ?? null, r.black?.text ?? null]),
+    [
+      [1, 'e4', null],
+      [1, null, 'Nc6'],
+    ],
+    'a reset must start a new row instead of pairing across it',
+  );
+
   const rovingControls = [{ tabIndex: 0 }, { tabIndex: 0 }, { tabIndex: 0 }];
   assert.equal(syncRovingTabStops(rovingControls, 1), 1);
   assert.deepEqual(
@@ -212,6 +241,31 @@ try {
     /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
   );
   assert.doesNotMatch(styles, /--artifact-fit-width:[^;]*100dvh/);
+
+  // The mind's-eye void is derived from the playback clock, never animated by
+  // CSS: a transition runs on wall time, so a paused scrub across `mind` would
+  // render a frame that depends on how the playhead arrived rather than on
+  // script + FEN + time. Assert the ramp itself — same inputs, same depth.
+  const mindAt = (t) => mindSink({ since: 10, touches: new Map() }, Number.NEGATIVE_INFINITY, t);
+  assert.equal(mindAt(10), 0, 'the void starts lit at the mind event');
+  assert.equal(mindAt(10.6), 1, 'and is fully sunk one ramp later');
+  assert.equal(mindAt(999), 1, 'and stays sunk for the rest of the phase');
+  assert.equal(mindAt(10.3), mindAt(10.3), 'the mid-ramp depth is a pure function of time');
+  assert.ok(mindAt(10.3) > 0 && mindAt(10.3) < 1);
+  // A reset inside mind mode empties the sketch but must not re-sink the
+  // board: `since` is the phase clock, so the depth stays saturated.
+  assert.equal(mindAt(20), 1, 'a later frame in the same phase is still fully dark');
+  // Mirrored on the way out, and saturated for scripts that never darken.
+  assert.equal(mindSink(null, 5, 5), 1, 'reveal starts from the fully sunk void');
+  assert.equal(mindSink(null, 5, 5.6), 0, 'and lifts over the same ramp');
+  assert.equal(mindSink(null, Number.NEGATIVE_INFINITY, 0), 0, 'never-darkened boards are lit');
+
+  // One cheap smoke check that the CSS shortcut has not come back.
+  assert.doesNotMatch(
+    styles,
+    /\.board--mind/,
+    'mind mode must not re-grow a CSS fill swap — the void is derived from the clock',
+  );
 } finally {
   await vite.close();
 }

@@ -12,7 +12,7 @@
 // to board state directly.
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import type { Side } from '../lib/chess';
+import type { MoveState, Side } from '../lib/chess';
 import {
   eventBody,
   fmtDeci,
@@ -64,8 +64,6 @@ type Block =
   | { type: 'divider'; i: number; t: number; line: number; body: string }
   | { type: 'error'; i: number; t: number; line: number; text: string }
   | { type: 'marks'; marks: Mark[] };
-
-type MoveState = { fullmove: number; turn: Side };
 
 // Walk the (time-sorted) event stream into render blocks. Mainline moves
 // accumulate into rows; a top-level `br` opens a variation flow that closes

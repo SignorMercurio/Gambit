@@ -16,6 +16,11 @@ export type GameState = {
   fullmove: number;
 };
 
+// A move's numbering snapshot — the side to move and the fullmove counter at
+// that event. Shared by the two move lists (editor MoveList + PresentationMoves)
+// so the row-numbering type has one definition.
+export type MoveState = Pick<GameState, 'fullmove' | 'turn'>;
+
 export type Move = {
   from: [number, number];
   to: [number, number];
