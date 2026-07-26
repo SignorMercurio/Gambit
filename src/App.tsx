@@ -579,7 +579,19 @@ export default function App() {
       if (!mind) return;
       const touches = new Map(mind.touches);
       for (const sq of sqs) if (sq) touches.set(sq, t);
-      mind = { since: mind.since, touches };
+      mind = { since: mind.since, touches, held: mind.held };
+    };
+
+    // The same, for a move — which additionally holds its squares at full
+    // strength until the next move takes over. Naming the outgoing ones on the
+    // way through is what makes that handover a fade: they start forgetting the
+    // instant they stop being the move on the board, instead of popping out.
+    const nameMove = (t: number, ...sqs: (string | null | undefined)[]) => {
+      if (!mind) return;
+      touch(t, ...mind.held, ...sqs);
+      const held = new Set<string>();
+      for (const sq of sqs) if (sq) held.add(sq);
+      mind = { since: mind.since, touches: mind.touches, held };
     };
 
     const list: WorldSnap[] = [];
@@ -595,7 +607,7 @@ export default function App() {
       // dark. The mode itself persists — only `reveal` lifts it — so `since`
       // carries over untouched: it times the sink, and restarting it here
       // would flash the board back to the lit palette on an empty position.
-      if (mind) mind = { since: mind.since, touches: new Map() };
+      if (mind) mind = { since: mind.since, touches: new Map(), held: new Set() };
     };
     const snapshot = (): WorldSnap => ({
       positions,
@@ -676,7 +688,7 @@ export default function App() {
             // sinks into darkness and only named squares resurface. Re-entering
             // while already dark clears the sketch but keeps the original
             // `since`: the sink is a phase clock, not a per-sketch one.
-            mind = { since: mind ? mind.since : ev.t, touches: new Map() };
+            mind = { since: mind ? mind.since : ev.t, touches: new Map(), held: new Set() };
             break;
           case 'reveal':
             if (mind) {
@@ -703,8 +715,8 @@ export default function App() {
               };
               if (moved.captureFlash) lastCapture = { ...moved.captureFlash, id: `${ev.line}` };
               // A move names everything it disturbs into the sketch, plus the
-              // king a check lights up.
-              touch(ev.t, ...moved.touched, check?.sq);
+              // king a check lights up, and holds them until the next move.
+              nameMove(ev.t, ...moved.touched, check?.sq);
             }
             break;
           }

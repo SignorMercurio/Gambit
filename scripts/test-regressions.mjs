@@ -19,7 +19,7 @@ try {
     { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
     { syncRovingTabStops },
     { buildMainline },
-    { mindSink },
+    { mindPieceStrength, mindSink },
     Chess,
     styles,
   ] = await Promise.all([
@@ -246,7 +246,8 @@ try {
   // CSS: a transition runs on wall time, so a paused scrub across `mind` would
   // render a frame that depends on how the playhead arrived rather than on
   // script + FEN + time. Assert the ramp itself — same inputs, same depth.
-  const mindAt = (t) => mindSink({ since: 10, touches: new Map() }, Number.NEGATIVE_INFINITY, t);
+  const mindAt = (t) =>
+    mindSink({ since: 10, touches: new Map(), held: new Set() }, Number.NEGATIVE_INFINITY, t);
   assert.equal(mindAt(10), 0, 'the void starts lit at the mind event');
   assert.equal(mindAt(10.6), 1, 'and is fully sunk one ramp later');
   assert.equal(mindAt(999), 1, 'and stays sunk for the rest of the phase');
@@ -259,6 +260,16 @@ try {
   assert.equal(mindSink(null, 5, 5), 1, 'reveal starts from the fully sunk void');
   assert.equal(mindSink(null, 5, 5.6), 0, 'and lifts over the same ramp');
   assert.equal(mindSink(null, Number.NEGATIVE_INFINITY, 0), 0, 'never-darkened boards are lit');
+
+  // Gaps between moves (4–12s in a real script) outlast the forgetting curve,
+  // so the move on the board is rehearsed: its squares hold at full strength
+  // until the next move takes over, while everything else fades to nothing.
+  const sketch = { touches: new Map([['e4', 10]]), rehearsed: new Set(['e4']) };
+  assert.equal(mindPieceStrength(sketch, 'e4', 19), 1, 'the move on the board is never forgotten');
+  const stale = { touches: new Map([['e4', 10]]), rehearsed: new Set() };
+  assert.equal(mindPieceStrength(stale, 'e4', 10), 1, 'a freshly named square is at full strength');
+  assert.equal(mindPieceStrength(stale, 'e4', 19), 0, 'and is gone once nothing restates it');
+  assert.equal(mindPieceStrength(stale, 'd4', 10), 0, 'squares the script never named stay dark');
 
   // One cheap smoke check that the CSS shortcut has not come back.
   assert.doesNotMatch(

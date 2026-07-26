@@ -31,7 +31,13 @@ const BADGE_IN_DURATION = 0.18;
 // named (`touches`: square → last-named time) render pieces; the rest of the
 // board sinks into the void. Derived entirely from events + time in App's
 // snapshot walk, so it restores across br/ml like every other board state.
-export type MindWorld = { since: number; touches: ReadonlyMap<string, number> };
+export type MindWorld = {
+  since: number;
+  touches: ReadonlyMap<string, number>;
+  // Squares named by the move currently on the board, held at full strength
+  // until the next move takes over.
+  held: ReadonlySet<string>;
+};
 
 type BoardProps = {
   positions: Record<string, PiecePos>;
@@ -220,10 +226,12 @@ function pieceVisual(p: PiecePos, time: number) {
 
 // Mind's-eye visibility: what isn't rehearsed is forgotten. A freshly named
 // square renders its piece at full strength, then fades to nothing on a
-// forgetting curve — unless the square is actively tracked: a lit highlight
-// (the pinned alarm) or a live check IS the rehearsal, so those pieces hold
-// at full strength for as long as the overlay lasts. Arrows keep only their
-// own light — a pinned attack line can outlive the memory of the attacker.
+// forgetting curve — unless the square is actively tracked: the move on the
+// board, a lit highlight (the pinned alarm), or a live check IS the rehearsal,
+// so those pieces hold at full strength for as long as it lasts. The forget
+// window is shorter than a typical gap between moves, so without the move
+// hold the board would empty out between them. Arrows keep only their own
+// light — a pinned attack line can outlive the memory of the attacker.
 // After `reveal`, the full board fades up from darkness.
 const MIND_FRESH_S = 1.5;
 const MIND_FORGET_S = 3;
@@ -247,7 +255,7 @@ export function mindSink(mind: MindWorld | null, revealedAt: number, time: numbe
 // it and no empty-set stand-in is needed.
 type MindFrame = { touches: ReadonlyMap<string, number>; rehearsed: ReadonlySet<string> };
 
-function mindPieceStrength(frame: MindFrame, sq: string, time: number): number {
+export function mindPieceStrength(frame: MindFrame, sq: string, time: number): number {
   if (frame.rehearsed.has(sq)) return 1;
   const touched = frame.touches.get(sq);
   if (touched == null) return 0;
@@ -643,13 +651,17 @@ export function Board({
     if (opacity > 0) litHighlights.push({ h, age, opacity });
   }
 
-  // While dark, squares under a lit highlight or a live check are being
-  // rehearsed by the alarm itself, so their pieces resist the forgetting curve
-  // for as long as the overlay lasts. Arrows deliberately hold nothing — the
-  // attack line persists while its endpoints fade.
+  // While dark, the move on the board and the squares under a lit highlight or
+  // a live check are being rehearsed — by the narration or by the alarm itself
+  // — so their pieces resist the forgetting curve for as long as that lasts.
+  // Only the move hold has a release: App names the outgoing squares as the
+  // next move lands, so they fade. An alarm that ends has no such moment and
+  // drops its piece straight to whatever the curve already says. Arrows
+  // deliberately hold nothing: the attack line persists while its endpoints
+  // fade.
   let mindFrame: MindFrame | null = null;
   if (mind) {
-    const rehearsed = new Set<string>();
+    const rehearsed = new Set(mind.held);
     for (const { h } of litHighlights) rehearsed.add(h.sq);
     if (check) rehearsed.add(check.sq);
     mindFrame = { touches: mind.touches, rehearsed };
