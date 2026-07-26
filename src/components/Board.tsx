@@ -654,11 +654,12 @@ export function Board({
   // While dark, the move on the board and the squares under a lit highlight or
   // a live check are being rehearsed — by the narration or by the alarm itself
   // — so their pieces resist the forgetting curve for as long as that lasts.
-  // Only the move hold has a release: App names the outgoing squares as the
-  // next move lands, so they fade. An alarm that ends has no such moment and
-  // drops its piece straight to whatever the curve already says. Arrows
-  // deliberately hold nothing: the attack line persists while its endpoints
-  // fade.
+  // Rehearsal that ends at an event is released — App names the squares again
+  // at that instant, so they fade rather than vanish (the next move taking
+  // over, `cl` clearing a pin, a move answering a check). An unpinned
+  // highlight expires between events, so it keeps its own stamp; it holds a
+  // piece for only its own 2.5s, so the step is small. Arrows deliberately
+  // hold nothing: the attack line persists while its endpoints fade.
   let mindFrame: MindFrame | null = null;
   if (mind) {
     const rehearsed = new Set(mind.held);
