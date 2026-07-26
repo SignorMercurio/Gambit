@@ -574,7 +574,10 @@ export default function App() {
     const branchStack: BranchSnap[] = [];
 
     // Name squares into the mental sketch (rebound, never mutated, so prior
-    // snapshots keep their own maps). A no-op outside mind mode.
+    // snapshots keep their own maps). A no-op outside mind mode. Naming is also
+    // how a rehearsal is released: a square held at full strength carries a
+    // stale stamp, so at the instant the rehearsal ends it is named again and
+    // fades over the normal curve instead of vanishing in one frame.
     const touch = (t: number, ...sqs: (string | null | undefined)[]) => {
       if (!mind) return;
       const touches = new Map(mind.touches);
@@ -640,13 +643,11 @@ export default function App() {
             touch(ev.t, ev.from, ev.to);
             break;
           case 'clear':
-            // A pinned alarm is a rehearsal, so clearing it releases its
-            // squares: named here so their pieces fade from this instant
-            // instead of dropping to whatever the curve already said, which a
-            // pin outlives many times over. Unpinned highlights are never
-            // released — they expire between events, where the walk has no
-            // instant to name — but they only ever hold a piece for their own
-            // 2.5s, so the curve has barely moved. Arrows hold nothing.
+            // Clearing a pinned alarm ends its rehearsal, so release its
+            // squares. Pinned only, and that is a safety property as much as a
+            // scope choice: an unpinned highlight fades on its own between
+            // events, so naming it here could resurrect a piece that had
+            // already finished forgetting. Arrows hold nothing.
             touch(ev.t, ...highlights.filter((h) => h.pinned).map((h) => h.sq));
             highlights = [];
             arrows = [];
@@ -712,7 +713,15 @@ export default function App() {
               const moved = movePosition(positions, mv, ev.t);
               positions = moved.positions;
               chessState = Chess.applyMove(chessState, mv);
-              const endedCheck = check;
+              // The mover's king was in check and a legal move ends it, so that
+              // rehearsal is over — release the square. Load-bearing only for a
+              // check the sketch never named: one inherited from the Start FEN
+              // or an `rs`/`st`/`fen` inside mind mode, where the king shows
+              // purely because Board rehearses a live check and has no stamp
+              // behind it, so it would vanish outright. When a move delivered
+              // the check, that move put the king in `held`, and `nameMove`
+              // releases the whole held set below.
+              if (check) touch(ev.t, check.sq);
               check = checkAt(chessState, ev.t);
               lastMove = {
                 fromF: mv.from[0],
@@ -723,11 +732,6 @@ export default function App() {
                 annotation: ev.annotation,
               };
               if (moved.captureFlash) lastCapture = { ...moved.captureFlash, id: `${ev.line}` };
-              // Answering a check releases the king it was lighting up: named,
-              // not held, so it fades from here instead of dropping to whatever
-              // the curve already said. (A block or a capture leaves the king
-              // where it stood, so nothing else would name it.)
-              if (endedCheck && endedCheck.sq !== check?.sq) touch(ev.t, endedCheck.sq);
               // A move names everything it disturbs into the sketch, plus the
               // king a check lights up, and holds them until the next move.
               nameMove(ev.t, ...moved.touched, check?.sq);
