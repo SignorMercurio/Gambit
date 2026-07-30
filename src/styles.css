@@ -40,10 +40,6 @@
   /* Secondary */
   --color-studio-cream: #f1ecde;
 
-  /* Annotation pens */
-  --color-markup-amber: #f0b429;
-  --color-annotation-persimmon: #f08c2e;
-
   /* Text */
   --color-sodium-chalk: #e8ecf5;
   --color-rim-light-pewter: #c8d0e6;
@@ -58,8 +54,6 @@
   --color-error-line: #ff7b7b;
   --color-error-text: #ffb4b4;
   --color-reset-text: #ff9b9b;
-  --color-clear-marker: #9b9b9b;
-
   /* Tonal whites (interactive-state elevation ladder) */
   --tonal-white-04: rgba(255, 255, 255, 0.04);
   --tonal-white-06: rgba(255, 255, 255, 0.06);
@@ -112,7 +106,6 @@
   --radius-sm: 7px;
   --radius-md: 10px;
   --radius-lg: 14px;
-  --radius-xl: 16px;
   --radius-pill: 999px;
   /* Board corner clip, tied to the lg surface radius (panel, controls);
      shrinks on mobile so the rank-8 coordinate is not cut by the rounded
@@ -139,11 +132,6 @@
   --workspace-width: calc(var(--artifact-fit-width) + var(--side-panel-width) + var(--main-column-gap));
 
   /* Motion */
-  --ease-piece-slide: cubic-bezier(0.5, 0, 0.2, 1);
-  --duration-piece: 380ms;
-  --duration-transform: 220ms;
-  --duration-arrow-in: 280ms;
-  --duration-capture-flash: 500ms;
   --duration-chrome: 120ms;
   --duration-state: 150ms;
   --duration-chip-reject: 650ms;

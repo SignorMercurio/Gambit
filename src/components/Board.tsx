@@ -11,12 +11,20 @@ import {
   updateGestureTarget,
   type BoardGesture,
 } from '../lib/boardGesture';
-import type { MoveAnnotation } from '../lib/timeline';
+import { clamp01, easeOutQuart, timedProgress } from '../lib/animation';
+import {
+  mindPieceStrength,
+  mindRevealStrength,
+  mindSink,
+  type MindFrame,
+  type MindWorld,
+} from '../lib/mind';
+import { ANNOTATION_MARKS, type MoveAnnotation } from '../lib/timeline';
 import { annotationColors, annotationInk, fontUi, tokens } from '../lib/tokens';
 
 const SQ = 100;
 const BOARD_SIZE = SQ * 8;
-export const BOARD_OVERLAY_LIFETIME = {
+const BOARD_OVERLAY_LIFETIME = {
   highlight: 2.5,
   arrow: 2.5,
   captureFlash: 0.5,
@@ -26,18 +34,6 @@ const OVERLAY_FADE_OUT = 0.32;
 const ARROW_DRAW_DURATION = 0.34;
 const BADGE_DELAY = 0.08;
 const BADGE_IN_DURATION = 0.18;
-
-// Mind's-eye mode: the narrator's mental sketch. Only squares the script has
-// named (`touches`: square → last-named time) render pieces; the rest of the
-// board sinks into the void. Derived entirely from events + time in App's
-// snapshot walk, so it restores across br/ml like every other board state.
-export type MindWorld = {
-  since: number;
-  touches: ReadonlyMap<string, number>;
-  // Squares named by the move currently on the board, held at full strength
-  // until the next move takes over.
-  held: ReadonlySet<string>;
-};
 
 type BoardProps = {
   positions: Record<string, PiecePos>;
@@ -157,21 +153,6 @@ function buildArrowGuidePath(pts: Array<readonly [number, number]>): string {
   return 'M' + pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L');
 }
 
-function clamp01(n: number): number {
-  return Math.min(1, Math.max(0, n));
-}
-
-function easeOutQuart(n: number): number {
-  const p = clamp01(n);
-  return 1 - Math.pow(1 - p, 4);
-}
-
-function timedProgress(age: number, duration: number): number {
-  if (age <= 0) return 0;
-  if (age >= duration) return 1;
-  return easeOutQuart(age / duration);
-}
-
 function overlayOpacity(age: number, lifetime: number, pinned?: boolean): number {
   if (age < 0) return 0;
   if (age < HIGHLIGHT_FADE_IN) return easeOutQuart(age / HIGHLIGHT_FADE_IN);
@@ -224,46 +205,10 @@ function pieceVisual(p: PiecePos, time: number) {
   return { f, r, opacity, scale, isMoving, isCapturedFading };
 }
 
-// Mind's-eye visibility: what isn't rehearsed is forgotten. A freshly named
-// square renders its piece at full strength, then fades to nothing on a
-// forgetting curve — unless the square is actively tracked: the move on the
-// board, a lit highlight (the pinned alarm), or a live check IS the rehearsal,
-// so those pieces hold at full strength for as long as it lasts. The forget
-// window is shorter than a typical gap between moves, so without the move
-// hold the board would empty out between them. Arrows keep only their own
-// light — a pinned attack line can outlive the memory of the attacker.
-// After `reveal`, the full board fades up from darkness.
-const MIND_FRESH_S = 1.5;
-const MIND_FORGET_S = 3;
-const MIND_SINK_S = 0.6;
-const REVEAL_FADE_S = 0.45;
-
-// How deep the void is right now, on the playback clock like every other
-// timed visual: `mind` sinks it, `reveal` lifts it. Deliberately not a CSS
-// transition — that runs on wall time, so scrubbing across the event while
-// paused would show a frame that depends on how the playhead got there
-// instead of on script + FEN + time.
-export function mindSink(mind: MindWorld | null, revealedAt: number, time: number): number {
-  if (mind) return timedProgress(time - mind.since, MIND_SINK_S);
-  // Never in mind mode: revealedAt is -Infinity, so the age saturates and the
-  // board reads fully lit without a sentinel branch.
-  return 1 - timedProgress(time - revealedAt, MIND_SINK_S);
-}
-
-// One frame of the sketch: the touch map plus the squares whose alarm is lit
-// right now. Built only while the board is dark, so the lit path never carries
-// it and no empty-set stand-in is needed.
-type MindFrame = { touches: ReadonlyMap<string, number>; rehearsed: ReadonlySet<string> };
-
-export function mindPieceStrength(frame: MindFrame, sq: string, time: number): number {
-  if (frame.rehearsed.has(sq)) return 1;
-  const touched = frame.touches.get(sq);
-  if (touched == null) return 0;
-  const age = time - touched;
-  if (age < MIND_FRESH_S) return 1;
-  // Linear, unlike the eased board fades: the forgetting curve is the
-  // feature's subject, so it stays legible rather than snapping away.
-  return clamp01(1 - (age - MIND_FRESH_S) / (MIND_FORGET_S - MIND_FRESH_S));
+function pieceZIndex(visual: ReturnType<typeof pieceVisual>): number {
+  if (visual.isMoving) return 5;
+  if (visual.isCapturedFading) return 4;
+  return 1;
 }
 
 function captureFlashVisual(age: number) {
@@ -321,15 +266,6 @@ function arrowPoints(from: string, to: string): Array<readonly [number, number]>
   ];
 }
 
-// Annotation badges sit on the destination square's upper-right corner, close
-// to chess broadcast / analysis overlays: a large soft disc with a clear mark.
-const ANNOTATION_BADGE: Record<MoveAnnotation, { fill: string; mark: string }> = {
-  brilliant: { fill: annotationColors.brilliant, mark: '!!' },
-  great: { fill: annotationColors.great, mark: '!' },
-  mistake: { fill: annotationColors.mistake, mark: '?' },
-  blunder: { fill: annotationColors.blunder, mark: '??' },
-};
-
 // The board's light/dark convention (a1 dark) in one place.
 const isLightSquare = (f: number, r: number) => (f + r) % 2 === 1;
 // Last-move amber needs a higher alpha on blue squares; see tokens.ts.
@@ -369,6 +305,20 @@ const CHECK_GLOW_DEFS = (
     </radialGradient>
   </defs>
 );
+const ARROW_SHADOW_DEFS = (
+  <defs>
+    <filter id="arrow-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodColor="#0f1525" floodOpacity="0.32" />
+    </filter>
+  </defs>
+);
+const ANNOTATION_BADGE_SHADOW_DEFS = (
+  <defs>
+    <filter id="annotation-badge-shadow" x="-35%" y="-35%" width="170%" height="170%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor="#0f1525" floodOpacity="0.30" />
+    </filter>
+  </defs>
+);
 
 // One square pair per surface. Both sets are hoisted so a steady frame diffs
 // a single constant element instead of 64 rects.
@@ -390,6 +340,12 @@ const SQUARE_RECTS = squareRects(tokens.squareLight, tokens.squareDark);
 // fully-sunk steady state — the whole mind phase after the 0.6s ramp.
 const VOID_RECTS = squareRects(tokens.mindVoidLight, tokens.mindVoidDark);
 const VOID_G = <g>{VOID_RECTS}</g>;
+
+function voidLayer(sink: number) {
+  if (sink <= 0) return null;
+  if (sink >= 1) return VOID_G;
+  return <g opacity={sink}>{VOID_RECTS}</g>;
+}
 
 // Coordinates sit above enlarged Staunty pieces so file/rank labels remain
 // visible in recordings, but below annotation arrows. Two hoisted sets of the
@@ -417,11 +373,16 @@ const coordTexts = (ink: string | null) =>
 const COORD_TEXTS = coordTexts(null);
 const COORD_TEXTS_MIND = coordTexts(tokens.mindCoordInk);
 
-const COORD_LAYER_STYLE: CSSProperties = {
+// Full-size SVG planes share one positioning contract; each layer only adds
+// its own pointer and stacking behavior.
+const SVG_LAYER_STYLE: CSSProperties = {
   position: 'absolute',
   inset: 0,
   width: '100%',
   height: '100%',
+};
+const COORD_LAYER_STYLE: CSSProperties = {
+  ...SVG_LAYER_STYLE,
   pointerEvents: 'none',
   zIndex: 2,
 };
@@ -439,6 +400,22 @@ const COORD_LAYER_MIND = (
     {COORD_TEXTS_MIND}
   </svg>
 );
+
+function coordLayer(sink: number) {
+  if (sink <= 0) return COORD_LAYER;
+  if (sink >= 1) return COORD_LAYER_MIND;
+  return (
+    <svg
+      className="board-coords"
+      viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+      aria-hidden="true"
+      style={COORD_LAYER_STYLE}
+    >
+      {COORD_TEXTS}
+      <g opacity={sink}>{COORD_TEXTS_MIND}</g>
+    </svg>
+  );
+}
 
 // Best-effort: capture keeps the gesture tracking when the pointer leaves
 // the board, but a pointer can go inactive between down and capture, and
@@ -478,13 +455,19 @@ function insetSquareMarker(sq: string, key: string) {
 
 // Same plane as the arrows overlay so annotate previews read exactly like
 // the artifact they are about to record.
-const GESTURE_LAYER_STYLE: CSSProperties = {
+const PIECE_LAYER_STYLE: CSSProperties = {
   position: 'absolute',
   inset: 0,
-  width: '100%',
-  height: '100%',
+  zIndex: 1,
+};
+const OVERLAY_LAYER_STYLE: CSSProperties = {
+  ...SVG_LAYER_STYLE,
   pointerEvents: 'none',
   zIndex: 3,
+};
+const BADGE_LAYER_STYLE: CSSProperties = {
+  ...OVERLAY_LAYER_STYLE,
+  zIndex: 5,
 };
 
 // Live preview of the gesture in progress. Move gestures mark the origin and
@@ -515,7 +498,7 @@ function GestureOverlay({
     const { from, over } = gesture;
     const fromIdx = sqToIdx(from);
     return (
-      <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={GESTURE_LAYER_STYLE}>
+      <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={OVERLAY_LAYER_STYLE}>
         {over && over !== from ? (
           <path d={buildArrowPath(arrowPoints(from, over))} fill={tokens.boardArrow} opacity={0.55} />
         ) : (
@@ -534,7 +517,7 @@ function GestureOverlay({
 
   const { from, over, targets } = gesture;
   return (
-    <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={GESTURE_LAYER_STYLE}>
+    <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={OVERLAY_LAYER_STYLE}>
       {insetSquareMarker(from, 'from')}
       {[...targets].map((sq) => {
         const { f, r } = sqToIdx(sq);
@@ -568,6 +551,20 @@ export function Board({
 }: BoardProps) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [gesture, setGesture] = useState<BoardGesture | null>(null);
+  const positionEntries = useMemo(() => Object.entries(positions), [positions]);
+  const arrowShapes = useMemo(
+    () =>
+      arrows.map((arrow, index) => {
+        const points = arrowPoints(arrow.from, arrow.to);
+        return {
+          arrow,
+          d: buildArrowPath(points),
+          guideD: buildArrowGuidePath(points),
+          maskId: `arrow-mask-${index}-${arrow.from}-${arrow.to}`,
+        };
+      }),
+    [arrows],
+  );
 
   // Map a pointer event to the square under it, or null outside the board.
   const squareAtPointer = (e: React.PointerEvent): string | null => {
@@ -660,17 +657,23 @@ export function Board({
   // hold nothing: the attack line persists while its endpoints fade.
   let mindFrame: MindFrame | null = null;
   if (mind) {
-    const rehearsed = new Set(mind.held);
-    for (const { h } of litHighlights) rehearsed.add(h.sq);
-    if (check) rehearsed.add(check.sq);
+    let rehearsed: ReadonlySet<string> = mind.held;
+    if (litHighlights.length > 0 || check) {
+      const expanded = new Set(mind.held);
+      for (const { h } of litHighlights) expanded.add(h.sq);
+      if (check) expanded.add(check.sq);
+      rehearsed = expanded;
+    }
     mindFrame = { touches: mind.touches, rehearsed };
   }
 
   const sink = mindSink(mind, revealedAt, time);
+  const boardVoid = voidLayer(sink);
+  const coordinates = coordLayer(sink);
   // Outside mind mode every piece shares one strength (the reveal fade-up, or
   // a saturated 1 for scripts that never darken), so it is computed once here
   // instead of per piece per frame.
-  const revealStrength = timedProgress(time - revealedAt, REVEAL_FADE_S);
+  const revealStrength = mindRevealStrength(revealedAt, time);
   const flash =
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
       ? captureFlashVisual(time - captureFlash.t)
@@ -704,7 +707,7 @@ export function Board({
         <svg
           viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
           aria-hidden="true"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+          style={SVG_LAYER_STYLE}
         >
           {CHECK_GLOW_DEFS}
           {/* Once the void is fully sunk it is opaque, so the lit squares
@@ -713,7 +716,7 @@ export function Board({
 
           {/* The void sinks in over the lit squares; every overlay below
              renders on top of it, so the alarms keep carrying the light. */}
-          {sink >= 1 ? VOID_G : sink > 0 ? <g opacity={sink}>{VOID_RECTS}</g> : null}
+          {boardVoid}
 
           {lastMove &&
             (
@@ -771,9 +774,9 @@ export function Board({
            stays contained and doesn't outrank the arrows overlay. */}
         <div
           aria-hidden="true"
-          style={{ position: 'absolute', inset: 0, zIndex: 1 }}
+          style={PIECE_LAYER_STYLE}
         >
-          {Object.entries(positions).map(([id, p]) => {
+          {positionEntries.map(([id, p]) => {
             const strength = mindFrame
               ? mindPieceStrength(mindFrame, idxToSq(p.f, p.r), time)
               : revealStrength;
@@ -794,7 +797,7 @@ export function Board({
                   transform: `translate3d(${tx}%, ${ty}%, 0) scale(${visual.scale})`,
                   opacity: visual.opacity * strength,
                   pointerEvents: 'none',
-                  zIndex: visual.isMoving ? 5 : visual.isCapturedFading ? 4 : 1,
+                  zIndex: pieceZIndex(visual),
                   willChange: visual.isMoving || visual.isCapturedFading ? 'transform, opacity' : 'auto',
                   padding: '0.75%',
                   boxSizing: 'border-box',
@@ -809,51 +812,22 @@ export function Board({
         {/* Mid-ramp only: an opaque base with one fading layer over it, the
            same compositing rule the squares use. Cross-fading both at once
            would dip the labels to ~72% coverage at the midpoint. */}
-        {sink <= 0 ? (
-          COORD_LAYER
-        ) : sink >= 1 ? (
-          COORD_LAYER_MIND
-        ) : (
-          <svg
-            className="board-coords"
-            viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-            aria-hidden="true"
-            style={COORD_LAYER_STYLE}
-          >
-            {COORD_TEXTS}
-            <g opacity={sink}>{COORD_TEXTS_MIND}</g>
-          </svg>
-        )}
+        {coordinates}
 
         {/* arrows overlay — sits above pieces so annotations land on top */}
         <svg
           viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
           aria-hidden="true"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: 3,
-          }}
+          style={OVERLAY_LAYER_STYLE}
         >
-          <defs>
-            <filter id="arrow-shadow" x="-10%" y="-10%" width="120%" height="120%">
-              <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodColor="#0f1525" floodOpacity="0.32" />
-            </filter>
-          </defs>
+          {ARROW_SHADOW_DEFS}
           <g filter="url(#arrow-shadow)">
-            {arrows.map((a, i) => {
-              const pts = arrowPoints(a.from, a.to);
-              const d = buildArrowPath(pts);
-              const guideD = buildArrowGuidePath(pts);
+            {arrowShapes.map(({ arrow: a, d, guideD, maskId }, i) => {
               if (!d) return null;
               const age = time - a.t;
               const opacity = overlayOpacity(age, BOARD_OVERLAY_LIFETIME.arrow, a.pinned);
               if (opacity <= 0) return null;
               const draw = timedProgress(age, ARROW_DRAW_DURATION);
-              const maskId = `arrow-mask-${i}-${a.from}-${a.to}`;
               return (
                 <g key={`arr-${a.from}-${a.to}-${a.t}-${i}`} opacity={opacity}>
                   <defs>
@@ -913,26 +887,16 @@ export function Board({
           <svg
             viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
             aria-hidden="true"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 5,
-            }}
+            style={BADGE_LAYER_STYLE}
           >
-            <defs>
-              <filter id="annotation-badge-shadow" x="-35%" y="-35%" width="170%" height="170%">
-                <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor="#0f1525" floodOpacity="0.30" />
-              </filter>
-            </defs>
+            {ANNOTATION_BADGE_SHADOW_DEFS}
             {(() => {
-              const cfg = ANNOTATION_BADGE[lastMove.annotation];
+              const annotation = lastMove.annotation;
+              const mark = ANNOTATION_MARKS[annotation];
               const cx = lastMove.toF * SQ + SQ - 16;
               const cy = (7 - lastMove.toR) * SQ + 16;
               const r = 22;
-              const isWide = cfg.mark.length === 2;
+              const isWide = mark.length === 2;
               const badgeProgress = timedProgress(time - lastMove.t - BADGE_DELAY, BADGE_IN_DURATION);
               if (badgeProgress <= 0) return null;
               const badgeScale = 0.9 + badgeProgress * 0.1;
@@ -946,7 +910,7 @@ export function Board({
                     cx={cx}
                     cy={cy}
                     r={r}
-                    fill={cfg.fill}
+                    fill={annotationColors[annotation]}
                   />
                   <text
                     x={cx}
@@ -959,7 +923,7 @@ export function Board({
                     textAnchor="middle"
                     dominantBaseline="central"
                   >
-                    {cfg.mark}
+                    {mark}
                   </text>
                 </g>
               );

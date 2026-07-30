@@ -18,33 +18,69 @@
 // the badge layer one color per mark with no overlap.
 export type MoveAnnotation = 'brilliant' | 'great' | 'mistake' | 'blunder';
 
-const ANNOTATION_BY_MARK: Record<string, MoveAnnotation> = {
-  '!!': 'brilliant',
-  '!': 'great',
-  '?': 'mistake',
-  '??': 'blunder',
+export const ANNOTATION_MARKS: Record<MoveAnnotation, string> = {
+  brilliant: '!!',
+  great: '!',
+  mistake: '?',
+  blunder: '??',
 };
+const ANNOTATION_BY_MARK = Object.fromEntries(
+  Object.entries(ANNOTATION_MARKS).map(([annotation, mark]) => [mark, annotation]),
+) as Record<string, MoveAnnotation>;
 
-// One event line: `[time] body` (non-empty body). The single home of the
-// line shape — scriptLineTime and parseScript both match through it, so the
-// gesture writer's collision detection can never drift from parse order.
-const SCRIPT_LINE_RE = /^\[\s*([0-9:.]+)\s*\]\s*(.+)$/;
+// One event line: `[time] body` (non-empty body). This is the single home of
+// the line shape for parsing, collision scans, and timestamp rewrites. The
+// captures preserve indentation and authored whitespace when a line is
+// retimed in place.
+const SCRIPT_LINE_RE = /^(\s*)\[\s*([0-9:.]+)\s*\](\s*)(\S(?:.*\S)?)(\s*)$/;
 
 // Blanks and comments — lines the parser skips entirely.
 function isSkippedLine(raw: string): boolean {
   return !raw || raw.startsWith('#') || raw.startsWith('//');
 }
 
+type ScriptLine = { t: number; body: string };
+type ScriptLineMatch = ScriptLine & {
+  indent: string;
+  gap: string;
+  trailing: string;
+};
+
+function matchScriptLine(line: string, normalized = false): ScriptLineMatch | null {
+  if (!normalized && isSkippedLine(line.trim())) return null;
+  const match = line.match(SCRIPT_LINE_RE);
+  if (!match) return null;
+  return {
+    indent: match[1],
+    t: parseTime(match[2]),
+    gap: match[3],
+    body: match[4],
+    trailing: match[5],
+  };
+}
+
+// Public consumers only receive valid event lines. parseScript uses the
+// internal structural match below to keep its missing-vs-invalid error split.
+export function parseScriptLine(line: string): ScriptLine | null {
+  const match = matchScriptLine(line);
+  return match && Number.isFinite(match.t) ? { t: match.t, body: match.body } : null;
+}
+
 // Timestamp of a script line, or null for blanks, comments, and lines the
 // parser would reject — including a bare `[00:05]` (a parse error), which
 // is not a timed anchor either.
 export function scriptLineTime(line: string): number | null {
-  const raw = line.trim();
-  if (isSkippedLine(raw)) return null;
-  const m = raw.match(SCRIPT_LINE_RE);
-  if (!m) return null;
-  const t = parseTime(m[1]);
-  return Number.isFinite(t) ? t : null;
+  const parsed = parseScriptLine(line);
+  return parsed?.t ?? null;
+}
+
+// Rewrites only a valid event line and preserves everything after its closing
+// bracket byte-for-byte. Invalid lines are left to parseScript's visible error
+// path instead of being silently normalized into valid input.
+export function rewriteScriptLineTime(line: string, t: number): string | null {
+  const match = matchScriptLine(line);
+  if (!match || !Number.isFinite(match.t) || !Number.isFinite(t)) return null;
+  return `${match.indent}${formatScriptTime(t)}${match.gap}${match.body}${match.trailing}`;
 }
 
 // SAN with its trailing quality marks split off. Shared by the parser (badge
@@ -142,6 +178,12 @@ export function fmtDeci(deci: number, fine: 'never' | 'auto' | 'always' = 'never
   return `${head}.${tenths}`;
 }
 
+// `[mm:ss]`, or `[mm:ss.t]` when the tenths are non-zero — the house style
+// for generated and retimed script lines.
+export function formatScriptTime(t: number): string {
+  return `[${fmtDeci(Math.max(0, Math.round(t * 10)), 'auto')}]`;
+}
+
 // Human-readable event body shared by the move list and its tooltips.
 export function eventBody(e: ParsedEvent): string {
   switch (e.kind) {
@@ -176,17 +218,16 @@ export function parseScript(text: string): TimelineEvent[] {
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i].trim();
     if (isSkippedLine(raw)) continue;
-    const m = raw.match(SCRIPT_LINE_RE);
-    if (!m) {
+    const matched = matchScriptLine(raw, true);
+    if (!matched) {
       events.push({ t: 0, error: `Line ${i + 1}: missing [mm:ss]`, line: i + 1, raw });
       continue;
     }
-    const t = parseTime(m[1]);
+    const { t, body } = matched;
     if (!Number.isFinite(t)) {
       events.push({ t: 0, error: `Line ${i + 1}: invalid timestamp`, line: i + 1, raw });
       continue;
     }
-    const body = m[2].trim();
 
     const hm = body.match(/^(?:hl|highlight)\s+(.+)$/i);
     if (hm) {

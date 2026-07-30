@@ -1,16 +1,16 @@
-export type SubtitleCue = {
+type SubtitleCue = {
   start: number;
   end: number;
   text: string;
   line: number;
 };
 
-export type SubtitleParseError = {
+type SubtitleParseError = {
   line: number;
   error: string;
 };
 
-export type SubtitleParseResult = {
+type SubtitleParseResult = {
   cues: SubtitleCue[];
   errors: SubtitleParseError[];
 };
@@ -19,8 +19,22 @@ const SRT_TIME_RE = /^(\d+):([0-5]\d):([0-5]\d)(?:[,.](\d{1,3}))?$/;
 const CJK_PATTERN = '[\\u3400-\\u9fff\\uf900-\\ufaff]';
 const CJK_BEFORE_ALNUM_RE = new RegExp(`(${CJK_PATTERN})([A-Za-z0-9])`, 'g');
 const ALNUM_BEFORE_CJK_RE = new RegExp(`([A-Za-z0-9+#)\\]])(${CJK_PATTERN})`, 'g');
+const CUE_END_PREFIX_CACHE = new WeakMap<SubtitleCue[], number[]>();
 
-export function parseSrtTime(token: string): number {
+function cueEndPrefixes(cues: SubtitleCue[]): number[] {
+  const cached = CUE_END_PREFIX_CACHE.get(cues);
+  if (cached) return cached;
+  const prefixes: number[] = [];
+  let maxEnd = 0;
+  for (const cue of cues) {
+    maxEnd = Math.max(maxEnd, cue.end);
+    prefixes.push(maxEnd);
+  }
+  CUE_END_PREFIX_CACHE.set(cues, prefixes);
+  return prefixes;
+}
+
+function parseSrtTime(token: string): number {
   const match = token.trim().match(SRT_TIME_RE);
   if (!match) return NaN;
   const hours = parseInt(match[1], 10);
@@ -84,7 +98,8 @@ export function parseSrt(text: string): SubtitleParseResult {
 }
 
 export function getSubtitleEnd(cues: SubtitleCue[]): number {
-  return cues.reduce((max, cue) => Math.max(max, cue.end), 0);
+  const prefixes = cueEndPrefixes(cues);
+  return prefixes[prefixes.length - 1] ?? 0;
 }
 
 export function getActiveSubtitle(cues: SubtitleCue[], time: number): SubtitleCue | null {
@@ -95,10 +110,14 @@ export function getActiveSubtitle(cues: SubtitleCue[], time: number): SubtitleCu
     if (cues[mid].start <= time) lo = mid + 1;
     else hi = mid;
   }
+  const endPrefixes = cueEndPrefixes(cues);
   for (let i = lo - 1; i >= 0; i--) {
     const cue = cues[i];
-    if (cue.end <= time) continue;
-    if (time >= cue.start) return cue;
+    if (cue.end > time && time >= cue.start) return cue;
+    // No earlier cue can still be active once the whole preceding prefix has
+    // ended. This keeps overlapping-cue semantics without rescanning history
+    // on every playback frame in the common non-overlapping case.
+    if (i === 0 || endPrefixes[i - 1] <= time) break;
   }
   return null;
 }

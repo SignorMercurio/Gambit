@@ -3,9 +3,9 @@
 
 export type Side = 'w' | 'b';
 export type PieceType = 'p' | 'r' | 'n' | 'b' | 'q' | 'k';
-export type Square = { type: PieceType; side: Side } | null;
+type Square = { type: PieceType; side: Side } | null;
 export type Board = Square[][];
-export type Castling = { wK: boolean; wQ: boolean; bK: boolean; bQ: boolean };
+type Castling = { wK: boolean; wQ: boolean; bK: boolean; bQ: boolean };
 
 export type GameState = {
   board: Board;
@@ -32,9 +32,22 @@ export type Move = {
 };
 
 type Target = [number, number] | [number, number, 'ep'];
+type Delta = readonly [number, number];
 
-export const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
+const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
 export const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const KNIGHT_STEPS: readonly Delta[] = [
+  [1, 2], [2, 1], [-1, 2], [-2, 1],
+  [1, -2], [2, -1], [-1, -2], [-2, -1],
+];
+const BISHOP_DIRECTIONS: readonly Delta[] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+const ROOK_DIRECTIONS: readonly Delta[] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const QUEEN_DIRECTIONS: readonly Delta[] = [...BISHOP_DIRECTIONS, ...ROOK_DIRECTIONS];
+const KING_STEPS: readonly Delta[] = [...ROOK_DIRECTIONS, ...BISHOP_DIRECTIONS];
+const PROMOTION_TYPES: readonly PieceType[] = ['q', 'r', 'b', 'n'];
+const PIECE_SAN_RE = /^([NBRQK])([a-h])?([1-8])?(x)?([a-h][1-8])$/;
+const PAWN_CAPTURE_SAN_RE = /^([a-h])x([a-h][1-8])(?:=([NBRQ]))?$/;
+const PAWN_MOVE_SAN_RE = /^([a-h][1-8])(?:=([NBRQ]))?$/;
 
 export function sqToIdx(sq: string): { f: number; r: number } {
   return { f: sq.charCodeAt(0) - 97, r: parseInt(sq[1], 10) - 1 };
@@ -43,8 +56,16 @@ export function idxToSq(f: number, r: number): string {
   return FILES[f] + (r + 1);
 }
 
+function oppositeSide(side: Side): Side {
+  return side === 'w' ? 'b' : 'w';
+}
+
+function emptyBoard(): Board {
+  return Array.from({ length: 8 }, () => Array<Square>(8).fill(null));
+}
+
 function initialBoard(): Board {
-  const b: Board = Array.from({ length: 8 }, () => Array<Square>(8).fill(null));
+  const b = emptyBoard();
   const back: PieceType[] = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
   for (let f = 0; f < 8; f++) {
     b[0][f] = { type: back[f], side: 'w' };
@@ -53,10 +74,6 @@ function initialBoard(): Board {
     b[7][f] = { type: back[f], side: 'b' };
   }
   return b;
-}
-
-function emptyBoard(): Board {
-  return Array.from({ length: 8 }, () => Array<Square>(8).fill(null));
 }
 
 function parseCastling(s: string): Castling {
@@ -149,9 +166,9 @@ function pieceTargets(board: Board, f: number, r: number, state?: GameState): Ta
   const p = board[r][f];
   if (!p) return [];
   const out: Target[] = [];
-  const opp: Side = p.side === 'w' ? 'b' : 'w';
+  const opp = oppositeSide(p.side);
 
-  const slide = (dirs: [number, number][]) => {
+  const slide = (dirs: readonly Delta[]) => {
     for (const [df, dr] of dirs) {
       let nf = f + df;
       let nr = r + dr;
@@ -168,7 +185,7 @@ function pieceTargets(board: Board, f: number, r: number, state?: GameState): Ta
       }
     }
   };
-  const step = (deltas: [number, number][]) => {
+  const step = (deltas: readonly Delta[]) => {
     for (const [df, dr] of deltas) {
       const nf = f + df;
       const nr = r + dr;
@@ -181,6 +198,7 @@ function pieceTargets(board: Board, f: number, r: number, state?: GameState): Ta
   if (p.type === 'p') {
     const dir = p.side === 'w' ? 1 : -1;
     const startRank = p.side === 'w' ? 1 : 6;
+    const enPassant = state?.enPassant ? sqToIdx(state.enPassant) : null;
     if (inBounds(f, r + dir) && !board[r + dir][f]) {
       out.push([f, r + dir]);
       if (r === startRank && !board[r + 2 * dir][f]) out.push([f, r + 2 * dir]);
@@ -191,12 +209,11 @@ function pieceTargets(board: Board, f: number, r: number, state?: GameState): Ta
       if (!inBounds(nf, nr)) continue;
       const t = board[nr][nf];
       if (t && t.side === opp) out.push([nf, nr]);
-      if (state?.enPassant && !t) {
-        const ep = sqToIdx(state.enPassant);
+      if (enPassant && !t) {
         const captured = board[r][nf];
         if (
-          ep.f === nf &&
-          ep.r === nr &&
+          enPassant.f === nf &&
+          enPassant.r === nr &&
           captured?.type === 'p' &&
           captured.side === opp
         ) {
@@ -205,24 +222,15 @@ function pieceTargets(board: Board, f: number, r: number, state?: GameState): Ta
       }
     }
   } else if (p.type === 'n') {
-    step([
-      [1, 2], [2, 1], [-1, 2], [-2, 1],
-      [1, -2], [2, -1], [-1, -2], [-2, -1],
-    ]);
+    step(KNIGHT_STEPS);
   } else if (p.type === 'b') {
-    slide([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
+    slide(BISHOP_DIRECTIONS);
   } else if (p.type === 'r') {
-    slide([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+    slide(ROOK_DIRECTIONS);
   } else if (p.type === 'q') {
-    slide([
-      [1, 1], [1, -1], [-1, 1], [-1, -1],
-      [1, 0], [-1, 0], [0, 1], [0, -1],
-    ]);
+    slide(QUEEN_DIRECTIONS);
   } else if (p.type === 'k') {
-    step([
-      [1, 0], [-1, 0], [0, 1], [0, -1],
-      [1, 1], [1, -1], [-1, 1], [-1, -1],
-    ]);
+    step(KING_STEPS);
   }
   return out;
 }
@@ -252,20 +260,22 @@ function isAttacked(board: Board, f: number, r: number, bySide: Side): boolean {
   return false;
 }
 
-export function inCheck(board: Board, side: Side): boolean {
-  const k = findKing(board, side);
-  if (!k) return false;
-  const opp: Side = side === 'w' ? 'b' : 'w';
-  return isAttacked(board, k[0], k[1], opp);
+function inCheck(board: Board, side: Side): boolean {
+  return findCheckedKing(board, side) !== null;
+}
+
+function findCheckedKing(board: Board, side: Side): [number, number] | null {
+  const king = findKing(board, side);
+  if (!king || !isAttacked(board, king[0], king[1], oppositeSide(side))) return null;
+  return king;
 }
 
 // The square of the side-to-move's king when it stands in check, else null.
 // Derived from the position (not from a `+` in the SAN) so the board effect
 // stays deterministic even when the script author omits the check marker.
 export function checkedKingSquare(state: GameState): string | null {
-  if (!inCheck(state.board, state.turn)) return null;
-  const k = findKing(state.board, state.turn);
-  return k ? idxToSq(k[0], k[1]) : null;
+  const king = findCheckedKing(state.board, state.turn);
+  return king ? idxToSq(king[0], king[1]) : null;
 }
 
 export function applyMove(state: GameState, mv: Move): GameState {
@@ -323,7 +333,7 @@ export function applyMove(state: GameState, mv: Move): GameState {
 
   return {
     board,
-    turn: state.turn === 'w' ? 'b' : 'w',
+    turn: oppositeSide(state.turn),
     castling: cr,
     enPassant,
     halfmove: p.type === 'p' || mv.capture ? 0 : state.halfmove + 1,
@@ -353,7 +363,7 @@ export function legalMoves(state: GameState): Move[] {
           enPassant: flag === 'ep',
         };
         if (p.type === 'p' && (tr === 0 || tr === 7)) {
-          for (const promo of ['q', 'r', 'b', 'n'] as PieceType[]) {
+          for (const promo of PROMOTION_TYPES) {
             const mv: Move = { ...baseMv, promotion: promo };
             const next = applyMove(state, mv);
             if (!inCheck(next.board, p.side)) moves.push(mv);
@@ -366,18 +376,19 @@ export function legalMoves(state: GameState): Move[] {
     }
   // castling
   const homeRank = state.turn === 'w' ? 0 : 7;
-  const opp: Side = state.turn === 'w' ? 'b' : 'w';
+  const opp = oppositeSide(state.turn);
   const k = findKing(board, state.turn);
   const castleK = state.turn === 'w' ? state.castling.wK : state.castling.bK;
   const castleQ = state.turn === 'w' ? state.castling.wQ : state.castling.bQ;
+  const kingRook = board[homeRank][7];
+  const queenRook = board[homeRank][0];
   if (k && k[0] === 4 && k[1] === homeRank && !inCheck(board, state.turn)) {
     if (
       castleK &&
       !board[homeRank][5] &&
       !board[homeRank][6] &&
-      board[homeRank][7] &&
-      board[homeRank][7]!.type === 'r' &&
-      board[homeRank][7]!.side === state.turn &&
+      kingRook?.type === 'r' &&
+      kingRook.side === state.turn &&
       !isAttacked(board, 5, homeRank, opp) &&
       !isAttacked(board, 6, homeRank, opp)
     ) {
@@ -388,9 +399,8 @@ export function legalMoves(state: GameState): Move[] {
       !board[homeRank][1] &&
       !board[homeRank][2] &&
       !board[homeRank][3] &&
-      board[homeRank][0] &&
-      board[homeRank][0]!.type === 'r' &&
-      board[homeRank][0]!.side === state.turn &&
+      queenRook?.type === 'r' &&
+      queenRook.side === state.turn &&
       !isAttacked(board, 2, homeRank, opp) &&
       !isAttacked(board, 3, homeRank, opp)
     ) {
@@ -411,12 +421,9 @@ export function parseSAN(san: string, state: GameState): Move | null {
     return legalMoves(state).find((m) => m.castle === 'K') || null;
   }
 
-  const pieceMatch = raw.match(/^([NBRQK])([a-h])?([1-8])?(x)?([a-h][1-8])$/);
-  const pawnCaptureMatch = pieceMatch
-    ? null
-    : raw.match(/^([a-h])x([a-h][1-8])(?:=([NBRQ]))?$/);
-  const pawnMoveMatch =
-    pieceMatch || pawnCaptureMatch ? null : raw.match(/^([a-h][1-8])(?:=([NBRQ]))?$/);
+  const pieceMatch = raw.match(PIECE_SAN_RE);
+  const pawnCaptureMatch = pieceMatch ? null : raw.match(PAWN_CAPTURE_SAN_RE);
+  const pawnMoveMatch = pieceMatch || pawnCaptureMatch ? null : raw.match(PAWN_MOVE_SAN_RE);
 
   const pieceType: PieceType = pieceMatch
     ? (pieceMatch[1].toLowerCase() as PieceType)

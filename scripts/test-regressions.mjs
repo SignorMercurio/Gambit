@@ -14,12 +14,13 @@ try {
   // Independent entry points: load them concurrently (the module graph
   // dedupes shared deps), and read the stylesheet in the same batch.
   const [
-    { parseScript },
+    { parseScript, parseScriptLine, rewriteScriptLineTime },
     { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
     { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
     { syncRovingTabStops },
     { buildMainline },
-    { mindPieceStrength, mindSink },
+    { mindPieceStrength, mindRevealStrength, mindSink },
+    { getActiveSubtitle, getSubtitleEnd },
     Chess,
     styles,
   ] = await Promise.all([
@@ -28,13 +29,31 @@ try {
     vite.ssrLoadModule('/src/lib/boardGesture.ts'),
     vite.ssrLoadModule('/src/components/useRovingTabIndex.ts'),
     vite.ssrLoadModule('/src/components/PresentationMoves.tsx'),
-    vite.ssrLoadModule('/src/components/Board.tsx'),
+    vite.ssrLoadModule('/src/lib/mind.ts'),
+    vite.ssrLoadModule('/src/lib/subtitles.ts'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
   ]);
 
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
   const events = parseScript(saturated);
+
+  // Script parsing and timestamp rewriting share one line grammar. In-place
+  // edits preserve authored whitespace; malformed or body-less lines stay
+  // invalid instead of being silently repaired by the structured editor.
+  assert.deepEqual(parseScriptLine('  [ 0:05.1 ]   hl e4 pin  '), {
+    t: 5.1,
+    body: 'hl e4 pin',
+  });
+  assert.equal(
+    rewriteScriptLineTime('  [ 0:05.1 ]   hl e4 pin  ', 7.2),
+    '  [00:07.2]   hl e4 pin  ',
+  );
+  assert.equal(parseScriptLine('// [00:01] e4'), null);
+  assert.equal(parseScriptLine('[1::2] e4'), null);
+  assert.equal(rewriteScriptLineTime('[00:05]   ', 7), null);
+  assert.equal(rewriteScriptLineTime('[00:05] e4', Number.NaN), null);
+  assert.match(parseScript('[1::2] e4')[0].error, /invalid timestamp/i);
 
   assert.equal(
     nextFreeTime(saturated, 0.05, 0.1),
@@ -182,6 +201,18 @@ try {
   const validEp = Chess.stateFromFEN('7k/8/8/3pP3/8/8/8/7K w - d6 0 1');
   assert.equal(Chess.parseSAN('exd6', validEp)?.enPassant, true);
 
+  // Subtitle lookup keeps the latest-started active cue while still falling
+  // back to an earlier long cue after a shorter overlap ends.
+  const overlappingCues = [
+    { start: 0, end: 10, text: 'long', line: 1 },
+    { start: 1, end: 2, text: 'short', line: 2 },
+    { start: 3, end: 4, text: 'later', line: 3 },
+  ];
+  assert.equal(getSubtitleEnd(overlappingCues), 10);
+  assert.equal(getActiveSubtitle(overlappingCues, 1.5)?.text, 'short');
+  assert.equal(getActiveSubtitle(overlappingCues, 2.5)?.text, 'long');
+  assert.equal(getActiveSubtitle(overlappingCues, 20), null);
+
   // Defensive line deletion treats its input as a set. Duplicate line ids
   // must not cascade into deleting the following authored line.
   assert.equal(
@@ -195,6 +226,11 @@ try {
   assert.deepEqual(
     setLineTime('[00:01] hl e4\n[00:02] hl d4', 1, 3),
     { text: '[00:02] hl d4\n[00:03] hl e4', line: 2 },
+  );
+  assert.deepEqual(
+    setLineTime('  [ 00:01 ]   hl e4  \n[00:03] hl d4', 1, 2),
+    { text: '  [00:02]   hl e4  \n[00:03] hl d4', line: 1 },
+    'an in-place retime preserves indentation and body whitespace',
   );
 
   // Present mode's mainline walk must close its pending row at a reset. The
@@ -260,6 +296,13 @@ try {
   assert.equal(mindSink(null, 5, 5), 1, 'reveal starts from the fully sunk void');
   assert.equal(mindSink(null, 5, 5.6), 0, 'and lifts over the same ramp');
   assert.equal(mindSink(null, Number.NEGATIVE_INFINITY, 0), 0, 'never-darkened boards are lit');
+  assert.equal(mindRevealStrength(5, 5), 0, 'pieces start hidden at reveal');
+  assert.equal(mindRevealStrength(5, 5.5), 1, 'and return on the authored reveal ramp');
+  assert.equal(
+    mindRevealStrength(Number.NEGATIVE_INFINITY, 0),
+    1,
+    'pieces stay fully visible when no mind phase has occurred',
+  );
 
   // Gaps between moves (4–12s in a real script) outlast the forgetting curve,
   // so the move on the board is rehearsed: its squares hold at full strength

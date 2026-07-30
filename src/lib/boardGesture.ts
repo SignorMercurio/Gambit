@@ -8,10 +8,12 @@
 // The initiating button as its `e.buttons` bit, so handlers can tell whether
 // that button is still held mid-gesture.
 export function buttonBit(button: number): number {
-  return button === 2 ? 2 : button === 0 ? 1 : 0;
+  if (button === 2) return 2;
+  if (button === 0) return 1;
+  return 0;
 }
 
-export type GestureOwner = { pointerId: number; buttonBit: number };
+type GestureOwner = { pointerId: number; buttonBit: number };
 
 export type BoardGesture = GestureOwner &
   (

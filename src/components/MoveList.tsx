@@ -396,8 +396,10 @@ export const MoveList = memo(function MoveList({
     setFocusRequest(null);
   }, [focusRequest, listRef, roving]);
 
-  const stateClass = (i: number) =>
-    `${i <= reachedEventIndex ? 'past' : ''} ${i === reachedEventIndex ? 'current' : ''}`;
+  const stateClass = (i: number) => {
+    if (i === reachedEventIndex) return 'past current';
+    return i < reachedEventIndex ? 'past' : '';
+  };
   const restoreLineFocus = (line: number) =>
     setFocusRequest({ kind: 'line', line });
 

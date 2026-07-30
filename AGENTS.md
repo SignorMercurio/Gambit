@@ -36,8 +36,10 @@ The dev server is usually Vite on `http://127.0.0.1:5173/`, but use the URL Vite
 - `src/components/MoveList.tsx`: PGN-style move list — numbered mainline rows, inset variation flows, kind-colored seek dots. The Script tab's Moves view: a structured editor with per-event time chips, deletes, and whole-variation delete; auto-follows the playhead only while playback runs. Memoized — the parent re-renders per animation frame, so past/current state derives from `reachedEventIndex`, never from the raw clock.
 - `src/components/Piece.tsx`: piece image mapping.
 - `src/components/useRovingTabIndex.ts`: shared roving-tabindex hook (WAI-ARIA toolbar pattern) used by the timeline pin row and the Moves-view list — one Tab stop per group, arrows walk controls, imperative tabIndex so arrow presses never re-render the subtree.
+- `src/lib/animation.ts`: shared playback-clock easing and saturated progress helpers used by Board and mind's-eye visuals.
 - `src/lib/chess.ts`: minimal chess state engine, legal move generation, SAN parsing and serialization.
 - `src/lib/boardGesture.ts`: pure in-flight gesture state that captures move/arrow/highlight commit callbacks at pointer-down so playback cannot change the position or playhead used at pointer-up.
+- `src/lib/mind.ts`: pure mind's-eye domain state and playback-clock visibility curves, shared by App's snapshot walk and Board's renderer.
 - `src/lib/subtitles.ts`: SRT subtitle parsing and cue validation.
 - `src/lib/timeline.ts`: timestamped script parsing. Short syntax is primary: `hl`, direct arrows like `f3->e5`, `cl`, `rs`, `st`, `br`, `ml`, `mind`, `reveal`; legacy long commands remain accepted. Also home of the playhead→event-index rule (`lastEventIndexAt`).
 - `src/lib/scriptEdit.ts`: gesture-to-script text writer — timestamp formatting, collision stepping, time-sorted line insertion that preserves comments and formatting — plus the pure gesture planners (`planLineInsert`, `planMoveGesture`): branch-aware move policy that returns new script text and landing boundaries, leaving the React commit to `App`.

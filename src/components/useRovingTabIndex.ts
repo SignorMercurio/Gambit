@@ -89,14 +89,11 @@ export function useRovingTabIndex<T extends HTMLElement>(
       const els = controls();
       const cur = els.indexOf(e.target);
       const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
-      const next =
-        e.key === 'Home'
-          ? 0
-          : e.key === 'End'
-          ? els.length - 1
-          : back
-          ? Math.max(0, cur - 1)
-          : Math.min(els.length - 1, cur + 1);
+      let next: number;
+      if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = els.length - 1;
+      else if (back) next = Math.max(0, cur - 1);
+      else next = Math.min(els.length - 1, cur + 1);
       // Focus is the single owner of the tab-stop swap: this focus() fires
       // onFocus above, which moves tabIndex and the cursor.
       els[next].focus();

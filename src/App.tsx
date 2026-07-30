@@ -4,17 +4,16 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
 import {
   Board,
-  BOARD_OVERLAY_LIFETIME,
   type BoardArrow,
   type BoardCheck,
   type BoardHighlight,
   type CaptureFlash,
   type LastMove,
-  type MindWorld,
   type PiecePos,
 } from './components/Board';
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
+import type { MindWorld } from './lib/mind';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { MoveList } from './components/MoveList';
 import { PresentationMoves } from './components/PresentationMoves';
@@ -68,6 +67,17 @@ function setupFromFen(fenText: string): BoardSetup & { error: string | null } {
   }
 }
 
+const STANDARD_SETUP = setupFromValidFen(Chess.STARTING_FEN);
+const LEGAL_MOVES_CACHE = new WeakMap<Chess.GameState, Chess.Move[]>();
+
+function legalMovesFor(state: Chess.GameState): Chess.Move[] {
+  const cached = LEGAL_MOVES_CACHE.get(state);
+  if (cached) return cached;
+  const moves = Chess.legalMoves(state);
+  LEGAL_MOVES_CACHE.set(state, moves);
+  return moves;
+}
+
 function movePosition(
   positions: Positions,
   mv: Chess.Move,
@@ -82,8 +92,9 @@ function movePosition(
   // the resulting position rather than of the move).
   touched: string[];
 } {
-  const out: Positions = {};
-  for (const [k, v] of Object.entries(positions)) out[k] = { ...v };
+  // PiecePos values are immutable snapshots: copy the lookup table, then
+  // replace only the mover, victim, and castling rook touched by this move.
+  const out: Positions = { ...positions };
   const [ff, fr] = mv.from;
   const [tf, tr] = mv.to;
   const touched = [Chess.idxToSq(ff, fr), Chess.idxToSq(tf, tr)];
@@ -148,11 +159,29 @@ function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
 }
 
 function generateTicks(duration: number): number[] {
-  const interval = duration > 180 ? 60 : duration > 90 ? 30 : duration > 60 ? 15 : duration > 30 ? 10 : 5;
+  let interval = 5;
+  if (duration > 180) interval = 60;
+  else if (duration > 90) interval = 30;
+  else if (duration > 60) interval = 15;
+  else if (duration > 30) interval = 10;
   const ticks: number[] = [];
   for (let t = 0; t <= duration + 0.001; t += interval) ticks.push(Math.round(t * 10) / 10);
   return ticks;
 }
+
+type PlayState = 'play' | 'pause' | 'replay';
+
+function playStateAt(playing: boolean, time: number, duration: number): PlayState {
+  if (playing) return 'pause';
+  if (time >= duration) return 'replay';
+  return 'play';
+}
+
+const PLAY_LABELS: Record<PlayState, string> = {
+  play: 'Play',
+  pause: 'Pause',
+  replay: 'Restart playback',
+};
 
 // The one paused-landing convention (see the AGENTS.md pitfall): every timed
 // visual derives from `time - event.t`, so at age 0 the moved piece,
@@ -295,7 +324,6 @@ export default function App() {
   const subtitleResult = useMemo(() => parseSrt(subtitleText), [subtitleText]);
   const subtitleCues = subtitleResult.cues;
   const initialSetup = useMemo(() => setupFromFen(fenText), [fenText]);
-  const standardSetup = useMemo(() => setupFromValidFen(Chess.STARTING_FEN), []);
   // Narration audio rides the playback clock. Session-only by design: object
   // URLs die with the page and audio blobs don't fit the localStorage drafts.
   const [narration, setNarration] = useState<NarrationTrack | null>(null);
@@ -522,8 +550,8 @@ export default function App() {
   }, [narrationDriftTick, narration, playing]);
 
   // snapshots[0] is the initial state; snapshots[i+1] is the state AFTER
-  // applying events[i]. Per-frame render binary-searches by `time` to pick the
-  // current snapshot, then filters highlights/arrows by their lifetime windows.
+  // applying events[i]. Each frame picks the snapshot for `time`; Board derives
+  // timed overlay visibility from that snapshot and the playback clock.
   type WorldSnap = {
     positions: Positions;
     chessState: Chess.GameState;
@@ -656,7 +684,7 @@ export default function App() {
             applySetup(initialSetup, ev.t);
             break;
           case 'start':
-            applySetup(standardSetup, ev.t);
+            applySetup(STANDARD_SETUP, ev.t);
             break;
           case 'fen': {
             const setup = setupFromFen(ev.fen);
@@ -753,36 +781,14 @@ export default function App() {
       });
     }
     return { snapshots: list, scriptErrors: errorAcc };
-  }, [events, initialSetup, standardSetup]);
+  }, [events, initialSetup]);
 
   const reachedEventIndex = lastEventIndexAt(events, time);
 
-  const world = useMemo(() => {
-    // snapshots[i + 1] is the state AFTER events[i], so the reached index
-    // maps straight to a snapshot slot.
-    const snap = snapshots[reachedEventIndex + 1];
-
-    const visibleHighlights = snap.highlights
-      .filter((h) => h.pinned || time - h.t < BOARD_OVERLAY_LIFETIME.highlight);
-    const visibleArrows = snap.arrows
-      .filter((a) => a.pinned || time - a.t < BOARD_OVERLAY_LIFETIME.arrow);
-    const captureFlash =
-      snap.lastCapture && time - snap.lastCapture.t < BOARD_OVERLAY_LIFETIME.captureFlash
-        ? snap.lastCapture
-        : null;
-
-    return {
-      positions: snap.positions,
-      chessState: snap.chessState,
-      lastMove: snap.lastMove,
-      highlights: visibleHighlights,
-      arrows: visibleArrows,
-      captureFlash,
-      check: snap.check,
-      mind: snap.mind,
-      revealedAt: snap.revealedAt,
-    };
-  }, [snapshots, reachedEventIndex, time]);
+  // snapshots[i + 1] is the state AFTER events[i], so the reached index maps
+  // straight to a snapshot slot. Board owns timed overlay visibility; passing
+  // the stable snapshot arrays avoids filtering and rebuilding them at 60Hz.
+  const world = snapshots[reachedEventIndex + 1];
 
   // Full-script errors are returned once beside the board snapshots. Keeping
   // a growing copy on every snapshot made an all-error script retain O(N²)
@@ -867,7 +873,7 @@ export default function App() {
     (from: string): string[] => {
       const { f, r } = Chess.sqToIdx(from);
       const out = new Set<string>();
-      for (const m of Chess.legalMoves(world.chessState)) {
+      for (const m of legalMovesFor(world.chessState)) {
         if (m.from[0] === f && m.from[1] === r) out.add(Chess.idxToSq(m.to[0], m.to[1]));
       }
       return [...out];
@@ -885,7 +891,7 @@ export default function App() {
       if (gestureIsStale()) return;
       const f = Chess.sqToIdx(from);
       const t = Chess.sqToIdx(to);
-      const candidates = Chess.legalMoves(world.chessState).filter(
+      const candidates = legalMovesFor(world.chessState).filter(
         (m) => m.from[0] === f.f && m.from[1] === f.r && m.to[0] === t.f && m.to[1] === t.r,
       );
       // Promotion records a queen; underpromotion stays a hand edit.
@@ -1052,6 +1058,10 @@ export default function App() {
   );
 
   const activeSubtitle = getActiveSubtitle(subtitleCues, time);
+  const activeSubtitleText = useMemo(
+    () => activeSubtitle ? formatSubtitleText(activeSubtitle.text) : '',
+    [activeSubtitle],
+  );
 
   // Replay panel follow-scroll: keep the event the playhead has reached
   // visible, like a video editor's timeline list. Manual reading wins:
@@ -1088,12 +1098,11 @@ export default function App() {
     scrollEviIntoView(list, reachedEventIndex);
   }, [reachedEventIndex, playing, tab, scriptView]);
 
-  const playState: 'play' | 'pause' | 'replay' = playing
-    ? 'pause'
-    : time >= duration
-    ? 'replay'
-    : 'play';
-  const playLabel = playState === 'pause' ? 'Pause' : playState === 'replay' ? 'Restart playback' : 'Play';
+  const playState = playStateAt(playing, time, duration);
+  const playLabel = PLAY_LABELS[playState];
+  const currentTimeText = fmtTime(time, 'always');
+  const durationText = fmtTime(duration, 'always');
+  const timeRangeText = `${currentTimeText} of ${durationText}`;
 
   // One roving tab stop for the whole pin row (toolbar pattern): a script's
   // dozens of pins must not each cost keyboard users a Tab press between the
@@ -1238,7 +1247,7 @@ export default function App() {
             lastMove={world.lastMove}
             highlights={world.highlights}
             arrows={world.arrows}
-            captureFlash={world.captureFlash}
+            captureFlash={world.lastCapture}
             check={world.check}
             mind={world.mind}
             revealedAt={world.revealedAt}
@@ -1257,7 +1266,7 @@ export default function App() {
             aria-live="polite"
             aria-atomic="true"
           >
-            <p>{activeSubtitle ? formatSubtitleText(activeSubtitle.text) : ''}</p>
+            <p>{activeSubtitleText}</p>
           </div>
 
           <div className="controls" role="group" aria-label="Playback controls">
@@ -1303,11 +1312,11 @@ export default function App() {
 
             <div
               className="time-readout"
-              aria-label={`${fmtTime(time, 'always')} of ${fmtTime(duration, 'always')}`}
+              aria-label={timeRangeText}
             >
-              <span className="t-now">{fmtTime(time, 'always')}</span>
+              <span className="t-now">{currentTimeText}</span>
               <span className="t-sep" aria-hidden="true">/</span>
-              <span className="t-tot">{fmtTime(duration, 'always')}</span>
+              <span className="t-tot">{durationText}</span>
             </div>
 
             <div className="timeline">
@@ -1349,7 +1358,7 @@ export default function App() {
                 }}
                 className="scrub-input"
                 aria-label="Timeline position"
-                aria-valuetext={`${fmtTime(time, 'always')} of ${fmtTime(duration, 'always')}`}
+                aria-valuetext={timeRangeText}
               />
             </div>
 

@@ -4,22 +4,17 @@
 // script text stays the single source of truth — a board gesture is just
 // another way to type a line.
 
-// Line recognition is parseScript's own (`scriptLineTime`), so collision
-// detection and insertion anchors always track parse order exactly.
+// Line recognition and rewriting are parseScript's own, so collision scans,
+// retiming, and relocation always track the parser's line shape exactly.
 import {
-  fmtDeci,
+  formatScriptTime,
   lastEventIndexAt,
+  parseScriptLine,
+  rewriteScriptLineTime,
   scriptLineTime as lineTime,
   type ParsedEvent,
   type TimelineEvent,
 } from './timeline';
-
-// `[mm:ss]`, or `[mm:ss.t]` when the tenths are non-zero — the house style
-// of hand-written scripts. Rounds to the decisecond grid and shares the
-// formatter with the UI so written text and displayed chips never disagree.
-function formatScriptTime(t: number): string {
-  return `[${fmtDeci(Math.max(0, Math.round(t * 10)), 'auto')}]`;
-}
 
 // The one decisecond-boundary vocabulary for every scanner below: `capDeci`
 // converts an exclusive upper bound to grid units, `firstDeciAbove` yields
@@ -126,14 +121,11 @@ function nearestFreeTimeBelow(text: string, t: number, floor: number): number | 
   return null;
 }
 
-// Rewrite the timestamp of an existing script line (1-based line number),
-// leaving the body untouched. Used to push a variation's `ml` later as
-// gestures grow the variation.
 function retimeLine(text: string, line: number, t: number): string {
   const lines = text.split('\n');
   const idx = line - 1;
   if (idx < 0 || idx >= lines.length) return text;
-  lines[idx] = lines[idx].replace(/^(\s*)\[[^\]]*\]/, `$1${formatScriptTime(t)}`);
+  lines[idx] = rewriteScriptLineTime(lines[idx], t) ?? lines[idx];
   return lines.join('\n');
 }
 
@@ -157,23 +149,23 @@ export function setLineTime(text: string, line: number, t: number): LineTimeEdit
   let next: number | null = null;
   for (let i = idx + 1; i < lines.length && next == null; i++) next = lineTime(lines[i]);
   if ((prev == null || prev <= roundedT) && (next == null || roundedT <= next)) {
-    return { text: retimeLine(text, line, roundedT), line };
+    const retimed = rewriteScriptLineTime(lines[idx], roundedT);
+    if (retimed == null) return { text, line: null };
+    lines[idx] = retimed;
+    return { text: lines.join('\n'), line };
   }
-  const m = lines[idx].trim().match(/^\[\s*[0-9:.]+\s*\]\s*(.*)$/);
-  if (!m) return { text, line: null };
+  const parsed = parseScriptLine(lines[idx]);
+  if (!parsed) return { text, line: null };
   lines.splice(idx, 1);
-  return insertScriptLineInto(lines, roundedT, m[1]);
+  return insertScriptLineInto(lines, roundedT, parsed.body);
 }
 
 // Remove a set of script lines (1-based). Comments are left in place — their
 // attachment is the author's to manage in text mode.
 export function removeLines(text: string, targets: number[]): string {
   const lines = text.split('\n');
-  for (const line of [...new Set(targets)].sort((a, b) => b - a)) {
-    const idx = line - 1;
-    if (idx >= 0 && idx < lines.length) lines.splice(idx, 1);
-  }
-  return lines.join('\n');
+  const targetIndexes = new Set(targets.map((line) => line - 1));
+  return lines.filter((_, index) => !targetIndexes.has(index)).join('\n');
 }
 
 // Insert `[t] body` in timestamp order: before the first line whose time
@@ -216,7 +208,7 @@ export type ScriptEditPlan =
   | { kind: 'edit'; text: string; t: number; nextT?: number }
   | { kind: 'conflict'; error: string };
 
-export type MoveGesturePlan =
+type MoveGesturePlan =
   | { kind: 'seek'; t: number }
   | ScriptEditPlan;
 
