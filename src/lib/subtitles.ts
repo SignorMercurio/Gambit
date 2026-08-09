@@ -1,3 +1,5 @@
+import { MAX_SUBTITLE_TIMESTAMP_SECONDS } from './playback';
+
 type SubtitleCue = {
   start: number;
   end: number;
@@ -16,10 +18,13 @@ type SubtitleParseResult = {
 };
 
 const SRT_TIME_RE = /^(\d+):([0-5]\d):([0-5]\d)(?:[,.](\d{1,3}))?$/;
+const SRT_TIME_RANGE_RE = /^(.+?)\s*-->\s*(.+?)(?:\s+.*)?$/;
 const CJK_PATTERN = '[\\u3400-\\u9fff\\uf900-\\ufaff]';
 const CJK_BEFORE_ALNUM_RE = new RegExp(`(${CJK_PATTERN})([A-Za-z0-9])`, 'g');
 const ALNUM_BEFORE_CJK_RE = new RegExp(`([A-Za-z0-9+#)\\]])(${CJK_PATTERN})`, 'g');
 const CUE_END_PREFIX_CACHE = new WeakMap<SubtitleCue[], number[]>();
+const MAX_SUBTITLE_CHARACTERS = 1_000_000;
+const MAX_SUBTITLE_LINES = 10_000;
 
 function cueEndPrefixes(cues: SubtitleCue[]): number[] {
   const cached = CUE_END_PREFIX_CACHE.get(cues);
@@ -41,17 +46,72 @@ function parseSrtTime(token: string): number {
   const minutes = parseInt(match[2], 10);
   const seconds = parseInt(match[3], 10);
   const millis = match[4] ? parseInt(match[4].padEnd(3, '0'), 10) : 0;
-  return hours * 3600 + minutes * 60 + seconds + millis / 1000;
+  const total = hours * 3600 + minutes * 60 + seconds + millis / 1000;
+  return Number.isFinite(total) && total <= MAX_SUBTITLE_TIMESTAMP_SECONDS ? total : NaN;
+}
+
+function matchTimeRangeLine(line: string): RegExpMatchArray | null {
+  return line.trim().match(SRT_TIME_RANGE_RE);
+}
+
+function parseTimeRangeMatch(match: RegExpMatchArray): { start: number; end: number } | null {
+  const start = parseSrtTime(match[1]);
+  const end = parseSrtTime(match[2]);
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+}
+
+function parseTimeRangeLine(line: string): { start: number; end: number } | null {
+  const match = matchTimeRangeLine(line);
+  return match ? parseTimeRangeMatch(match) : null;
 }
 
 export function parseSrt(text: string): SubtitleParseResult {
   const cues: SubtitleCue[] = [];
   const errors: SubtitleParseError[] = [];
-  const lines = text.replace(/^\ufeff/, '').replace(/\r/g, '').split('\n');
+  if (text.length > MAX_SUBTITLE_CHARACTERS) {
+    return {
+      cues,
+      errors: [
+        {
+          line: 1,
+          error: `subtitle text exceeds the ${MAX_SUBTITLE_CHARACTERS.toLocaleString('en-US')}-character limit`,
+        },
+      ],
+    };
+  }
+  const normalized = text.replace(/^\ufeff/, '').replace(/\r/g, '');
+  const lines = normalized.split('\n', MAX_SUBTITLE_LINES + 1);
+  if (lines.length > MAX_SUBTITLE_LINES) {
+    return {
+      cues,
+      errors: [
+        {
+          line: MAX_SUBTITLE_LINES + 1,
+          error: `subtitle text exceeds the ${MAX_SUBTITLE_LINES.toLocaleString('en-US')}-line limit`,
+        },
+      ],
+    };
+  }
   let i = 0;
 
+  const isIndexedCueBoundary = (lineIndex: number) =>
+    /^\d+$/.test(lines[lineIndex]?.trim() ?? '') &&
+    parseTimeRangeLine(lines[lineIndex + 1] ?? '') != null;
+  const isCueBoundary = (lineIndex: number) =>
+    isIndexedCueBoundary(lineIndex) || parseTimeRangeLine(lines[lineIndex] ?? '') != null;
+
+  const reportMissingSeparator = () => {
+    errors.push({ line: i + 1, error: 'missing blank line before subtitle cue' });
+  };
+
   const skipBlock = () => {
-    while (i < lines.length && lines[i].trim()) i++;
+    while (i < lines.length && lines[i].trim()) {
+      if (isCueBoundary(i)) {
+        reportMissingSeparator();
+        break;
+      }
+      i++;
+    }
   };
 
   while (i < lines.length) {
@@ -59,27 +119,34 @@ export function parseSrt(text: string): SubtitleParseResult {
     if (i >= lines.length) break;
 
     const blockLine = i + 1;
-    if (/^\d+$/.test(lines[i].trim()) && lines[i + 1]?.includes('-->')) i++;
+    if (isIndexedCueBoundary(i)) i++;
 
     const timeLine = lines[i]?.trim() ?? '';
-    const timeMatch = timeLine.match(/^(.+?)\s*-->\s*(.+?)(?:\s+.*)?$/);
+    const timeMatch = matchTimeRangeLine(timeLine);
     if (!timeMatch) {
       errors.push({ line: blockLine, error: 'invalid SRT timestamp' });
       skipBlock();
       continue;
     }
-
-    const start = parseSrtTime(timeMatch[1]);
-    const end = parseSrtTime(timeMatch[2]);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    const timeRange = parseTimeRangeMatch(timeMatch);
+    if (!timeRange) {
       errors.push({ line: i + 1, error: 'invalid SRT time range' });
       skipBlock();
       continue;
     }
+    const { start, end } = timeRange;
 
     i++;
     const textLines: string[] = [];
     while (i < lines.length && lines[i].trim()) {
+      // A missing blank separator must not absorb every following cue into the
+      // current cue's text. Recover at the next valid indexed or bare timestamp
+      // boundary, leave `i` there for the outer loop, and surface the malformed
+      // separator instead of silently repairing it.
+      if (isCueBoundary(i)) {
+        reportMissingSeparator();
+        break;
+      }
       textLines.push(lines[i]);
       i++;
     }

@@ -1,8 +1,8 @@
 // Pieces translate via `translate3d` so motion stays on the GPU compositor.
 
-import { useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Piece } from './Piece';
-import { idxToSq, sqToIdx, type PieceType, type Side } from '../lib/chess';
+import { idxToSq, sqToIdx } from '../lib/chess';
 import {
   beginAnnotationGesture,
   beginMoveGesture,
@@ -19,16 +19,21 @@ import {
   type MindFrame,
   type MindWorld,
 } from '../lib/mind';
-import { ANNOTATION_MARKS, type MoveAnnotation } from '../lib/timeline';
+import { ANNOTATION_MARKS } from '../lib/timeline';
 import { annotationColors, annotationInk, fontUi, tokens } from '../lib/tokens';
+import {
+  BOARD_OVERLAY_LIFETIME,
+  type BoardArrow,
+  type BoardCheck,
+  type BoardHighlight,
+  type CaptureFlash,
+  type LastMove,
+  type PiecePos,
+  type Positions,
+} from '../lib/world';
 
 const SQ = 100;
 const BOARD_SIZE = SQ * 8;
-const BOARD_OVERLAY_LIFETIME = {
-  highlight: 2.5,
-  arrow: 2.5,
-  captureFlash: 0.5,
-} as const;
 const HIGHLIGHT_FADE_IN = 0.16;
 const OVERLAY_FADE_OUT = 0.32;
 const ARROW_DRAW_DURATION = 0.34;
@@ -36,7 +41,7 @@ const BADGE_DELAY = 0.08;
 const BADGE_IN_DURATION = 0.18;
 
 type BoardProps = {
-  positions: Record<string, PiecePos>;
+  positions: Positions;
   lastMove: LastMove | null;
   highlights: BoardHighlight[];
   arrows: BoardArrow[];
@@ -57,33 +62,6 @@ type BoardProps = {
   onArrowGesture?: (from: string, to: string) => void;
   onHighlightGesture?: (sq: string) => void;
 };
-
-export type PiecePos = {
-  f: number;
-  r: number;
-  type: PieceType;
-  side: Side;
-  captured?: boolean;
-  capturedAt?: number;
-  moveFromF?: number;
-  moveFromR?: number;
-  moveT?: number;
-};
-
-export type LastMove = {
-  fromF: number;
-  fromR: number;
-  toF: number;
-  toR: number;
-  t: number;
-  annotation?: MoveAnnotation;
-};
-
-export type BoardHighlight = { sq: string; t: number; pinned?: boolean };
-export type BoardArrow = { from: string; to: string; t: number; pinned?: boolean };
-export type CaptureFlash = { f: number; r: number; t: number; id: string };
-// Checked king square + the time the check appeared (drives the fade-in).
-export type BoardCheck = { sq: string; t: number };
 
 const BOARD_ARROW = {
   startInset: 18,
@@ -479,7 +457,7 @@ function GestureOverlay({
   positions,
 }: {
   gesture: BoardGesture;
-  positions: Record<string, PiecePos>;
+  positions: Positions;
 }) {
   // Memoized on positions (not gesture start): a scripted move firing during
   // playback must restyle the dots, but a 60Hz drag frame must not rebuild
@@ -499,7 +477,7 @@ function GestureOverlay({
     const fromIdx = sqToIdx(from);
     return (
       <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={OVERLAY_LAYER_STYLE}>
-        {over && over !== from ? (
+        {over == null ? null : over !== from ? (
           <path d={buildArrowPath(arrowPoints(from, over))} fill={tokens.boardArrow} opacity={0.55} />
         ) : (
           <rect
@@ -566,6 +544,19 @@ export function Board({
     [arrows],
   );
 
+  // Interactive mode can turn off while a pointer is still captured (for
+  // example, keyboard-switching to Setup or Present during a drag). Cancel the
+  // in-flight gesture at the mode boundary so its pointer-down callback cannot
+  // commit into an editing surface that is no longer active.
+  useEffect(() => {
+    if (interactive || !gesture) return;
+    const board = boardRef.current;
+    if (board?.hasPointerCapture(gesture.pointerId)) {
+      board.releasePointerCapture(gesture.pointerId);
+    }
+    setGesture(null);
+  }, [interactive, gesture]);
+
   // Map a pointer event to the square under it, or null outside the board.
   const squareAtPointer = (e: React.PointerEvent): string | null => {
     const rect = boardRef.current?.getBoundingClientRect();
@@ -610,6 +601,12 @@ export function Board({
 
   const onGesturePointerMove = (e: React.PointerEvent) => {
     if (!gesture || e.pointerId !== gesture.pointerId) return;
+    // The effect above owns normal mode transitions; this guard closes the
+    // event-ordering window before that effect has run.
+    if (!interactive) {
+      setGesture(null);
+      return;
+    }
     if ((e.buttons & gesture.buttonBit) === 0) {
       // The initiating button is no longer held: it was released off-board
       // with capture unavailable. Cancel rather than commit — an uncaptured
@@ -623,6 +620,11 @@ export function Board({
 
   const onGesturePointerUp = (e: React.PointerEvent) => {
     if (!gesture || e.pointerId !== gesture.pointerId) return;
+    // Never invoke the captured commit after the board has become inert.
+    if (!interactive) {
+      setGesture(null);
+      return;
+    }
     // Releasing a chorded second button must not finish the drag.
     if (buttonBit(e.button) !== gesture.buttonBit) return;
     setGesture(null);
@@ -651,8 +653,9 @@ export function Board({
   // While dark, the move on the board and the squares under a lit highlight or
   // a live check are being rehearsed — by the narration or by the alarm itself
   // — so their pieces resist the forgetting curve for as long as that lasts.
-  // App releases each rehearsal as it ends (see `touch` there), so those
-  // pieces fade out rather than vanish; the exception is an unpinned highlight,
+  // The world snapshot walk releases each rehearsal as it ends (see `touch`
+  // in world.ts), so those pieces fade out rather than vanish; the exception
+  // is an unpinned highlight,
   // which expires between events and keeps its own stamp. Arrows deliberately
   // hold nothing: the attack line persists while its endpoints fade.
   let mindFrame: MindFrame | null = null;

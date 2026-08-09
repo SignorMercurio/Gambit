@@ -2,15 +2,13 @@ Chess piece SVGs in public/pieces/
 ==================================
 
 The 12 chess piece SVG files in public/pieces/ are the Staunty set
-from Lichess.
+from Lichess. The SVG contents are unchanged; only the local filenames
+map Lichess's piece names to Gambit's light/dark naming convention.
 
 Source:   https://github.com/lichess-org/lila/tree/master/public/piece/staunty
 Author:   sadsnake1
 License:  Creative Commons Attribution-NonCommercial-ShareAlike 4.0
           International (CC BY-NC-SA 4.0)
-
-Attribution is included in the application footer:
-"Staunty pieces by sadsnake1 (CC BY-NC-SA 4.0)".
 
 License text:
   https://creativecommons.org/licenses/by-nc-sa/4.0/

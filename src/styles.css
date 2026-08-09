@@ -54,7 +54,8 @@
   --color-error-line: #ff7b7b;
   --color-error-text: #ffb4b4;
   --color-reset-text: #ff9b9b;
-  /* Tonal whites (interactive-state elevation ladder) */
+  /* Tonal whites: 04/06/10/12 are the interactive-state ladder; 08 is the
+     structural rail wash documented in DESIGN.md. */
   --tonal-white-04: rgba(255, 255, 255, 0.04);
   --tonal-white-06: rgba(255, 255, 255, 0.06);
   --tonal-white-08: rgba(255, 255, 255, 0.08);
@@ -938,7 +939,7 @@ body {
 }
 .pgn-mv.past,
 .present-mv.past { color: var(--color-rim-light-pewter); }
-/* A line the snapshot builder rejected (illegal SAN, bad FEN) is flagged
+/* A line the snapshot builder rejected (illegal SAN, bad FEN, resource cap) is flagged
    inline, not only in the errors band: vermillion ink plus a wavy strand,
    so the broken move is findable at a glance while paused anywhere. */
 .pgn-mv.has-error,
@@ -1160,7 +1161,7 @@ body {
   position: absolute;
   inset: -5px;
 }
-.pgn-x:hover { color: var(--color-studio-vermillion); background: var(--tonal-white-08); }
+.pgn-x:hover { color: var(--color-studio-vermillion); background: var(--tonal-white-10); }
 /* Inside tokens and variation blocks the × floats as a corner badge on
    hover instead of reserving inline space — the resting layout stays as
    compact as the read-only view. Dividers/errors keep it in flow (roomy). */
@@ -1203,6 +1204,12 @@ body {
   font-family: var(--font-mono);
   padding-top: 4px;
 }
+.footer a {
+  color: inherit;
+  text-underline-offset: 2px;
+}
+.footer a:hover,
+.footer a:focus-visible { color: var(--color-rim-light-pewter); }
 
 @media (max-height: 1040px) {
   .app {
@@ -1388,9 +1395,11 @@ body {
 }
 .app--present .timeline { flex: 1; min-width: 0; }
 /* Idle during playback: fade the bar and hide the cursor for a clean frame;
-   any pointer move re-arms the chrome (App toggles .app--idle). */
+   pointer activity or keyboard focus re-arms the chrome (App toggles
+   .app--idle). A focused control must never become visually hidden. */
 .app--idle { cursor: none; }
 .app--idle .controls { opacity: 0; pointer-events: none; }
+.app--idle .controls:focus-within { opacity: 1; pointer-events: auto; }
 
 .present-controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 /* Shared ghost recipe, hover and hit area live with .present-btn in the
@@ -1432,6 +1441,64 @@ body {
   justify-self: start;
 }
 /* .past / .current pill colors are shared with the editor list (see .pgn-mv). */
+
+@media (max-width: 760px) {
+  /* Present's desktop flex override cannot seat six controls at compact tablet
+     widths (at 601px the timeline collapsed to 16px). Use four bands so the
+     speed selector and PGN/Exit retain useful hit and scrub areas. */
+  .app--present .controls {
+    /* On a short phone a 211px fixed console covers the subtitle track. The
+       mobile console returns to its authored slot below the subtitle; hiding
+       it still changes only opacity, so the recording frame never reflows. */
+    position: static;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    column-gap: 10px;
+    row-gap: 10px;
+    padding: 12px 14px;
+  }
+  .app--present .play-btn { grid-row: 1; grid-column: 1; }
+  .app--present .ctrl-btn { grid-row: 1; grid-column: 2; }
+  .app--present .time-readout {
+    grid-row: 1;
+    grid-column: 3;
+    justify-self: end;
+  }
+  .app--present .timeline {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .app--present .speed-group {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
+  .app--present .speed-btn { padding-inline: 8px; }
+  .app--present .present-controls {
+    grid-row: 4;
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
+
+  /* The optional PGN is useful on a phone, but it cannot share a row with the
+     board: the fixed 220px panel used to crush the recording artifact to 105px
+     at a 375px viewport. Stack it below at full width instead. */
+  .app--present-pgn .main {
+    grid-template-columns: minmax(0, var(--artifact-fit-width));
+  }
+  .app--present-pgn .present-moves {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    height: clamp(200px, 38vh, 320px);
+  }
+}
 
 /* Reduced motion: cut decorative animation, keep functional motion (piece
    slides + arrow draw) but tighten so it's snappier and less attention-grabbing.

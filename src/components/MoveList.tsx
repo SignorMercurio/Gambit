@@ -330,7 +330,7 @@ type MoveListProps = {
   events: TimelineEvent[];
   states: MoveState[];
   reachedEventIndex: number;
-  // Lines the snapshot builder rejected (illegal SAN, bad FEN): their move
+  // Lines the snapshot builder rejected (illegal SAN, bad FEN, resource cap): their move
   // cells get inline error styling so the errors band isn't the only flag.
   errorLines: ReadonlySet<number>;
   onSeek: (t: number) => void;

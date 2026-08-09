@@ -14,13 +14,35 @@ try {
   // Independent entry points: load them concurrently (the module graph
   // dedupes shared deps), and read the stylesheet in the same batch.
   const [
-    { parseScript, parseScriptLine, rewriteScriptLineTime },
+    {
+      parseScript,
+      parseScriptLine,
+      parseTime,
+      fmtTime,
+      formatScriptTime,
+      rewriteScriptLineTime,
+      splitSanAnnotation,
+      MAX_SCRIPT_LINES,
+    },
     { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
     { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
     { syncRovingTabStops },
-    { buildMainline },
+    { buildMainline, findMainlineCursor },
     { mindPieceStrength, mindRevealStrength, mindSink },
-    { getActiveSubtitle, getSubtitleEnd },
+    { getActiveSubtitle, getSubtitleEnd, parseSrt },
+    {
+      BOARD_OVERLAY_LIFETIME,
+      MAX_LIVE_ARROWS,
+      buildWorld,
+      setupFromFen,
+    },
+    {
+      landBetween,
+      MAX_SAFE_PLAYBACK_SECONDS,
+      MAX_SCRIPT_TIMESTAMP_SECONDS,
+      playbackDuration,
+      timelineTicks,
+    },
     Chess,
     styles,
   ] = await Promise.all([
@@ -31,6 +53,8 @@ try {
     vite.ssrLoadModule('/src/components/PresentationMoves.tsx'),
     vite.ssrLoadModule('/src/lib/mind.ts'),
     vite.ssrLoadModule('/src/lib/subtitles.ts'),
+    vite.ssrLoadModule('/src/lib/world.ts'),
+    vite.ssrLoadModule('/src/lib/playback.ts'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
   ]);
@@ -54,6 +78,37 @@ try {
   assert.equal(rewriteScriptLineTime('[00:05]   ', 7), null);
   assert.equal(rewriteScriptLineTime('[00:05] e4', Number.NaN), null);
   assert.match(parseScript('[1::2] e4')[0].error, /invalid timestamp/i);
+  assert.ok(Number.isNaN(parseTime('00:60')), 'colon timestamps keep seconds below 60');
+  assert.equal(parseTime('60'), 60, 'plain seconds remain a supported shorthand');
+  assert.match(parseScript('[00:99] e4')[0].error, /invalid timestamp/i);
+  assert.ok(
+    Number.isNaN(parseTime(`1${'0'.repeat(308)}`)),
+    'timestamps beyond safe decisecond arithmetic fail visibly',
+  );
+  assert.equal(
+    parseTime(String(MAX_SCRIPT_TIMESTAMP_SECONDS)),
+    MAX_SCRIPT_TIMESTAMP_SECONDS,
+  );
+  assert.ok(Number.isNaN(parseTime(String(MAX_SCRIPT_TIMESTAMP_SECONDS + 1))));
+
+  // Command dispatch must be own-key based. Object-prototype names are SAN
+  // candidates and therefore fail visibly at world replay; they must never
+  // become function/object-valued event kinds that every switch drops.
+  const prototypeNames = parseScript('[00:01] constructor\n[00:02] __proto__');
+  assert.deepEqual(prototypeNames.map((event) => event.kind), ['move', 'move']);
+
+  // One highlight line can name at most the 64 board squares. Repetition is
+  // normalized before world/render work so a tiny semantic event cannot fan
+  // out into an arbitrarily large SVG subtree.
+  const dedupedHighlight = parseScript('[00:01] hl e4,E4,e4,d5')[0];
+  assert.deepEqual(dedupedHighlight.squares, ['e4', 'd5']);
+  const oversizedScript = Array.from(
+    { length: MAX_SCRIPT_LINES + 1 },
+    (_, index) => `# ${index}`,
+  ).join('\n');
+  const oversizedEvents = parseScript(oversizedScript);
+  assert.equal(oversizedEvents.length, 1);
+  assert.match(oversizedEvents[0].error, /line limit/i);
 
   assert.equal(
     nextFreeTime(saturated, 0.05, 0.1),
@@ -116,6 +171,66 @@ try {
   assert.match(wrapPlan.text, /^\[00:02\.5\] ml$/m);
   assert.deepEqual(parseScript(wrapPlan.text).filter((e) => 'error' in e), []);
 
+  // A different move before a future SAN must never degrade to a plain
+  // mainline insert when there is no room for br/move/ml. The later SAN can
+  // remain legal for the other side and silently change meaning.
+  const pinchedMainline = '[1.95] e4\n[2.2] e5';
+  const pinchedPlan = planMoveGesture(
+    parseScript(pinchedMainline),
+    pinchedMainline,
+    2,
+    'c5',
+    () => false,
+  );
+  assert.equal(pinchedPlan.kind, 'conflict');
+
+  // A parsed-but-invalid FEN is not a continuity cut. Planner state scanning
+  // receives the world's applied/rejected outcome and still protects the
+  // different future move with a complete variation.
+  const rejectedFenScript = '[1] e4\n[3] fen bad\n[4] e5';
+  const rejectedFenPlan = planMoveGesture(
+    parseScript(rejectedFenScript),
+    rejectedFenScript,
+    2,
+    'c5',
+    () => false,
+    new Set([1]),
+  );
+  assert.equal(rejectedFenPlan.kind, 'edit');
+  assert.match(rejectedFenPlan.text, /^\[00:02\] c5$/m);
+  assert.match(rejectedFenPlan.text, /\bbr$/m);
+  assert.match(rejectedFenPlan.text, /\bml$/m);
+
+  // A runtime-rejected SAN is position-dependent, unlike a malformed FEN.
+  // Inserting a legal move before it may make it legal, so the planner must
+  // keep it as a future continuity boundary and isolate the gesture in a
+  // variation instead of silently reviving the author's bad line.
+  const rejectedMoveScript = '[3] e5';
+  const rejectedMoveEvents = parseScript(rejectedMoveScript);
+  const rejectedMoveSetup = setupFromFen(Chess.STARTING_FEN);
+  const rejectedMoveWorld = buildWorld(rejectedMoveEvents, rejectedMoveSetup);
+  assert.deepEqual([...rejectedMoveWorld.rejectedEventIndexes], [0]);
+  const rejectedMovePlan = planMoveGesture(
+    rejectedMoveEvents,
+    rejectedMoveScript,
+    2,
+    'e4',
+    () => false,
+    rejectedMoveWorld.rejectedEventIndexes,
+  );
+  assert.equal(rejectedMovePlan.kind, 'edit');
+  assert.match(rejectedMovePlan.text, /\bbr$/m);
+  assert.match(rejectedMovePlan.text, /\bml$/m);
+  const rejectedMoveAfterEvents = parseScript(rejectedMovePlan.text);
+  const rejectedMoveAfterWorld = buildWorld(rejectedMoveAfterEvents, rejectedMoveSetup);
+  const originalMoveIndex = rejectedMoveAfterEvents.findIndex(
+    (event) => !('error' in event) && event.kind === 'move' && event.san === 'e5',
+  );
+  assert.ok(
+    rejectedMoveAfterWorld.rejectedEventIndexes.has(originalMoveIndex),
+    'the originally rejected SAN must remain rejected after the gesture edit',
+  );
+
   // A move while a variation is open extends it, pushing the variation's ml
   // later when the new move would land on or past it — the one sanctioned
   // rewrite of an existing line.
@@ -127,6 +242,20 @@ try {
   assert.match(extendPlan.text, /^\[00:04\.1\] d4$/m);
   assert.match(extendPlan.text, /^\[00:05\.1\] ml$/m);
   assert.deepEqual(parseScript(extendPlan.text).filter((e) => 'error' in e), []);
+
+  const saturatedVariation =
+    '[1.8] br\n[1.85] e4\n[2.0] hl a1\n[2.1] hl b1\n[2.2] ml\n[2.3] e5';
+  assert.equal(
+    planMoveGesture(
+      parseScript(saturatedVariation),
+      saturatedVariation,
+      1.9,
+      'c5',
+      () => false,
+    ).kind,
+    'conflict',
+    'an open variation must not overflow its mainline restore boundary',
+  );
 
   // finishBoardGesture commit routing: a move commits only onto a legal
   // target square, and an annotation resolves to a highlight on its own
@@ -183,6 +312,40 @@ try {
     );
   }
   assert.deepEqual(Chess.parseSAN('e4', Chess.initialState())?.to, [4, 3]);
+  assert.deepEqual(Chess.parseSAN('e4!', Chess.initialState())?.to, [4, 3]);
+  for (const badSuffix of ['e4+', 'e4#', 'e4!?', 'e4?!', 'e4!+', 'e4++', 'e4?????']) {
+    assert.equal(
+      Chess.parseSAN(badSuffix, Chess.initialState()),
+      null,
+      `${badSuffix} must not bypass the shared SAN suffix grammar`,
+    );
+  }
+  assert.deepEqual(splitSanAnnotation('Qxf7#!!'), { text: 'Qxf7#', mark: '!!' });
+  assert.deepEqual(
+    splitSanAnnotation('e4!?'),
+    { text: 'e4!?', mark: null },
+    'unsupported marks stay intact on the visible invalid SAN',
+  );
+
+  const rookCheck = Chess.stateFromFEN('7k/8/8/8/8/8/8/R3K3 w - - 0 1');
+  assert.ok(Chess.parseSAN('Ra8+', rookCheck));
+  assert.equal(Chess.parseSAN('Ra8#', rookCheck), null);
+  assert.ok(Chess.parseSAN('Ra8', rookCheck), 'omitting a check marker stays compatible');
+
+  let scholarsMate = Chess.initialState();
+  for (const san of ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6']) {
+    const move = Chess.parseSAN(san, scholarsMate);
+    assert.ok(move, `fixture move ${san} must resolve`);
+    scholarsMate = Chess.applyMove(scholarsMate, move);
+  }
+  assert.ok(Chess.parseSAN('Qxf7#', scholarsMate));
+  assert.ok(Chess.parseSAN('Qxf7#!!', scholarsMate));
+  assert.equal(Chess.parseSAN('Qxf7+', scholarsMate), null);
+  assert.ok(Chess.parseSAN('Qxf7', scholarsMate));
+
+  const quietCastle = Chess.stateFromFEN('4k3/8/8/8/8/8/8/4K2R w K - 0 1');
+  assert.ok(Chess.parseSAN('O-O', quietCastle));
+  assert.equal(Chess.parseSAN('O-O+', quietCastle), null);
 
   const promotion = Chess.stateFromFEN('7k/P7/8/8/8/8/8/7K w - - 0 1');
   assert.equal(Chess.parseSAN('a8', promotion), null, 'promotion piece must be explicit');
@@ -201,6 +364,17 @@ try {
   const validEp = Chess.stateFromFEN('7k/8/8/3pP3/8/8/8/7K w - d6 0 1');
   assert.equal(Chess.parseSAN('exd6', validEp)?.enPassant, true);
 
+  assert.throws(
+    () => Chess.stateFromFEN('8/8/8/8/8/8/8/4K3 w - - 0 1'),
+    /one king per side/i,
+  );
+  assert.throws(
+    () => Chess.stateFromFEN('4k3/8/8/8/8/8/4K3/4K3 w - - 0 1'),
+    /one king per side/i,
+  );
+  const adjacentKings = Chess.stateFromFEN('8/8/8/8/8/8/4k3/4K3 w - - 0 1');
+  assert.equal(Chess.parseSAN('Kxe2', adjacentKings), null, 'a king is never a capture target');
+
   // Subtitle lookup keeps the latest-started active cue while still falling
   // back to an earlier long cue after a shorter overlap ends.
   const overlappingCues = [
@@ -212,6 +386,169 @@ try {
   assert.equal(getActiveSubtitle(overlappingCues, 1.5)?.text, 'short');
   assert.equal(getActiveSubtitle(overlappingCues, 2.5)?.text, 'long');
   assert.equal(getActiveSubtitle(overlappingCues, 20), null);
+
+  const missingSeparatorSrt = `1
+00:00:00,000 --> 00:00:01,000
+First
+2
+00:00:01,000 --> 00:00:02,000
+Second`;
+  const recoveredSrt = parseSrt(missingSeparatorSrt);
+  assert.deepEqual(recoveredSrt.cues.map((cue) => cue.text), ['First', 'Second']);
+  assert.deepEqual(recoveredSrt.errors, [
+    { line: 4, error: 'missing blank line before subtitle cue' },
+  ]);
+
+  const malformedThenValidSrt = `1
+not a timestamp
+broken
+2
+00:00:01,000 --> 00:00:02,000
+Recovered`;
+  const recoveredAfterMalformed = parseSrt(malformedThenValidSrt);
+  assert.deepEqual(recoveredAfterMalformed.cues.map((cue) => cue.text), ['Recovered']);
+  assert.equal(recoveredAfterMalformed.errors.length, 2);
+
+  const bareMissingSeparatorSrt = `00:00:00,000 --> 00:00:01,000
+First
+00:00:01,000 --> 00:00:02,000
+Second`;
+  const recoveredBareSrt = parseSrt(bareMissingSeparatorSrt);
+  assert.deepEqual(recoveredBareSrt.cues.map((cue) => cue.text), ['First', 'Second']);
+  assert.deepEqual(recoveredBareSrt.errors, [
+    { line: 3, error: 'missing blank line before subtitle cue' },
+  ]);
+
+  const arrowTextSrt = `1
+00:00:00,000 --> 00:00:02,000
+2024
+Look --> there`;
+  const arrowTextCue = parseSrt(arrowTextSrt);
+  assert.deepEqual(arrowTextCue.errors, []);
+  assert.equal(arrowTextCue.cues[0].text, '2024\nLook --> there');
+
+  // World replay is the canonical applied/rejected outcome shared by the
+  // renderer, presentation PGN, and gesture planner.
+  const standardSetup = setupFromFen(Chess.STARTING_FEN);
+  assert.equal(standardSetup.error, null);
+  const runtimeEvents = parseScript(
+    '[00:01] e5\n[00:02] e4\n[00:03] fen bad\n[00:04] e5',
+  );
+  const runtimeWorld = buildWorld(runtimeEvents, standardSetup);
+  assert.deepEqual([...runtimeWorld.rejectedEventIndexes], [0, 2]);
+  assert.deepEqual(runtimeWorld.scriptErrors.map((error) => error.line), [1, 3]);
+  assert.deepEqual(runtimeWorld.moveStates, [
+    { fullmove: 1, turn: 'w' },
+    { fullmove: 1, turn: 'w' },
+    { fullmove: 1, turn: 'b' },
+    { fullmove: 1, turn: 'b' },
+  ]);
+  const finalRuntimeState = runtimeWorld.snapshots.at(-1).chessState;
+  assert.equal(finalRuntimeState.board[3][4]?.side, 'w');
+  assert.equal(finalRuntimeState.board[4][4]?.side, 'b');
+  assert.deepEqual(
+    buildMainline(
+      runtimeEvents,
+      runtimeWorld.moveStates,
+      runtimeWorld.rejectedEventIndexes,
+    ).map((row) => [row.num, row.white?.text ?? null, row.black?.text ?? null]),
+    [[1, 'e4', 'e5']],
+    'presentation follows the moves that actually changed the board',
+  );
+
+  const prototypeWorld = buildWorld(prototypeNames, standardSetup);
+  assert.deepEqual([...prototypeWorld.rejectedEventIndexes], [0, 1]);
+  assert.equal(prototypeWorld.scriptErrors.length, 2);
+
+  const unclosedBranchEvents = parseScript('[00:01] br\n[00:02] e4');
+  const unclosedBranchWorld = buildWorld(unclosedBranchEvents, standardSetup);
+  assert.equal(unclosedBranchWorld.scriptErrors[0].line, 1);
+  assert.deepEqual([...unclosedBranchWorld.rejectedEventIndexes], []);
+  assert.deepEqual(
+    buildMainline(
+      unclosedBranchEvents,
+      unclosedBranchWorld.moveStates,
+      new Set([0]),
+    ),
+    [],
+    'outcome filtering must never flatten variation depth in presentation',
+  );
+
+  const restoredOverlayEvents = parseScript(
+    '[0] hl e4 pin\n[1] br\n[2] hl d4 pin\n[3] ml',
+  );
+  const restoredOverlays = buildWorld(restoredOverlayEvents, standardSetup);
+  assert.deepEqual(
+    restoredOverlays.snapshots.at(-1).highlights.map((highlight) => highlight.sq),
+    ['e4'],
+    'mainline restore keeps the branch-entry overlay snapshot',
+  );
+
+  const expiredOverlayEvents = parseScript('[0] hl e4\n[3] Nf3');
+  const expiredOverlays = buildWorld(expiredOverlayEvents, standardSetup);
+  assert.deepEqual(expiredOverlays.snapshots[1].highlights.map((highlight) => highlight.sq), ['e4']);
+  assert.deepEqual(expiredOverlays.snapshots.at(-1).highlights, []);
+
+  const boardSquares = Array.from(
+    { length: 64 },
+    (_, index) => `${String.fromCharCode(97 + (index % 8))}${Math.floor(index / 8) + 1}`,
+  );
+  const longOverlayScript = Array.from(
+    { length: 500 },
+    (_, index) => `[${(index / 10).toFixed(1)}] hl ${boardSquares[index % boardSquares.length]}`,
+  ).join('\n');
+  const boundedOverlays = buildWorld(parseScript(longOverlayScript), standardSetup);
+  const overlayWindowBound = Math.ceil(BOARD_OVERLAY_LIFETIME.highlight / 0.1) + 1;
+  assert.ok(
+    Math.max(...boundedOverlays.snapshots.map((snapshot) => snapshot.highlights.length)) <=
+      overlayWindowBound,
+    'expired overlays are pruned from later snapshots instead of growing quadratically',
+  );
+
+  const uniqueArrowCount = Math.min(MAX_LIVE_ARROWS * 4, boardSquares.length ** 2);
+  const uniqueArrowScript = Array.from({ length: uniqueArrowCount }, (_, index) => {
+    const from = boardSquares[Math.floor(index / boardSquares.length)];
+    const to = boardSquares[index % boardSquares.length];
+    return `[0] ${from}->${to} pin`;
+  }).join('\n');
+  const boundedArrows = buildWorld(parseScript(uniqueArrowScript), standardSetup);
+  assert.ok(
+    Math.max(...boundedArrows.snapshots.map((snapshot) => snapshot.arrows.length)) <=
+      MAX_LIVE_ARROWS,
+    'unique same-time arrows cannot restore quadratic snapshot growth',
+  );
+  assert.ok(boundedArrows.scriptErrors.some((error) => /Too many live arrows/.test(error.error)));
+
+  const expiredArrowBudgetScript = [
+    ...uniqueArrowScript
+      .split('\n')
+      .slice(0, MAX_LIVE_ARROWS)
+      .map((line) => line.replace(/ pin$/, '')),
+    '[3] h8->a1',
+  ].join('\n');
+  const reusedArrowBudget = buildWorld(parseScript(expiredArrowBudgetScript), standardSetup);
+  assert.deepEqual(reusedArrowBudget.scriptErrors, []);
+  assert.deepEqual(
+    reusedArrowBudget.snapshots.at(-1).arrows.map((arrow) => `${arrow.from}-${arrow.to}`),
+    ['h8-a1'],
+    'expired arrows release the live-overlay budget before a new event applies',
+  );
+
+  const restatedOverlayScript = Array.from(
+    { length: 500 },
+    () => '[1] hl e4',
+  ).join('\n');
+  const restatedOverlays = buildWorld(parseScript(restatedOverlayScript), standardSetup);
+  assert.equal(
+    restatedOverlays.snapshots.at(-1).highlights.length,
+    1,
+    'restating one visual key does not stack identical SVG geometry',
+  );
+  const pinnedRestatement = buildWorld(
+    parseScript('[1] hl e4 pin\n[2] hl e4\n[99] Nf3'),
+    standardSetup,
+  );
+  assert.equal(pinnedRestatement.snapshots.at(-1).highlights[0]?.pinned, true);
 
   // Defensive line deletion treats its input as a set. Duplicate line ids
   // must not cascade into deleting the following authored line.
@@ -257,6 +594,19 @@ try {
     ],
     'a reset must start a new row instead of pairing across it',
   );
+  const presentationResetEvents = parseScript('[1] e4\n[2] rs\n[3] e4');
+  assert.equal(
+    findMainlineCursor(presentationResetEvents, 1),
+    -1,
+    'a setup event clears the current presentation move until the new line advances',
+  );
+  assert.equal(findMainlineCursor(presentationResetEvents, 2), 2);
+  const rejectedPresentationFen = parseScript('[1] e4\n[2] fen bad');
+  assert.equal(
+    findMainlineCursor(rejectedPresentationFen, 1, new Set([1])),
+    0,
+    'a rejected FEN does not clear the presentation cursor',
+  );
 
   const rovingControls = [{ tabIndex: 0 }, { tabIndex: 0 }, { tabIndex: 0 }];
   assert.equal(syncRovingTabStops(rovingControls, 1), 1);
@@ -264,6 +614,42 @@ try {
     rovingControls.map((control) => control.tabIndex),
     [-1, 0, -1],
     'a mixed button/input toolbar must retain exactly one tab stop',
+  );
+
+  assert.deepEqual(timelineTicks(30), [0, 5, 10, 15, 20, 25, 30]);
+  const hugeTicks = timelineTicks(999_999_999);
+  assert.ok(hugeTicks.length <= 24, 'authored timestamps cannot create millions of DOM ticks');
+  assert.ok(hugeTicks.every(Number.isFinite));
+  const extremeTicks = timelineTicks(Number.MAX_VALUE);
+  assert.ok(extremeTicks.length <= 24);
+  assert.ok(extremeTicks.every(Number.isFinite));
+  assert.equal(new Set(extremeTicks).size, extremeTicks.length);
+  assert.doesNotMatch(fmtTime(Number.MAX_VALUE), /Infinity|NaN/);
+  const pinchedLanding = landBetween(2, 2.1);
+  assert.ok(pinchedLanding > 2 && pinchedLanding < 2.1);
+  assert.equal(
+    landBetween(MAX_SAFE_PLAYBACK_SECONDS),
+    MAX_SAFE_PLAYBACK_SECONDS,
+    'tail landing cannot advance beyond the formatter/clock arithmetic boundary',
+  );
+  assert.ok(
+    landBetween(MAX_SCRIPT_TIMESTAMP_SECONDS) > MAX_SCRIPT_TIMESTAMP_SECONDS,
+    'the latest authored event retains a visible post-event landing',
+  );
+  assert.equal(
+    playbackDuration(MAX_SCRIPT_TIMESTAMP_SECONDS),
+    MAX_SAFE_PLAYBACK_SECONDS,
+    'the authored ceiling reserves the full three-second script tail',
+  );
+  assert.equal(
+    planLineInsert([], '', MAX_SCRIPT_TIMESTAMP_SECONDS + 1, 'hl e4').kind,
+    'conflict',
+    'gesture planners never emit a timestamp their parser rejects',
+  );
+  assert.equal(
+    parseScriptLine(`${formatScriptTime(MAX_SAFE_PLAYBACK_SECONDS)} hl e4`)?.t,
+    MAX_SCRIPT_TIMESTAMP_SECONDS,
+    'defensive timestamp formatting stays inside the authored ceiling',
   );
 
   // Recording layout is an authored invariant: normal laptop heights keep
@@ -277,6 +663,16 @@ try {
     /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
   );
   assert.doesNotMatch(styles, /--artifact-fit-width:[^;]*100dvh/);
+  assert.match(
+    styles,
+    /@media \(max-width:\s*760px\)[\s\S]*?\.app--present \.controls\s*\{[\s\S]*?display:\s*grid/,
+    'present mode restores the mobile transport grid after its desktop flex override',
+  );
+  assert.match(
+    styles,
+    /@media \(max-width:\s*760px\)[\s\S]*?\.app--present-pgn \.main\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*var\(--artifact-fit-width\)\)/,
+    'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
+  );
 
   // The mind's-eye void is derived from the playback clock, never animated by
   // CSS: a transition runs on wall time, so a paused scrub across `mind` would

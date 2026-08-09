@@ -2,18 +2,9 @@
 // renders the board, the timeline scrubber, and the editor panel.
 
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
-import {
-  Board,
-  type BoardArrow,
-  type BoardCheck,
-  type BoardHighlight,
-  type CaptureFlash,
-  type LastMove,
-  type PiecePos,
-} from './components/Board';
+import { Board } from './components/Board';
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
-import type { MindWorld } from './lib/mind';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { MoveList } from './components/MoveList';
 import { PresentationMoves } from './components/PresentationMoves';
@@ -29,45 +20,20 @@ import {
   fmtTime,
   lastEventIndexAt,
   parseScript,
-  type ErrorEvent,
 } from './lib/timeline';
 import { markerColors } from './lib/tokens';
 import { useRovingTabIndex } from './components/useRovingTabIndex';
+import { buildWorld, setupFromFen } from './lib/world';
+import {
+  landBetween,
+  MAX_SAFE_PLAYBACK_SECONDS,
+  playbackDuration,
+  playStateAt,
+  timelineTicks,
+  type PlayState,
+} from './lib/playback';
 
-type Positions = Record<string, PiecePos>;
-type BoardSetup = { positions: Positions; chessState: Chess.GameState };
 type NarrationTrack = { url: string; name: string; duration: number };
-
-function positionsFromBoard(board: Chess.Board): Positions {
-  const out: Positions = {};
-  let i = 0;
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
-      const piece = board[r][f];
-      if (!piece) continue;
-      out[`${piece.side}-${piece.type}-${i++}`] = { f, r, type: piece.type, side: piece.side };
-    }
-  }
-  return out;
-}
-
-function setupFromValidFen(fenText: string): BoardSetup {
-  const chessState = Chess.stateFromFEN(fenText);
-  return { chessState, positions: positionsFromBoard(chessState.board) };
-}
-
-function setupFromFen(fenText: string): BoardSetup & { error: string | null } {
-  try {
-    const setup = setupFromValidFen(fenText.trim() ? fenText : Chess.STARTING_FEN);
-    return { ...setup, error: null };
-  } catch (err) {
-    const chessState = Chess.initialState();
-    const message = err instanceof Error ? err.message : 'Invalid FEN';
-    return { chessState, positions: positionsFromBoard(chessState.board), error: message };
-  }
-}
-
-const STANDARD_SETUP = setupFromValidFen(Chess.STARTING_FEN);
 const LEGAL_MOVES_CACHE = new WeakMap<Chess.GameState, Chess.Move[]>();
 
 function legalMovesFor(state: Chess.GameState): Chess.Move[] {
@@ -78,103 +44,10 @@ function legalMovesFor(state: Chess.GameState): Chess.Move[] {
   return moves;
 }
 
-function movePosition(
-  positions: Positions,
-  mv: Chess.Move,
-  t: number,
-): {
-  positions: Positions;
-  captureFlash: Omit<CaptureFlash, 'id'> | null;
-  // Every square this move disturbs, in board notation — the mover's two, an
-  // en-passant victim's, and the castling rook's path. Returned here because
-  // this is the one place that already resolves them; the mind's-eye sketch
-  // names exactly these squares (plus the checked king, which is a property of
-  // the resulting position rather than of the move).
-  touched: string[];
-} {
-  // PiecePos values are immutable snapshots: copy the lookup table, then
-  // replace only the mover, victim, and castling rook touched by this move.
-  const out: Positions = { ...positions };
-  const [ff, fr] = mv.from;
-  const [tf, tr] = mv.to;
-  const touched = [Chess.idxToSq(ff, fr), Chess.idxToSq(tf, tr)];
-
-  let moverId: string | null = null;
-  for (const [k, v] of Object.entries(out)) {
-    if (!v.captured && v.f === ff && v.r === fr) {
-      moverId = k;
-      break;
-    }
-  }
-  let captureFlash: Omit<CaptureFlash, 'id'> | null = null;
-  if (mv.capture) {
-    const capF = tf;
-    const capR = mv.enPassant ? fr : tr;
-    captureFlash = { f: capF, r: capR, t };
-    touched.push(Chess.idxToSq(capF, capR));
-    for (const [k, v] of Object.entries(out)) {
-      if (k === moverId) continue;
-      if (!v.captured && v.f === capF && v.r === capR) {
-        out[k] = { ...v, captured: true, capturedAt: t };
-        break;
-      }
-    }
-  }
-  if (moverId) {
-    out[moverId] = {
-      ...out[moverId],
-      f: tf,
-      r: tr,
-      type: mv.promotion || out[moverId].type,
-      moveFromF: ff,
-      moveFromR: fr,
-      moveT: t,
-    };
-  }
-  if (mv.castle) {
-    const homeRank = tr;
-    const rookFromF = mv.castle === 'K' ? 7 : 0;
-    const rookToF = mv.castle === 'K' ? 5 : 3;
-    touched.push(Chess.idxToSq(rookFromF, homeRank), Chess.idxToSq(rookToF, homeRank));
-    for (const [k, v] of Object.entries(out)) {
-      if (!v.captured && v.f === rookFromF && v.r === homeRank && v.type === 'r') {
-        out[k] = {
-          ...v,
-          f: rookToF,
-          moveFromF: rookFromF,
-          moveFromR: homeRank,
-          moveT: t,
-        };
-        break;
-      }
-    }
-  }
-  return { positions: out, captureFlash, touched };
-}
-
 function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(
     target.closest('button, input, textarea, select, [role="button"], [role="tab"], [contenteditable="true"]'),
   );
-}
-
-function generateTicks(duration: number): number[] {
-  let interval = 5;
-  if (duration > 180) interval = 60;
-  else if (duration > 90) interval = 30;
-  else if (duration > 60) interval = 15;
-  else if (duration > 30) interval = 10;
-  const ticks: number[] = [];
-  for (let t = 0; t <= duration + 0.001; t += interval) ticks.push(Math.round(t * 10) / 10);
-  return ticks;
-}
-
-type PlayState = 'play' | 'pause' | 'replay';
-
-function playStateAt(playing: boolean, time: number, duration: number): PlayState {
-  if (playing) return 'pause';
-  if (time >= duration) return 'replay';
-  return 'play';
 }
 
 const PLAY_LABELS: Record<PlayState, string> = {
@@ -182,18 +55,6 @@ const PLAY_LABELS: Record<PlayState, string> = {
   pause: 'Pause',
   replay: 'Restart playback',
 };
-
-// The one paused-landing convention (see the AGENTS.md pitfall): every timed
-// visual derives from `time - event.t`, so at age 0 the moved piece,
-// highlight, and arrow are all invisible. Land just past t — +0.5s when
-// there's room, otherwise as late as the gap to the next event allows,
-// always strictly between the two. `nextT` must be the first *strictly
-// later* event (equal-time events fire together), or undefined at the tail.
-function landBetween(t: number, nextT?: number): number {
-  if (nextT == null) return t + 0.5;
-  const gap = nextT - t;
-  return t + Math.min(0.5, Math.max(gap - 0.05, gap / 2));
-}
 
 const DRAFT_KEYS = {
   script: 'gambit:draft:script',
@@ -209,6 +70,7 @@ const PRESENT_IDLE_MS = 2000;
 
 const SCRIPT_CHANGED_DURING_GESTURE_ERROR =
   'Cannot record this gesture because the script changed while the pointer was held. Try again from the updated position.';
+const MAX_TEXT_IMPORT_BYTES = 1_000_000;
 
 function loadDraft(key: string, fallback: string): string {
   if (typeof window === 'undefined') return fallback;
@@ -264,14 +126,25 @@ function takeSelectedFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
 
 function readSelectedTextFile(
   e: React.ChangeEvent<HTMLInputElement>,
+  latestRead: { current: number },
   onRead: (text: string, fileName: string) => void,
+  onError: (message: string) => void,
 ): void {
   const file = takeSelectedFile(e);
   if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = () => onRead(String(reader.result ?? ''), file.name);
-  reader.readAsText(file);
+  const request = ++latestRead.current;
+  if (file.size > MAX_TEXT_IMPORT_BYTES) {
+    onError(`Could not import "${file.name}": text files are limited to 1 MB.`);
+    return;
+  }
+  file.text().then(
+    (text) => {
+      if (latestRead.current === request) onRead(text, file.name);
+    },
+    () => {
+      if (latestRead.current === request) onError(`Could not read "${file.name}".`);
+    },
+  );
 }
 
 // Import affordance: a labelled button driving a hidden file input. The
@@ -335,13 +208,12 @@ export default function App() {
 
   const duration = useMemo(() => {
     const lastEvent = events[events.length - 1];
-    return Math.max(
-      30,
-      (lastEvent ? lastEvent.t : 0) + 3,
-      getSubtitleEnd(subtitleCues) + 1,
+    return playbackDuration(
+      lastEvent?.t,
+      getSubtitleEnd(subtitleCues),
       // Like subtitles, narration that outlasts the chess script extends
       // playback so the tail of the recording stays audible.
-      narration ? narration.duration : 0,
+      narration?.duration,
     );
   }, [events, subtitleCues, narration]);
 
@@ -363,7 +235,7 @@ export default function App() {
   const [presentPgnRaw, setPresentPgn] = useDraftText(DRAFT_KEYS.presentPgn, '0');
   const presentPgn = presentPgnRaw === '1';
   // Chrome (floating transport + cursor) fades out while present + playing +
-  // pointer idle; any pointer move brings it back.
+  // pointer idle; pointer movement or contact brings it back.
   const [chromeHidden, setChromeHidden] = useState(false);
   const scriptTextRef = useLatest(scriptText);
   // The pause-landing rule must follow the transport state at release, not
@@ -378,6 +250,8 @@ export default function App() {
   // structured edit. Hand edits clear it so undo never reverts typing.
   const [gestureUndo, setGestureUndo] = useState<string | null>(null);
   const [scriptEditError, setScriptEditError] = useState<string | null>(null);
+  const [scriptImportError, setScriptImportError] = useState<string | null>(null);
+  const [subtitleImportError, setSubtitleImportError] = useState<string | null>(null);
 
   useEffect(() => {
     setTime((t) => Math.min(t, duration));
@@ -390,6 +264,8 @@ export default function App() {
   const narrationLabelId = useId();
   const narrationFileInputId = useId();
   const narrationErrorId = useId();
+  const scriptImportErrorId = useId();
+  const subtitleImportErrorId = useId();
   const setupTabId = useId();
   const scriptTabId = useId();
   const panelId = useId();
@@ -397,6 +273,8 @@ export default function App() {
   const setupTabRef = useRef<HTMLButtonElement>(null);
   const scriptTabRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const latestScriptReadRef = useRef(0);
+  const latestSubtitleReadRef = useRef(0);
 
   const onTabKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -405,28 +283,39 @@ export default function App() {
       e.stopPropagation();
       const next = tab === 'script' ? 'setup' : 'script';
       setTab(next);
-      // Match the ARIA Tabs pattern: focus follows selection on arrow keys.
-      requestAnimationFrame(() => {
-        (next === 'script' ? scriptTabRef : setupTabRef).current?.focus();
-      });
+      // Both tab buttons stay mounted, so focus can follow selection
+      // synchronously without inserting an uncancelled frame of latency.
+      (next === 'script' ? scriptTabRef : setupTabRef).current?.focus();
     },
     [tab],
   );
 
   const onScriptFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    readSelectedTextFile(e, (text, fileName) => {
-      setScriptText(text);
-      setScriptFileName(fileName);
-      setGestureUndo(null);
-      setScriptEditError(null);
-    });
+    setScriptImportError(null);
+    readSelectedTextFile(
+      e,
+      latestScriptReadRef,
+      (text, fileName) => {
+        setScriptText(text);
+        setScriptFileName(fileName);
+        setGestureUndo(null);
+        setScriptEditError(null);
+      },
+      setScriptImportError,
+    );
   }, []);
 
   const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    readSelectedTextFile(e, (text, fileName) => {
-      setSubtitleText(text);
-      setSubtitleFileName(fileName);
-    });
+    setSubtitleImportError(null);
+    readSelectedTextFile(
+      e,
+      latestSubtitleReadRef,
+      (text, fileName) => {
+        setSubtitleText(text);
+        setSubtitleFileName(fileName);
+      },
+      setSubtitleImportError,
+    );
   }, []);
 
   const cancelPendingNarration = useCallback(() => {
@@ -455,7 +344,9 @@ export default function App() {
       probe.onloadedmetadata = () => {
         if (pendingNarrationRef.current !== pending) return;
         pendingNarrationRef.current = null;
-        const audioDuration = Number.isFinite(probe.duration) ? probe.duration : 0;
+        const audioDuration = Number.isFinite(probe.duration)
+          ? Math.min(probe.duration, MAX_SAFE_PLAYBACK_SECONDS)
+          : 0;
         setNarrationError(null);
         setNarration({ url, name: file.name, duration: audioDuration });
       };
@@ -549,239 +440,13 @@ export default function App() {
     // at tick granularity on purpose; see narrationDriftTick above.
   }, [narrationDriftTick, narration, playing]);
 
-  // snapshots[0] is the initial state; snapshots[i+1] is the state AFTER
-  // applying events[i]. Each frame picks the snapshot for `time`; Board derives
-  // timed overlay visibility from that snapshot and the playback clock.
-  type WorldSnap = {
-    positions: Positions;
-    chessState: Chess.GameState;
-    lastMove: LastMove | null;
-    highlights: BoardHighlight[];
-    arrows: BoardArrow[];
-    lastCapture: CaptureFlash | null;
-    // Checked king square, derived from chessState (never from a SAN `+`).
-    // State-scoped, not transient: it persists until the position changes.
-    check: BoardCheck | null;
-    // Mind's-eye mode: while non-null, only squares the script has "named"
-    // (moves, captures, highlights, arrow endpoints, checked kings) render
-    // pieces; everything else stays dark. `touches` maps square → the time
-    // it was last named, so recency drives the fresh→ghost fade.
-    mind: MindWorld | null;
-    // Time of the `reveal` that ended the last mind phase — drives the
-    // deterministic full-board fade-in (-Infinity when never revealed).
-    revealedAt: number;
-  };
-
-  const { snapshots, scriptErrors } = useMemo<{
-    snapshots: WorldSnap[];
-    scriptErrors: ErrorEvent[];
-  }>(() => {
-    type BranchSnap = WorldSnap & {
-      line: number;
-      t: number;
-      raw: string;
-    };
-
-    const checkAt = (state: Chess.GameState, t: number): BoardCheck | null => {
-      const sq = Chess.checkedKingSquare(state);
-      return sq ? { sq, t } : null;
-    };
-
-    let positions = initialSetup.positions;
-    let chessState = initialSetup.chessState;
-    let lastMove: LastMove | null = null;
-    // Rebound (not mutated) so prior snapshots share their array references.
-    let highlights: BoardHighlight[] = [];
-    let arrows: BoardArrow[] = [];
-    let lastCapture: CaptureFlash | null = null;
-    // A custom Start FEN may already be a check position.
-    let check: BoardCheck | null = checkAt(initialSetup.chessState, 0);
-    let mind: MindWorld | null = null;
-    let revealedAt = Number.NEGATIVE_INFINITY;
-    const errorAcc: ErrorEvent[] = [];
-    const branchStack: BranchSnap[] = [];
-
-    // Name squares into the mental sketch (rebound, never mutated, so prior
-    // snapshots keep their own maps). A no-op outside mind mode. Naming is also
-    // how a rehearsal is released: a square held at full strength carries a
-    // stale stamp, so at the instant the rehearsal ends it is named again and
-    // fades over the normal curve instead of vanishing in one frame.
-    const touch = (t: number, ...sqs: (string | null | undefined)[]) => {
-      if (!mind) return;
-      const touches = new Map(mind.touches);
-      for (const sq of sqs) if (sq) touches.set(sq, t);
-      mind = { since: mind.since, touches, held: mind.held };
-    };
-
-    // The same, for a move — which additionally holds its squares at full
-    // strength until the next move takes over. Naming the outgoing ones on the
-    // way through is what makes that handover a fade: they start forgetting the
-    // instant they stop being the move on the board, instead of popping out.
-    const nameMove = (t: number, ...sqs: (string | null | undefined)[]) => {
-      if (!mind) return;
-      touch(t, ...mind.held, ...sqs);
-      const held = new Set<string>();
-      for (const sq of sqs) if (sq) held.add(sq);
-      mind = { since: mind.since, touches: mind.touches, held };
-    };
-
-    const list: WorldSnap[] = [];
-    const applySetup = (setup: Pick<WorldSnap, 'positions' | 'chessState'>, t: number) => {
-      positions = setup.positions;
-      chessState = setup.chessState;
-      lastMove = null;
-      highlights = [];
-      arrows = [];
-      lastCapture = null;
-      check = checkAt(setup.chessState, t);
-      // A position reset empties the sketch: the narrator starts over in the
-      // dark. The mode itself persists — only `reveal` lifts it — so `since`
-      // carries over untouched: it times the sink, and restarting it here
-      // would flash the board back to the lit palette on an empty position.
-      if (mind) mind = { since: mind.since, touches: new Map(), held: new Set() };
-    };
-    const snapshot = (): WorldSnap => ({
-      positions,
-      chessState,
-      lastMove,
-      highlights,
-      arrows,
-      lastCapture,
-      check,
-      mind,
-      revealedAt,
-    });
-
-    list.push(snapshot());
-
-    for (const ev of events) {
-      if ('error' in ev) {
-        errorAcc.push(ev);
-      } else {
-        switch (ev.kind) {
-          case 'highlight':
-            highlights = [
-              ...highlights,
-              ...ev.squares.map((sq) => ({ sq, t: ev.t, pinned: ev.pinned })),
-            ];
-            touch(ev.t, ...ev.squares);
-            break;
-          case 'arrow':
-            arrows = [...arrows, { from: ev.from, to: ev.to, t: ev.t, pinned: ev.pinned }];
-            touch(ev.t, ev.from, ev.to);
-            break;
-          case 'clear':
-            // Clearing a pinned alarm ends its rehearsal, so release its
-            // squares. Pinned only, and that is a safety property as much as a
-            // scope choice: an unpinned highlight fades on its own between
-            // events, so naming it here could resurrect a piece that had
-            // already finished forgetting. Arrows hold nothing.
-            touch(ev.t, ...highlights.filter((h) => h.pinned).map((h) => h.sq));
-            highlights = [];
-            arrows = [];
-            break;
-          case 'reset':
-            applySetup(initialSetup, ev.t);
-            break;
-          case 'start':
-            applySetup(STANDARD_SETUP, ev.t);
-            break;
-          case 'fen': {
-            const setup = setupFromFen(ev.fen);
-            if (setup.error) {
-              errorAcc.push({ t: ev.t, error: setup.error, line: ev.line, raw: ev.raw });
-            } else {
-              applySetup(setup, ev.t);
-            }
-            break;
-          }
-          case 'branch':
-            branchStack.push({ ...snapshot(), line: ev.line, t: ev.t, raw: ev.raw });
-            break;
-          case 'mainline': {
-            const snap = branchStack.pop();
-            if (!snap) {
-              errorAcc.push({
-                t: ev.t,
-                error: `'mainline' without matching 'branch'`,
-                line: ev.line,
-                raw: ev.raw,
-              });
-            } else {
-              positions = snap.positions;
-              chessState = snap.chessState;
-              lastMove = snap.lastMove;
-              highlights = snap.highlights;
-              arrows = snap.arrows;
-              lastCapture = snap.lastCapture;
-              check = snap.check;
-              mind = snap.mind;
-              revealedAt = snap.revealedAt;
-            }
-            break;
-          }
-          case 'mind':
-            // Entering the mind's eye starts an empty sketch — the board
-            // sinks into darkness and only named squares resurface. Re-entering
-            // while already dark clears the sketch but keeps the original
-            // `since`: the sink is a phase clock, not a per-sketch one.
-            mind = { since: mind ? mind.since : ev.t, touches: new Map(), held: new Set() };
-            break;
-          case 'reveal':
-            if (mind) {
-              mind = null;
-              revealedAt = ev.t;
-            }
-            break;
-          case 'move': {
-            const mv = Chess.parseSAN(ev.san, chessState);
-            if (!mv) {
-              errorAcc.push({ t: ev.t, error: `Invalid move: "${ev.san}"`, line: ev.line, raw: ev.raw });
-            } else {
-              const moved = movePosition(positions, mv, ev.t);
-              positions = moved.positions;
-              chessState = Chess.applyMove(chessState, mv);
-              // The mover's king was in check and a legal move ends it, so that
-              // rehearsal is over — release the square. Load-bearing only for a
-              // check the sketch never named: one inherited from the Start FEN
-              // or an `rs`/`st`/`fen` inside mind mode, where the king shows
-              // purely because Board rehearses a live check and has no stamp
-              // behind it, so it would vanish outright. When a move delivered
-              // the check, that move put the king in `held`, and `nameMove`
-              // releases the whole held set below.
-              if (check) touch(ev.t, check.sq);
-              check = checkAt(chessState, ev.t);
-              lastMove = {
-                fromF: mv.from[0],
-                fromR: mv.from[1],
-                toF: mv.to[0],
-                toR: mv.to[1],
-                t: ev.t,
-                annotation: ev.annotation,
-              };
-              if (moved.captureFlash) lastCapture = { ...moved.captureFlash, id: `${ev.line}` };
-              // A move names everything it disturbs into the sketch, plus the
-              // king a check lights up, and holds them until the next move.
-              nameMove(ev.t, ...moved.touched, check?.sq);
-            }
-            break;
-          }
-        }
-      }
-
-      list.push(snapshot());
-    }
-
-    for (const snap of branchStack) {
-      errorAcc.push({
-        t: snap.t,
-        error: `'branch' without matching 'mainline'`,
-        line: snap.line,
-        raw: snap.raw,
-      });
-    }
-    return { snapshots: list, scriptErrors: errorAcc };
-  }, [events, initialSetup]);
+  // snapshots[0] is the initial state; snapshots[i + 1] is the state after
+  // events[i]. World derivation is pure and independently regression-tested;
+  // React only selects the snapshot for the current playback clock.
+  const { snapshots, scriptErrors, moveStates, rejectedEventIndexes } = useMemo(
+    () => buildWorld(events, initialSetup),
+    [events, initialSetup],
+  );
 
   const reachedEventIndex = lastEventIndexAt(events, time);
 
@@ -911,7 +576,14 @@ export default function App() {
           (scripted.promotion ?? null) === (mv.promotion ?? null)
         );
       };
-      const plan = planMoveGesture(events, scriptText, time, san, matchesScripted);
+      const plan = planMoveGesture(
+        events,
+        scriptText,
+        time,
+        san,
+        matchesScripted,
+        rejectedEventIndexes,
+      );
       if (plan.kind === 'seek') {
         setScriptEditError(null);
         seekEvent(plan.t);
@@ -919,7 +591,16 @@ export default function App() {
         applyEditPlan(plan);
       }
     },
-    [world.chessState, events, time, scriptText, seekEvent, gestureIsStale, applyEditPlan],
+    [
+      world.chessState,
+      events,
+      time,
+      scriptText,
+      seekEvent,
+      gestureIsStale,
+      applyEditPlan,
+      rejectedEventIndexes,
+    ],
   );
 
   const onArrowGesture = useCallback(
@@ -974,11 +655,11 @@ export default function App() {
   );
 
   // Present-mode chrome auto-hide: fade the floating transport and cursor
-  // after the pointer is idle during playback; any pointer move brings them
-  // back. Re-arms on play/pause so pausing always reveals the chrome. The
-  // pointer handler fires at sample rate during a recording, so it dispatches
-  // only on a real reveal — the board is already re-rendering every frame, and
-  // a redundant setState here would schedule a second pass on top of it.
+  // after the pointer is idle during playback; pointer movement or contact
+  // brings them back. Re-arms on play/pause so pausing always reveals the
+  // chrome. The pointer handler fires at sample rate during a recording, so it
+  // dispatches only on a real reveal — the board is already re-rendering every
+  // frame, and a redundant setState here would schedule a second pass on top.
   const chromeHiddenRef = useLatest(chromeHidden);
   useEffect(() => {
     if (!present) {
@@ -993,9 +674,16 @@ export default function App() {
     };
     arm();
     window.addEventListener('pointermove', arm, { passive: true });
+    // Touchscreens do not promise a pointermove for a stationary tap. Listen
+    // on the window so a tap can reveal controls even while the hidden bar is
+    // deliberately pointer-inert.
+    window.addEventListener('pointerdown', arm, { passive: true });
+    window.addEventListener('focusin', arm);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('pointermove', arm);
+      window.removeEventListener('pointerdown', arm);
+      window.removeEventListener('focusin', arm);
     };
   }, [present, playing, chromeHiddenRef]);
 
@@ -1043,19 +731,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [handleTransportKey]);
 
-  const ticks = useMemo(() => generateTicks(duration), [duration]);
-
-  // Position context before each event (move numbering for the PGN list):
-  // snapshots[i] is the state BEFORE events[i], so its fullmove/turn label
-  // the move that events[i] plays.
-  const moveStates = useMemo(
-    () =>
-      events.map((_, i) => ({
-        fullmove: snapshots[i].chessState.fullmove,
-        turn: snapshots[i].chessState.turn,
-      })),
-    [events, snapshots],
-  );
+  const ticks = useMemo(() => timelineTicks(duration), [duration]);
 
   const activeSubtitle = getActiveSubtitle(subtitleCues, time);
   const activeSubtitleText = useMemo(
@@ -1160,6 +836,8 @@ export default function App() {
   // (FEN, script, subtitles, narration) must stay visible on both pages.
   const errorsBlock = useMemo(() => (initialSetup.error ||
     narrationError ||
+    scriptImportError ||
+    subtitleImportError ||
     scriptEditError ||
     scriptErrors.length > 0 ||
     subtitleResult.errors.length > 0) && (
@@ -1184,6 +862,18 @@ export default function App() {
           <span>{scriptEditError}</span>
         </div>
       )}
+      {scriptImportError && (
+        <div className="err-row">
+          <span className="err-line">SCRIPT</span>
+          <span id={scriptImportErrorId}>{scriptImportError}</span>
+        </div>
+      )}
+      {subtitleImportError && (
+        <div className="err-row">
+          <span className="err-line">SRT</span>
+          <span id={subtitleImportErrorId}>{subtitleImportError}</span>
+        </div>
+      )}
       {scriptErrors.map((er, i) => (
         <div key={i} className="err-row">
           <span className="err-line">L{er.line}</span>
@@ -1200,11 +890,15 @@ export default function App() {
   ), [
     initialSetup.error,
     narrationError,
+    scriptImportError,
+    subtitleImportError,
     scriptEditError,
     scriptErrors,
     subtitleResult.errors,
     fenErrorId,
     narrationErrorId,
+    scriptImportErrorId,
+    subtitleImportErrorId,
   ]);
 
   return (
@@ -1408,6 +1102,7 @@ export default function App() {
             events={events}
             states={moveStates}
             reachedEventIndex={reachedEventIndex}
+            rejectedEventIndexes={rejectedEventIndexes}
           />
         )}
 
@@ -1499,6 +1194,7 @@ export default function App() {
                         id={scriptFileInputId}
                         accept=".gambit,.txt,text/plain"
                         label="Import script file"
+                        describedBy={scriptImportError ? scriptImportErrorId : undefined}
                         onChange={onScriptFileChange}
                       />
                     </div>
@@ -1542,6 +1238,7 @@ export default function App() {
                       // past it would silently revert the user's typing too.
                       setGestureUndo(null);
                       setScriptEditError(null);
+                      setScriptImportError(null);
                     }}
                   />
                 )}
@@ -1575,6 +1272,7 @@ export default function App() {
                         id={subtitleFileInputId}
                         accept=".srt,text/plain"
                         label="Import subtitle file"
+                        describedBy={subtitleImportError ? subtitleImportErrorId : undefined}
                         onChange={onSubtitleFileChange}
                       />
                     </div>
@@ -1587,6 +1285,7 @@ export default function App() {
                     onChange={(e) => {
                       setSubtitleText(e.target.value);
                       setSubtitleFileName(null);
+                      setSubtitleImportError(null);
                     }}
                     placeholder={'1\n00:00:01,000 --> 00:00:04,000\nCentral control is established.'}
                   />
@@ -1637,7 +1336,18 @@ export default function App() {
       {!present && (
         <footer className="footer">
           <span>Space play/pause · ←/→ ±1s · Click event or marker to seek</span>
-          <span> · Staunty pieces by sadsnake1 (CC BY-NC-SA 4.0)</span>
+          <span>
+            {' · Pieces: '}
+            <a
+              href="https://github.com/lichess-org/lila/tree/master/public/piece/staunty"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Staunty by sadsnake1
+            </a>
+            {' · '}
+            <a href="/licenses/LICENSE-pieces.txt">CC BY-NC-SA 4.0</a>
+          </span>
         </footer>
       )}
     </div>

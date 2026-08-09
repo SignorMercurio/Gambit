@@ -48,6 +48,27 @@ const PROMOTION_TYPES: readonly PieceType[] = ['q', 'r', 'b', 'n'];
 const PIECE_SAN_RE = /^([NBRQK])([a-h])?([1-8])?(x)?([a-h][1-8])$/;
 const PAWN_CAPTURE_SAN_RE = /^([a-h])x([a-h][1-8])(?:=([NBRQ]))?$/;
 const PAWN_MOVE_SAN_RE = /^([a-h][1-8])(?:=([NBRQ]))?$/;
+const SAN_SUFFIX_RE = /^([^+#!?\s]+)([+#])?(!!|\?\?|!|\?)?$/;
+
+export type SANSuffix = {
+  text: string;
+  check: '+' | '#' | null;
+  annotation: '!!' | '!' | '?' | '??' | null;
+};
+
+// The single accepted SAN-suffix grammar. A check/mate marker, when present,
+// precedes one of Gambit's four supported quality marks. Keeping this parser
+// separate lets timeline annotation derivation share the same strict boundary
+// instead of growing another permissive trailing-character regex.
+export function parseSANSuffix(san: string): SANSuffix | null {
+  const match = san.match(SAN_SUFFIX_RE);
+  if (!match) return null;
+  return {
+    text: match[1],
+    check: (match[2] as '+' | '#' | undefined) ?? null,
+    annotation: (match[3] as SANSuffix['annotation'] | undefined) ?? null,
+  };
+}
 
 export function sqToIdx(sq: string): { f: number; r: number } {
   return { f: sq.charCodeAt(0) - 97, r: parseInt(sq[1], 10) - 1 };
@@ -62,18 +83,6 @@ function oppositeSide(side: Side): Side {
 
 function emptyBoard(): Board {
   return Array.from({ length: 8 }, () => Array<Square>(8).fill(null));
-}
-
-function initialBoard(): Board {
-  const b = emptyBoard();
-  const back: PieceType[] = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
-  for (let f = 0; f < 8; f++) {
-    b[0][f] = { type: back[f], side: 'w' };
-    b[1][f] = { type: 'p', side: 'w' };
-    b[6][f] = { type: 'p', side: 'b' };
-    b[7][f] = { type: back[f], side: 'b' };
-  }
-  return b;
 }
 
 function parseCastling(s: string): Castling {
@@ -96,6 +105,7 @@ export function stateFromFEN(fen: string): GameState {
   if (ranks.length !== 8) throw new Error('Invalid FEN: expected 8 ranks');
 
   const board = emptyBoard();
+  const kings: Record<Side, number> = { w: 0, b: 0 };
   for (let rankIndex = 0; rankIndex < 8; rankIndex++) {
     const rank = ranks[rankIndex];
     const r = 7 - rankIndex;
@@ -107,13 +117,19 @@ export function stateFromFEN(fen: string): GameState {
       }
       if (!/[prnbqkPRNBQK]/.test(ch)) throw new Error('Invalid FEN: bad piece placement');
       if (f >= 8) throw new Error('Invalid FEN: rank is too long');
-      board[r][f] = {
+      const piece = {
         type: ch.toLowerCase() as PieceType,
-        side: ch === ch.toUpperCase() ? 'w' : 'b',
+        side: (ch === ch.toUpperCase() ? 'w' : 'b') as Side,
       };
+      board[r][f] = piece;
+      if (piece.type === 'k') kings[piece.side]++;
       f++;
     }
     if (f !== 8) throw new Error('Invalid FEN: rank is not 8 files');
+  }
+
+  if (kings.w !== 1 || kings.b !== 1) {
+    throw new Error('Invalid FEN: expected exactly one king per side');
   }
 
   if (activeColor !== 'w' && activeColor !== 'b') throw new Error('Invalid FEN: active color must be w or b');
@@ -354,6 +370,10 @@ export function legalMoves(state: GameState): Move[] {
         const tr = t[1];
         const flag = t[2];
         const target = board[tr][tf];
+        // Check detection still needs attacks *onto* a king square, so the
+        // pseudo-target generator includes kings. The legal-move boundary is
+        // where king capture must be excluded.
+        if (target?.type === 'k') continue;
         const isCap = !!target || flag === 'ep';
         const baseMv: Move = {
           from: [f, r],
@@ -413,12 +433,17 @@ export function legalMoves(state: GameState): Move[] {
 export function parseSAN(san: string, state: GameState): Move | null {
   const trimmed = san.trim();
   if (/\s/.test(trimmed)) return null;
-  const raw = trimmed.replace(/[+#!?]+$/g, '');
-  if (/^O-O-O$/i.test(raw) || raw === '0-0-0') {
-    return legalMoves(state).find((m) => m.castle === 'Q') || null;
-  }
-  if (/^O-O$/i.test(raw) || raw === '0-0') {
-    return legalMoves(state).find((m) => m.castle === 'K') || null;
+  const suffix = parseSANSuffix(trimmed);
+  if (!suffix) return null;
+  const raw = suffix.text;
+  const castle = /^O-O-O$/i.test(raw) || raw === '0-0-0'
+    ? 'Q'
+    : /^O-O$/i.test(raw) || raw === '0-0'
+      ? 'K'
+      : null;
+  if (castle) {
+    const candidate = legalMoves(state).find((move) => move.castle === castle);
+    return candidate && checkSuffixMatches(state, candidate, suffix.check) ? candidate : null;
   }
 
   const pieceMatch = raw.match(PIECE_SAN_RE);
@@ -454,7 +479,24 @@ export function parseSAN(san: string, state: GameState): Move | null {
     return true;
   });
 
-  return candidates.length === 1 ? candidates[0] : null;
+  if (candidates.length !== 1) return null;
+  const candidate = candidates[0];
+  return checkSuffixMatches(state, candidate, suffix.check) ? candidate : null;
+}
+
+function checkSuffixMatches(
+  state: GameState,
+  move: Move,
+  declared: SANSuffix['check'],
+): boolean {
+  if (!declared) return true;
+  return checkMarkerForMove(state, move) === declared;
+}
+
+function checkMarkerForMove(state: GameState, move: Move): '+' | '#' | null {
+  const next = applyMove(state, move);
+  if (!inCheck(next.board, next.turn)) return null;
+  return legalMoves(next).length === 0 ? '#' : '+';
 }
 
 // Serialize a legal move to SAN in the given position — the inverse of
@@ -488,20 +530,9 @@ export function sanForMove(state: GameState, mv: Move): string {
     }
     san = mv.piece.toUpperCase() + from + (mv.capture ? 'x' : '') + idxToSq(mv.to[0], mv.to[1]);
   }
-  const next = applyMove(state, mv);
-  if (inCheck(next.board, next.turn)) {
-    san += legalMoves(next).length === 0 ? '#' : '+';
-  }
-  return san;
+  return san + (checkMarkerForMove(state, mv) ?? '');
 }
 
 export function initialState(): GameState {
-  return {
-    board: initialBoard(),
-    turn: 'w',
-    castling: { wK: true, wQ: true, bK: true, bQ: true },
-    enPassant: null,
-    halfmove: 0,
-    fullmove: 1,
-  };
+  return stateFromFEN(STARTING_FEN);
 }

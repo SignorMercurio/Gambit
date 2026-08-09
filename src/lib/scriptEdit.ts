@@ -15,14 +15,18 @@ import {
   type ParsedEvent,
   type TimelineEvent,
 } from './timeline';
+import { isValidScriptTimestamp, MAX_SCRIPT_TIMESTAMP_SECONDS } from './playback';
 
 // The one decisecond-boundary vocabulary for every scanner below: `capDeci`
 // converts an exclusive upper bound to grid units, `firstDeciAbove` yields
 // the first grid slot strictly above a (possibly off-grid, possibly
 // infinite) time — grid rounding must never slip a stamp back across the
 // previous event.
-const capDeci = (limit: number): number =>
-  Number.isFinite(limit) ? Math.round(limit * 10) : Infinity;
+const MAX_SCRIPT_DECI = Math.round(MAX_SCRIPT_TIMESTAMP_SECONDS * 10);
+const capDeci = (limit: number): number => Math.min(
+  MAX_SCRIPT_DECI + 1,
+  Number.isFinite(limit) ? Math.round(limit * 10) : MAX_SCRIPT_DECI + 1,
+);
 
 function firstDeciAbove(t: number): number {
   if (!Number.isFinite(t)) return 0;
@@ -56,6 +60,7 @@ export function nextFreeTime(
   limit = Infinity,
   floor = -Infinity,
 ): number | null {
+  if (!isValidScriptTimestamp(t)) return null;
   const taken = takenDeciseconds(text);
   const limitDeci = capDeci(limit);
   const scan = (step: number, cap: number): number | null => {
@@ -78,8 +83,7 @@ export function nextFreeTime(
 // the given gap after the previous, all strictly below `limit`. Used to lay
 // out multi-line structures (br / move / ml). When the preferred spacing
 // does not fit under the limit, retries with tight 0.1s gaps; returns null
-// when even that fails — the caller falls back to a plain insert when one
-// slot remains, or reports an explicit conflict when the grid is saturated.
+// when even that fails — the caller reports an explicit conflict.
 function findSlots(
   text: string,
   from: number,
@@ -87,6 +91,7 @@ function findSlots(
   limit = Infinity,
   floor = -Infinity,
 ): number[] | null {
+  if (!isValidScriptTimestamp(from)) return null;
   const taken = takenDeciseconds(text);
   const limitDeci = capDeci(limit);
   const layout = (gapsDeci: number[]): number[] | null => {
@@ -115,7 +120,8 @@ function findSlots(
 function nearestFreeTimeBelow(text: string, t: number, floor: number): number | null {
   const taken = takenDeciseconds(text);
   const lowest = firstDeciAbove(floor);
-  for (let d = Math.round(t * 10) - 1; d >= lowest; d--) {
+  const start = Math.min(MAX_SCRIPT_DECI + 1, Math.round(t * 10)) - 1;
+  for (let d = start; d >= lowest; d--) {
     if (!taken.has(d)) return d / 10;
   }
   return null;
@@ -137,6 +143,7 @@ function retimeLine(text: string, line: number, t: number): string {
 type LineTimeEdit = { text: string; line: number | null };
 
 export function setLineTime(text: string, line: number, t: number): LineTimeEdit {
+  if (!isValidScriptTimestamp(t)) return { text, line: null };
   // Decide and write on the same decisecond grid: the written stamp rounds,
   // so an unrounded decision could place the line on the other side of a
   // textual neighbor than the chronology check assumed.
@@ -214,6 +221,9 @@ type MoveGesturePlan =
 
 const NO_FREE_SLOT_ERROR =
   'Cannot record this gesture: no free 0.1s slot before the next scripted event. Move the playhead or retime the neighboring event.';
+const NO_VARIATION_ROOM_ERROR =
+  'Cannot record this move: not enough free 0.1s slots to preserve the scripted main line. Move the playhead or retime the neighboring event.';
+const NO_REJECTED_EVENT_INDEXES: ReadonlySet<number> = new Set();
 
 // Plain insert: stamp `body` at the playhead, stepping +0.5s past taken
 // stamps so successive paused gestures never stack on one instant, capped
@@ -245,9 +255,9 @@ export function planLineInsert(
 //   a different move / br → wrap the gesture in its own br/ml variation;
 //   ml                    → extend the open variation, pushing its ml later
 //                           when the new move would land on or past it.
-// When the br/ml structure cannot fit before the next event, fall back to a
-// plain insert when a slot remains; a saturated interval becomes an explicit
-// conflict. Never silently reorder or delete the author's lines.
+// When the br/ml structure cannot fit before the next event, report a conflict:
+// a plain insert can change which piece a later SAN resolves to without
+// producing an error. Never silently alter, reorder, or delete the main line.
 // `matchesScripted` answers "does this scripted SAN resolve to the gestured
 // move?" — chess resolution stays with the caller.
 export function planMoveGesture(
@@ -256,6 +266,7 @@ export function planMoveGesture(
   time: number,
   san: string,
   matchesScripted: (scriptedSan: string) => boolean,
+  rejectedEventIndexes: ReadonlySet<number> = NO_REJECTED_EVENT_INDEXES,
 ): MoveGesturePlan {
   const prevIdx = lastEventIndexAt(events, time);
   // Every stamp this planner lays out is floored strictly after the event
@@ -266,6 +277,11 @@ export function planMoveGesture(
   for (let i = prevIdx + 1; i < events.length; i++) {
     const e = events[i];
     if ('error' in e) continue;
+    // A malformed FEN is an intrinsic failure and therefore cannot cut
+    // continuity. A rejected SAN is position-dependent: inserting the
+    // gestured move can make that same SAN legal, so it must still protect the
+    // future line instead of being skipped and silently "revived".
+    if (rejectedEventIndexes.has(i) && e.kind === 'fen') continue;
     if (
       e.kind === 'move' ||
       e.kind === 'fen' ||
@@ -298,7 +314,7 @@ export function planMoveGesture(
       Number.isFinite(cap) ? cap - 0.1 : Infinity,
       prevT,
     );
-    if (!slot) return planLineInsert(events, scriptText, time, san);
+    if (!slot) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
     const [mvT] = slot;
     let text = scriptText;
     let mlT = stateEv.t;
@@ -308,7 +324,7 @@ export function planMoveGesture(
       // line's variation membership.
       const pushed = Number.isFinite(cap) ? Math.min(mvT + 1, cap - 0.1) : mvT + 1;
       const free = nearestFreeTimeBelow(text, pushed + 0.1, mvT);
-      if (free == null) return planLineInsert(events, scriptText, time, san);
+      if (free == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
       mlT = free;
       text = retimeLine(text, stateEv.line, mlT);
     }
@@ -341,7 +357,7 @@ export function planMoveGesture(
     const slots = findSlots(scriptText, time, [0.5, 1], boundT, prevT);
     if (slots) placed = { brT: slots[0], mvT: slots[1], mlT: slots[2] };
   }
-  if (!placed) return planLineInsert(events, scriptText, time, san);
+  if (!placed) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
   let text = insertScriptLine(scriptText, placed.brT, 'br');
   text = insertScriptLine(text, placed.mvT, san);
   text = insertScriptLine(text, placed.mlT, 'ml');
