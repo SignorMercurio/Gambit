@@ -4,6 +4,8 @@ Chess timeline renderer. Replays a game from a timestamped script with annotatio
 
 ## Run
 
+Requires Node.js 20.19+ (or 22.12+).
+
 ```sh
 npm install
 npm run dev
@@ -14,20 +16,22 @@ Open the URL Vite prints (typically http://localhost:5173).
 ## Script syntax
 
 ```
-[mm:ss] e4              # SAN move
-[mm:ss] hl d4,e4        # square highlight (also accepts "highlight")
-[mm:ss] f1->c4          # arrow (also accepts →, "to", or old "arrow f1->c4")
-[mm:ss] cl              # clear annotations (also accepts "clear")
-[mm:ss] rs              # reset board to the current Start FEN (also accepts "reset")
-[mm:ss] st              # reset board to the standard initial position (also accepts "start")
-[mm:ss] fen <FEN>       # set board to a specific FEN (also accepts "setfen")
-[mm:ss] br              # enter variation (also accepts "branch")
-[mm:ss] ml              # exit variation (also accepts "mainline")
+[mm:ss] e4!                 # SAN move; optional quality suffix: !!, !, ?, or ??
+[mm:ss] hl d4,e4 pin        # highlight squares; optional pin lasts until cl/rs/st/fen
+[mm:ss] f1->c4 pin          # arrow; pin is optional; also accepts →, "to", or "arrow"
+[mm:ss] cl                  # clear annotations (also accepts "clear")
+[mm:ss] rs                  # reset to the configured Start FEN (also accepts "reset")
+[mm:ss] st                  # reset to the standard position (also accepts "start")
+[mm:ss] fen <FEN>           # set a position (also accepts "setfen")
+[mm:ss] br                  # enter a variation (also accepts "branch")
+[mm:ss] ml                  # return to mainline (also accepts "mainline")
+[mm:ss] mind                # enter the deterministic mind's-eye view
+[mm:ss] reveal              # reveal the full board again
 ```
 
 ## Subtitles
 
-Paste SRT text in the Script panel or upload a `.srt` file. Subtitle cues use standard SRT time ranges:
+Open the **Setup** tab to paste SRT text or import a `.srt` file. Subtitle cues use standard SRT time ranges and must be separated by a blank line:
 
 ```
 1
@@ -37,4 +41,7 @@ Central control is established.
 
 ## Credits
 
-Staunty chess piece SVGs by sadsnake1 via Lichess. See [LICENSE-pieces.txt](./LICENSE-pieces.txt).
+Staunty chess piece SVGs by sadsnake1 via Lichess. See the
+[piece asset notice](./public/licenses/LICENSE-pieces.txt) (CC BY-NC-SA 4.0).
+That license includes a NonCommercial restriction; confirm that it covers the
+intended recording/distribution, or replace the piece set before commercial use.
