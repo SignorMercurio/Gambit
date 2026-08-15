@@ -25,9 +25,25 @@ Open the URL Vite prints (typically http://localhost:5173).
 [mm:ss] fen <FEN>           # set a position (also accepts "setfen")
 [mm:ss] br                  # enter a variation (also accepts "branch")
 [mm:ss] ml                  # return to mainline (also accepts "mainline")
+[mm:ss] rp                  # replay prior mainline moves at 0.5s each (also accepts "replay")
 [mm:ss] mind                # enter the deterministic mind's-eye view
 [mm:ss] reveal              # reveal the full board again
 ```
+
+`rp` replays every successfully applied move before it that is outside all
+`br` / `ml` variations. Resets, standard starts, and valid FEN changes are
+honored without consuming a replay step. The replay must fit before the next
+authored event; otherwise Gambit shows a script error and leaves the board
+unchanged. Use `reveal` before `rp` when mind's-eye mode is active.
+
+## Board PNG export
+
+Use **Export PNG** in the editor header, or **PNG** in Present mode, to download
+the currently visible board as a 1440×1440 image. The export keeps the current
+orientation, coordinates, pieces, highlights, arrows, last-move tint, checks,
+capture effects, annotation badges, and mind's-eye frame. Subtitles, controls,
+PGN, and in-progress editing gestures are excluded. Browser zoom and the board's
+onscreen size do not change the output dimensions.
 
 ## Subtitles
 
@@ -41,7 +57,9 @@ Central control is established.
 
 ## Credits
 
-Staunty chess piece SVGs by sadsnake1 via Lichess. See the
-[piece asset notice](./public/licenses/LICENSE-pieces.txt) (CC BY-NC-SA 4.0).
+Staunty chess piece SVGs by sadsnake1 via Lichess, modified for Gambit
+(warmer outline color; nothing else changed). See the
+[piece asset notice](./public/licenses/LICENSE-pieces.txt) (CC BY-NC-SA 4.0)
+for the exact changes.
 That license includes a NonCommercial restriction; confirm that it covers the
 intended recording/distribution, or replace the piece set before commercial use.
