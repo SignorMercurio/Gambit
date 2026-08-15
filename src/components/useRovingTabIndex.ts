@@ -32,12 +32,24 @@ export function syncRovingTabStops<T extends { tabIndex: number }>(
   return current;
 }
 
+// `mirrorTo` is an *output*, not the handle you attach: the returned `ref`
+// callback writes the node into it, for callers that also need it (scrolling
+// the list, hit-testing a click against the panel). It sits in `opts` because
+// as a leading parameter it read as the container handle — and attaching that
+// instead of the returned `ref` typechecks (a MutableRefObject is a valid
+// `ref` prop) and silently no-ops, which is exactly the eight-Tab-stop bug
+// below. Callers that don't need the node pass nothing.
 export function useRovingTabIndex<T extends HTMLElement>(
-  containerRef: React.RefObject<T | null>,
   selector: string,
-  opts?: { verticalArrows?: boolean; keySelector?: string },
+  opts?: {
+    verticalArrows?: boolean;
+    keySelector?: string;
+    mirrorTo?: React.MutableRefObject<T | null>;
+  },
 ) {
   const cursorRef = useRef(0);
+  const ownRef = useRef<T | null>(null);
+  const containerRef = opts?.mirrorTo ?? ownRef;
   const verticalArrows = opts?.verticalArrows ?? false;
   const keySelector = opts?.keySelector ?? selector;
 
@@ -49,18 +61,34 @@ export function useRovingTabIndex<T extends HTMLElement>(
     [containerRef, selector],
   );
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const sweep = () => {
-      const els = controls();
-      cursorRef.current = syncRovingTabStops(els, cursorRef.current);
-    };
-    sweep();
-    const observer = new MutationObserver(sweep);
-    observer.observe(container, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [containerRef, controls]);
+  // Attached as a callback ref rather than read out of `containerRef` in an
+  // effect. The effect form had a precondition nobody had written down: its
+  // deps are all stable, so it ran exactly once at mount, and a container that
+  // mounts *later* was never swept. The pin row and the move list are always
+  // mounted so it held there by luck; the insert menu's panel renders only
+  // while open, so all eight command rows kept `tabIndex=0` and the group cost
+  // eight Tab stops instead of the one this hook exists to provide. A hook that
+  // silently no-ops on an unmounted container is the wrong shape — this one
+  // observes whatever node it is given, whenever it arrives.
+  const observerRef = useRef<MutationObserver | null>(null);
+  const attach = useCallback(
+    (node: T | null) => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      containerRef.current = node;
+      if (!node) return;
+      const sweep = () => {
+        cursorRef.current = syncRovingTabStops(controls(), cursorRef.current);
+      };
+      sweep();
+      const observer = new MutationObserver(sweep);
+      observer.observe(node, { childList: true, subtree: true });
+      observerRef.current = observer;
+    },
+    [containerRef, controls],
+  );
+
+  useEffect(() => () => observerRef.current?.disconnect(), []);
 
   // The handlers sit on the container, so a target matching the selector is
   // by construction one of the container's own controls: indexOf always hits
@@ -102,7 +130,7 @@ export function useRovingTabIndex<T extends HTMLElement>(
   );
 
   return useMemo(
-    () => ({ getControls: controls, onFocus, onKeyDown }),
-    [controls, onFocus, onKeyDown],
+    () => ({ ref: attach, getControls: controls, onFocus, onKeyDown }),
+    [attach, controls, onFocus, onKeyDown],
   );
 }

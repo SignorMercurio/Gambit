@@ -22,7 +22,7 @@ import {
   type MoveAnnotation,
   type TimelineEvent,
 } from '../lib/timeline';
-import { markerColors, type MarkerKind } from '../lib/tokens';
+import { markerColors, markerKindFor, type MarkerKind } from '../lib/tokens';
 import { useRovingTabIndex } from './useRovingTabIndex';
 
 type Mark = { i: number; kind: MarkerKind; t: number; line: number; body: string };
@@ -163,6 +163,7 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
       case 'highlight':
       case 'arrow':
       case 'clear':
+      case 'replay':
       case 'mind':
       case 'reveal': {
         const mark: Mark = { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) };
@@ -334,7 +335,7 @@ type MoveListProps = {
   // cells get inline error styling so the errors band isn't the only flag.
   errorLines: ReadonlySet<number>;
   onSeek: (t: number) => void;
-  listRef: React.RefObject<HTMLDivElement>;
+  listRef: React.MutableRefObject<HTMLDivElement | null>;
   labelId: string;
   onRetime: (line: number, t: number) => number | null;
   onDelete: (lines: number[]) => void;
@@ -368,7 +369,8 @@ export const MoveList = memo(function MoveList({
   // keeps the invariant across the time chip's child-local button↔input
   // swaps, and the chip input's keys stay its own (the hook only handles
   // keys from buttons).
-  const roving = useRovingTabIndex(listRef, ROVING_SELECTOR, {
+  const roving = useRovingTabIndex(ROVING_SELECTOR, {
+    mirrorTo: listRef,
     verticalArrows: true,
     // Time inputs participate in the single-stop sweep, but keep their own
     // ArrowUp/ArrowDown editing behavior instead of navigating the toolbar.
@@ -451,16 +453,17 @@ export const MoveList = memo(function MoveList({
   );
 
   const markDot = (m: Mark) => {
+    const kind = markerKindFor(m.kind, m.line, errorLines);
     const dot = (
       <button
         type="button"
         className={`pgn-dot ${stateClass(m.i)}`}
-        data-kind={m.kind}
+        data-kind={kind}
         data-evi={m.i}
         aria-current={m.i === reachedEventIndex ? 'step' : undefined}
-        style={{ color: markerColors[m.kind] }}
-        title={`${fmtTime(m.t, 'auto')} · ${m.body}`}
-        aria-label={`Seek to ${fmtTime(m.t, 'auto')}: ${m.body}`}
+        style={{ color: markerColors[kind] }}
+        title={`${fmtTime(m.t, 'auto')} · ${m.body}${kind === 'err' ? ' · script error' : ''}`}
+        aria-label={`Seek to ${fmtTime(m.t, 'auto')}: ${m.body}${kind === 'err' ? ' (script error)' : ''}`}
         onClick={() => onSeek(m.t)}
       />
     );
@@ -571,7 +574,7 @@ export const MoveList = memo(function MoveList({
 
   return (
     <div
-      ref={listRef}
+      ref={roving.ref}
       className="event-list"
       role="toolbar"
       tabIndex={-1}

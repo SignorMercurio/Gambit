@@ -26,15 +26,29 @@ try {
     },
     { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
     { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
+    { boardViewPosition, squareFromBoardView },
+    {
+      BOARD_EXPORT_SIZE,
+      BOARD_EXPORT_TIMEOUT_MESSAGE,
+      boardPngFilename,
+      downloadBoardPng,
+      withTimeout,
+    },
     { syncRovingTabStops },
     { buildMainline, findMainlineCursor },
+    { HlRing },
+    { AUTHORED_ELSEWHERE_COMMANDS, COMMANDS, INSERTABLE_COMMANDS, SYNTAX_GROUPS },
+    { SYNTAX_HINT },
+    { markerColors, markerForms, tokens: boardTokens },
     { mindPieceStrength, mindRevealStrength, mindSink },
     { getActiveSubtitle, getSubtitleEnd, parseSrt },
     {
       BOARD_OVERLAY_LIFETIME,
       MAX_LIVE_ARROWS,
+      REPLAY_STEP_SECONDS,
       buildWorld,
       setupFromFen,
+      worldFrameAt,
     },
     {
       landBetween,
@@ -49,8 +63,14 @@ try {
     vite.ssrLoadModule('/src/lib/timeline.ts'),
     vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
     vite.ssrLoadModule('/src/lib/boardGesture.ts'),
+    vite.ssrLoadModule('/src/lib/boardOrientation.ts'),
+    vite.ssrLoadModule('/src/lib/boardExport.ts'),
     vite.ssrLoadModule('/src/components/useRovingTabIndex.ts'),
     vite.ssrLoadModule('/src/components/PresentationMoves.tsx'),
+    vite.ssrLoadModule('/src/components/Board.tsx'),
+    vite.ssrLoadModule('/src/lib/commands.ts'),
+    vite.ssrLoadModule('/src/components/SyntaxHint.tsx'),
+    vite.ssrLoadModule('/src/lib/tokens.ts'),
     vite.ssrLoadModule('/src/lib/mind.ts'),
     vite.ssrLoadModule('/src/lib/subtitles.ts'),
     vite.ssrLoadModule('/src/lib/world.ts'),
@@ -61,6 +81,32 @@ try {
 
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
   const events = parseScript(saturated);
+
+  const replayAliases = parseScript('[1] rp\n[2] replay');
+  assert.deepEqual(replayAliases.map((event) => event.kind), ['replay', 'replay']);
+  assert.match(parseScript('[1] replay 1')[0].error, /takes no arguments/i);
+
+  // Board orientation is a reversible view transform only. Every canonical
+  // square must survive a screen-cell round trip in both perspectives so
+  // pieces, overlays, and pointer gestures cannot disagree after a flip.
+  for (const orientation of ['white', 'black']) {
+    for (let r = 0; r < 8; r++) {
+      for (let f = 0; f < 8; f++) {
+        const view = boardViewPosition(f, r, orientation);
+        assert.equal(squareFromBoardView(view.x, view.y, orientation), Chess.idxToSq(f, r));
+      }
+    }
+  }
+  // Which square is the top-left cell in each perspective. The inverse
+  // (`squareFromBoardView(0, 0, …)`) needs no anchor of its own: the round trip
+  // above closes it at f=0,r=7 and f=7,r=0.
+  assert.deepEqual(boardViewPosition(0, 7, 'white'), { x: 0, y: 0 });
+  assert.deepEqual(boardViewPosition(7, 0, 'black'), { x: 0, y: 0 });
+
+  assert.equal(BOARD_EXPORT_SIZE, 1440);
+  assert.equal(boardPngFilename(12.509), 'gambit-board-00-12-50.png');
+  assert.equal(boardPngFilename(72.349), 'gambit-board-01-12-34.png');
+  assert.equal(boardPngFilename(Number.NaN), 'gambit-board-00-00-00.png');
 
   // Script parsing and timestamp rewriting share one line grammar. In-place
   // edits preserve authored whitespace; malformed or body-less lines stay
@@ -301,6 +347,37 @@ try {
   // SAN is conservative: ambiguous or coordinate-like input must surface as
   // a script error instead of silently choosing a legal move, and promotions
   // must name the promoted piece explicitly.
+  // A left-press that can't start a move returns silently, which reads as a
+  // dead board. The two cases worth naming look identical on screen — a piece
+  // sits there and refuses to move — so the reason has to distinguish them.
+  {
+    const start = Chess.initialState();
+    assert.equal(
+      Chess.explainNoMoves(start, 'e7'),
+      "it's White to move",
+      'pressing the opponent\'s piece names whose turn it is',
+    );
+    // Knight d2 absolutely pinned to the e1 king by the bishop on b4.
+    const pinned = Chess.stateFromFEN('4k3/8/8/8/1b6/8/3N4/4K3 w - - 0 1');
+    assert.equal(
+      Chess.explainNoMoves(pinned, 'd2'),
+      'that knight has no legal move',
+      'a piece of the right colour with nowhere to go names the piece',
+    );
+    assert.equal(
+      Chess.explainNoMoves(start, 'e4'),
+      null,
+      'an empty square warrants no message — nothing there offered a drag',
+    );
+    // The reason is re-derived, not taken on trust: a piece that *can* move
+    // must never be handed a sentence saying it cannot.
+    assert.equal(
+      Chess.explainNoMoves(start, 'e2'),
+      null,
+      'a movable piece yields no explanation even if asked',
+    );
+  }
+
   const ambiguous = Chess.stateFromFEN('4k3/8/8/8/8/1N3N2/8/4K3 w - - 0 1');
   assert.equal(Chess.parseSAN('Nd2', ambiguous), null, 'ambiguous SAN must be rejected');
   assert.deepEqual(Chess.parseSAN('Nbd2', ambiguous)?.from, [1, 2]);
@@ -431,6 +508,120 @@ Look --> there`;
   // renderer, presentation PGN, and gesture planner.
   const standardSetup = setupFromFen(Chess.STARTING_FEN);
   assert.equal(standardSetup.error, null);
+
+  const replayEvents = parseScript(
+    '[1] e4\n[2] br\n[3] e5\n[4] ml\n[5] c5\n[10] rp',
+  );
+  const replayWorld = buildWorld(replayEvents, standardSetup);
+  assert.equal(REPLAY_STEP_SECONDS, 0.5);
+  assert.deepEqual(replayWorld.scriptErrors, []);
+  assert.equal(replayWorld.visualEndTime, 11);
+  assert.deepEqual(
+    replayWorld.replaySequences.get(5).frames.map((frame) => frame.sourceEventIndex),
+    [0, 4],
+    'replay includes applied mainline moves and excludes every move inside br/ml',
+  );
+  const replayFirst = worldFrameAt(replayWorld, 5, 10);
+  assert.equal(replayFirst.replaySourceEventIndex, 0);
+  assert.equal(replayFirst.replayActive, true);
+  assert.equal(
+    worldFrameAt(replayWorld, 5, 10.5).replaySourceEventIndex,
+    0,
+    'the exact paused-seek boundary still shows the first replay move',
+  );
+  assert.equal(worldFrameAt(replayWorld, 5, 10.5001).replaySourceEventIndex, 4);
+  assert.equal(worldFrameAt(replayWorld, 5, 11).replayActive, false);
+  assert.strictEqual(
+    worldFrameAt(replayWorld, 5, 10.75).snapshot,
+    worldFrameAt(replayWorld, 5, 10.75).snapshot,
+    'scrubbing to the same replay time selects the same immutable frame',
+  );
+  assert.deepEqual(
+    buildMainline(
+      replayEvents,
+      replayWorld.moveStates,
+      replayWorld.rejectedEventIndexes,
+    ).map((row) => [row.white?.text ?? null, row.black?.text ?? null]),
+    [['e4', 'c5']],
+    'the replay directive never duplicates moves in the presentation PGN',
+  );
+
+  // The walk has to continue from where the replay left the board. This was
+  // covered only indirectly: every replay script here ended on its `rp`, so the
+  // hand-off to the *next* event was never asserted. It used to be a destructure
+  // of the final frame back into the walk's locals — nine fields spelled out a
+  // third time, and the one copy TypeScript could not check, since an omitted
+  // field there typechecks clean and silently leaves the board stale.
+  const afterReplay = buildWorld(
+    parseScript('[1] e4\n[2] hl e4 pin\n[3] rp\n[8] hl d4'),
+    standardSetup,
+  );
+  assert.deepEqual(afterReplay.scriptErrors, []);
+  const settled = worldFrameAt(afterReplay, 2, 4).snapshot;
+  assert.equal(settled.chessState.board[3][4]?.side, 'w', 'the replayed move survives the replay');
+  assert.equal(settled.chessState.board[1][4], null, 'and the pawn is not still on its origin');
+  assert.deepEqual(settled.highlights, [], 'replay clears overlays, pinned ones included');
+  const nextEvent = worldFrameAt(afterReplay, 3, 8.1).snapshot;
+  assert.equal(
+    nextEvent.chessState.board[3][4]?.side,
+    'w',
+    'the event after a replay builds on the position the replay ended at',
+  );
+  assert.deepEqual(
+    nextEvent.highlights.map((h) => h.sq),
+    ['d4'],
+    'and adds to the cleared overlay set rather than a stale one',
+  );
+
+  const replayAcrossSetupEvents = parseScript(
+    '[1] e4\n[2] st\n[3] d4\n[5] replay',
+  );
+  const replayAcrossSetups = buildWorld(replayAcrossSetupEvents, standardSetup);
+  const setupReplayFrames = replayAcrossSetups.replaySequences.get(3).frames;
+  assert.equal(setupReplayFrames.length, 2);
+  const afterResetMove = setupReplayFrames[1].snapshot.chessState.board;
+  assert.equal(afterResetMove[1][4]?.side, 'w', 'st restores the e-pawn before the next replay move');
+  assert.equal(afterResetMove[3][3]?.side, 'w', 'the post-setup d4 move is still replayed');
+
+  const replayAfterRejectedMove = buildWorld(
+    parseScript('[1] e5\n[2] e4\n[5] rp'),
+    standardSetup,
+  );
+  assert.deepEqual([...replayAfterRejectedMove.rejectedEventIndexes], [0]);
+  assert.deepEqual(
+    replayAfterRejectedMove.replaySequences.get(2).frames.map((frame) => frame.sourceEventIndex),
+    [1],
+    'moves rejected by the canonical world walk are not revived by replay',
+  );
+
+  const overlappingReplay = buildWorld(
+    parseScript('[1] e4\n[2] e5\n[3] rp\n[3.5] Nf3'),
+    standardSetup,
+  );
+  assert.equal(overlappingReplay.replaySequences.size, 0);
+  assert.match(overlappingReplay.scriptErrors.find((error) => error.line === 3).error, /needs 1\.0s/i);
+
+  const emptyReplay = buildWorld(parseScript('[1] rp'), standardSetup);
+  assert.match(emptyReplay.scriptErrors[0].error, /at least one applied mainline move/i);
+
+  const branchReplay = buildWorld(
+    parseScript('[1] e4\n[2] br\n[3] e5\n[4] rp\n[5] ml'),
+    standardSetup,
+  );
+  assert.match(branchReplay.scriptErrors.find((error) => error.line === 4).error, /main line/i);
+
+  const mindReplay = buildWorld(
+    parseScript('[1] e4\n[2] mind\n[3] rp'),
+    standardSetup,
+  );
+  assert.match(mindReplay.scriptErrors.find((error) => error.line === 3).error, /requires reveal/i);
+
+  const replayAtTail = buildWorld(
+    parseScript('[1] e4\n[2] e5\n[29] rp'),
+    standardSetup,
+  );
+  assert.equal(replayAtTail.visualEndTime, 30);
+  assert.equal(playbackDuration(replayAtTail.visualEndTime), 33);
   const runtimeEvents = parseScript(
     '[00:01] e5\n[00:02] e4\n[00:03] fen bad\n[00:04] e5',
   );
@@ -652,17 +843,301 @@ Look --> there`;
     'defensive timestamp formatting stays inside the authored ceiling',
   );
 
+  // A rasterize that never settles left the export button disabled and playback
+  // paused for the rest of the session, because the caller's `finally` waits on
+  // a promise that never resolves. The ceiling is what makes the existing
+  // 'Retry PNG' state reachable at all.
+  await assert.rejects(
+    () => withTimeout(new Promise(() => {}), 10, BOARD_EXPORT_TIMEOUT_MESSAGE),
+    { message: BOARD_EXPORT_TIMEOUT_MESSAGE },
+    'an export that never settles rejects instead of hanging forever',
+  );
+  assert.equal(
+    await withTimeout(Promise.resolve('done'), 10_000, 'unused'),
+    'done',
+    'work that finishes in time passes its value straight through',
+  );
+  // The loser's timer must be cleared, or a 15s handle would keep the process
+  // (and, in the browser, the tab's timer queue) alive after every export.
+  const beforeTimers = process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+  await withTimeout(Promise.resolve(1), 60_000, 'unused');
+  assert.equal(
+    process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length,
+    beforeTimers,
+    'the timeout handle is cleared when the work wins the race',
+  );
+
+  // Timing out abandons the rasterize but cannot cancel it. If it settles later
+  // it must stay silent: a PNG landing in Downloads after the band said the
+  // export failed is stamped with a time the board has long since left. Both
+  // impure steps are seams, so this exercises the contract rather than grepping
+  // the source — a source check passes an `if (aborted) console.warn()` and
+  // fails a rename of `blob`.
+  {
+    const fakeBlob = { size: 1 };
+    const runExport = async (aborted) => {
+      const delivered = [];
+      const controller = new AbortController();
+      if (aborted) controller.abort();
+      await downloadBoardPng({}, 12.5, {
+        signal: controller.signal,
+        exporter: Promise.resolve({ toBlob: async () => fakeBlob }),
+        deliver: (blob, filename) => delivered.push({ blob, filename }),
+      });
+      return delivered;
+    };
+    assert.deepEqual(
+      await runExport(true),
+      [],
+      'an abandoned export delivers nothing, however late it settles',
+    );
+    assert.deepEqual(
+      await runExport(false),
+      [{ blob: fakeBlob, filename: 'gambit-board-00-12-50.png' }],
+      'a live export delivers exactly one file, named for the board time',
+    );
+    await assert.rejects(
+      downloadBoardPng({}, 0, {
+        exporter: Promise.resolve({ toBlob: async () => null }),
+        deliver: () => {
+          throw new Error('delivered an empty PNG');
+        },
+      }),
+      /empty PNG/,
+      'an empty rasterize is an error, not a silent no-op',
+    );
+  }
+
+  // Errors accumulate in two passes, so their natural order is by stage, not by
+  // script. The band is read against the text the author is about to fix, and
+  // role="status" announces it in that same order.
+  {
+    const scrambled = buildWorld(
+      parseScript(
+        [
+          '[00:01] e4',
+          '[00:02] Nf9',
+          '[00:03] hl zz9',
+          '[00:04] Qxd9',
+          '[00:05] Bb5',
+        ].join('\n'),
+      ),
+      setupFromFen(''),
+    );
+    const lines = scrambled.scriptErrors.map((er) => er.line);
+    assert.deepEqual(
+      lines,
+      [...lines].sort((a, b) => a - b),
+      'the errors band reports lines in script order',
+    );
+    assert.ok(lines.length >= 2, 'the ordering fixture actually produces several errors');
+  }
+
+  // The insert menu is the script language's only catalogue, and the reason it
+  // exists is that the language outgrew its interface: the parser reached
+  // twelve kinds while `mind`, `reveal`, and `pin` never got a surface. Chain
+  // the catalogue to something the compiler already forces to be exhaustive.
+  // markerColors is Record<MarkerKind, string> and MarkerKind is
+  // ParsedEvent['kind'] | 'err', so a thirteenth kind fails typecheck until
+  // it's added there — and fails here until it's also in COMMANDS, i.e. until
+  // it is reachable in the UI.
+  const parserKinds = new Set(Object.keys(markerColors).filter((k) => k !== 'err'));
+  const cataloguedKinds = new Set(COMMANDS.map((c) => c.kind));
+  assert.deepEqual(
+    [...cataloguedKinds].sort(),
+    [...parserKinds].sort(),
+    'every parser event kind is listed in the insert menu catalogue',
+  );
+
+  // Each one-click command must write a line the parser accepts as its own
+  // kind, through the real insert path rather than a hand-built line. A body
+  // that parses to an error would put a red line in the script the moment the
+  // user clicked a menu row.
+  //
+  // One loop, not two. A hand-built `parseScript(\`[00:01.0] ${c.body}\`)` pass
+  // used to run first, and it could not fail on its own: `planLineInsert`
+  // writes the body verbatim after a formatted timestamp, and an ErrorEvent
+  // carries no `kind`, so the kind assertion below already fails on anything
+  // that parses to an error. The planner form is strictly stronger — it also
+  // catches a body that plans a conflict instead of an edit.
+  for (const c of INSERTABLE_COMMANDS) {
+    const plan = planLineInsert([], '', 1, c.body);
+    assert.equal(plan.kind, 'edit', `${c.token} plans an edit into an empty script`);
+    const events = parseScript(plan.text);
+    assert.equal(events.length, 1, `${c.token} inserts exactly one event`);
+    assert.equal(events[0].kind, c.kind, `${c.token} parses as the kind it advertises`);
+  }
+
+  // The split is the menu's whole shape: the argument-free kinds insert, and
+  // the ones needing a square or a position route to the board and to Setup.
+  assert.equal(INSERTABLE_COMMANDS.length, 8);
+  // Asserted through AUTHORED_ELSEWHERE_COMMANDS rather than by re-deriving
+  // `c.body == null` here: that array is what the menu's second section
+  // renders, and re-spelling its definition in the test left the export
+  // itself — the last link in the catalogue-to-UI chain — untouched by the
+  // suite.
+  assert.deepEqual(
+    AUTHORED_ELSEWHERE_COMMANDS.map((c) => c.kind).sort(),
+    ['arrow', 'fen', 'highlight', 'move'],
+    'only the kinds with another authoring path opt out of one-click insert',
+  );
+  assert.equal(
+    AUTHORED_ELSEWHERE_COMMANDS.length + INSERTABLE_COMMANDS.length,
+    COMMANDS.length,
+    'the two menu sections partition the catalogue — no command is unreachable',
+  );
+  for (const c of AUTHORED_ELSEWHERE_COMMANDS) {
+    assert.ok(c.via, `${c.token} tells the user where it is authored instead`);
+  }
+
+  // The Text view's syntax line is the catalogue's second surface, and the
+  // chain above stopped at the menu — nothing asserted that the hint names
+  // every kind, which is precisely how it came to name ten of twelve.
+  //
+  // Asserted against the rendered element, not against SYNTAX_GROUPS. Two
+  // earlier forms compared the groups to COMMANDS — first by length, then by
+  // content and order — and *neither could fail*: the reduce that builds
+  // SYNTAX_GROUPS appends exactly one name per command on both of its
+  // branches, so both the length and the flattened list equal COMMANDS'
+  // by construction, for any COMMANDS. Swapping length for content changed
+  // nothing about which input could vary.
+  //
+  // Coverage is now structural — the groups are derived from the catalogue, so
+  // the hint cannot name ten of twelve again — and what is left to check is the
+  // rendering, which is not: `group.join(' / ')` written as `group[0]` drops
+  // `ml` and `reveal` from the string a reader actually sees, silently. That is
+  // the same hole, one layer down, and it is why `SYNTAX_HINT` is an importable
+  // module instead of a local in `App.tsx`.
+  const hintText = (node) => {
+    if (node == null || typeof node === 'boolean') return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(hintText).join('');
+    return hintText(node.props?.children);
+  };
+  const hint = hintText(SYNTAX_HINT);
+  for (const c of COMMANDS) {
+    const name = c.token === '->' ? c.syntax : c.token;
+    assert.ok(name, `${c.kind} has a name to print`);
+    assert.equal(
+      hint.split(name).length - 1,
+      1,
+      `the syntax line names ${c.kind} exactly once, as \`${name}\``,
+    );
+  }
+  // `->` alone reads as punctuation, so the hint borrows the catalogue's own
+  // example rather than inventing one — it shipped `a1->b2` while the insert
+  // menu two panels away taught `f3->e5`.
+  assert.doesNotMatch(hint, /(?<![\w>])->(?![\w])/, 'the arrow is shown as a move, not as bare punctuation');
+  // The separators are what make the pairs legible: a pair is one unit, and
+  // `br / ml` must not read as two independent commands in a `·` list.
+  assert.ok(hint.startsWith('[mm:ss.s] '), 'the line leads with the timestamp shape');
+  assert.deepEqual(
+    hint.slice('[mm:ss.s] '.length).split(' · '),
+    SYNTAX_GROUPS.map((g) => g.join(' / ')),
+    'every group renders, joined as a pair or standing alone',
+  );
+  // A pair renders as one unwrappable unit, so `closes` has to name a real
+  // token — and the two halves have to stay adjacent. Reading the relation off
+  // array position (the earlier form) meant moving `rp` between `mind` and
+  // `reveal` silently rendered `rp / reveal` as a pair.
+  const tokens_ = COMMANDS.map((c) => c.token);
+  for (const c of COMMANDS) {
+    if (c.closes == null) continue;
+    // Adjacency alone; a preceding `includes(c.closes)` was a message alias for
+    // it, since `tokens_[i - 1] === c.closes` already implies membership and
+    // `tokens_[-1]` is undefined when the closer comes first.
+    assert.equal(
+      tokens_[tokens_.indexOf(c.token) - 1],
+      c.closes,
+      `${c.token} sits directly after the ${c.closes} it closes, and that token exists`,
+    );
+  }
+  assert.deepEqual(
+    SYNTAX_GROUPS.filter((g) => g.length > 1),
+    [['br', 'ml'], ['mind', 'reveal']],
+    'the two paired kinds group, and nothing else does',
+  );
+
+  // Comments are stripped before any CSS/TS reader below pulls a value: these
+  // rules carry long prose that mentions the very properties being read
+  // ('.playhead-thumb' explains its own `top:` in words), and a bare regex
+  // happily matches the explanation instead of the declaration. It also keeps
+  // `[^}]*` rule scans honest, since prose is the only place a stray brace
+  // would come from.
+  const bare = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '');
+  const bareStyles = bare(styles);
+
+  // Every rule for a selector, across all tiers. Escapes the selector itself,
+  // so callers write plain CSS: an earlier form took a regex fragment, and
+  // `cssRules('\\.subtitle-strip')` beside `cssRule('.subtitle-strip')` meant
+  // swapping one for the other failed silently in one direction, since an
+  // unescaped `.` matches any character. One spelling also fixed the stricter
+  // dialect's own hazard: a `.subtitle-strip{` written without the space
+  // dropped that tier out of the set, `smallest()` fell back to base padding,
+  // and the cue-fits-track assertion passed vacuously while staying green.
+  const cssRules = (selector, source = bareStyles) =>
+    source.match(
+      new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`, 'g'),
+    ) ?? [];
+
+  // The one rule for a top-level selector. Built on `cssRules` rather than
+  // beside it: these were two readers for the same text with two matching
+  // dialects, and the divergence that mattered was invisible at the call site
+  // — `cssRules` read comment-stripped source while `cssRule` sliced the raw
+  // file to the next `}`, so the `[^}]*` hazard `bare` exists to prevent was
+  // unguarded in exactly the reader with thirteen call sites. The `\n` prefix
+  // is what keeps `cssRule('.marker')` from matching a `.timeline .marker`
+  // rule; `anchor` picks between same-selector tiers.
+  const cssRule = (selector, anchor = '') => {
+    const rule = cssRules(`\n${selector}`).find((r) => r.includes(anchor));
+    assert.ok(rule, `${selector} exists`);
+    return rule;
+  };
+
   // Recording layout is an authored invariant: normal laptop heights keep
   // the 720px artifact, while only genuinely short desktop viewports use the
   // 560px fallback. Guard the real CSS surface so the old dvh formulas cannot
   // quietly return.
   assert.match(styles, /--artifact-fit-width:\s*var\(--artifact-width\)/);
-  assert.match(styles, /@media \(max-width:\s*1380px\)/);
+  assert.match(styles, /@media \(max-width:\s*1240px\)/);
+  // Between the stack point and the old 1380px one the side panel flexes into
+  // whatever the board leaves, so 1280x800 gets a two-column layout instead of
+  // stacking the panel under the board and pushing the transport 889px down the
+  // page. The band must keep the board on its authored track: the panel is what
+  // yields, never the recording artifact.
+  assert.match(
+    styles,
+    /@media \(min-width:\s*1241px\) and \(max-width:\s*1380px\)[\s\S]*?grid-template-columns:\s*var\(--artifact-fit-width\) minmax\(0,\s*1fr\)/,
+    'the intermediate two-column band flexes the panel, never the artifact',
+  );
   assert.match(
     styles,
     /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
   );
-  assert.doesNotMatch(styles, /--artifact-fit-width:[^;]*100dvh/);
+  // AGENTS.md names this the enforcement of the 720px recording-frame
+  // invariant, so it asserts the property rather than one spelling of its
+  // violation. Banning the literal `100dvh` let `100vh` through — the reflex
+  // spelling of the very thing being banned — along with `90svh`,
+  // `clamp(400px, 90dvh, 720px)`, and any indirection through a second custom
+  // property that holds the formula. An allowlist has no such gaps: the
+  // artifact is the authored token or a literal size, full stop.
+  //
+  // Both tokens, not just the outer one. The allowlist blesses
+  // `var(--artifact-width)`, so checking only `--artifact-fit-width` closed
+  // every indirection *except* the one it depends on: redeclaring
+  // `--artifact-width: min(720px, calc(100dvh - 220px))` in a media query
+  // passed, and shrank the recording frame on every ordinary laptop.
+  const fitValues = [
+    ...bare(styles).matchAll(/--artifact-(?:fit-)?width:\s*([^;]+);/g),
+  ].map((m) => m[1].trim());
+  assert.ok(fitValues.length >= 3, 'the artifact size is declared for the base and the 560px band');
+  for (const value of fitValues) {
+    assert.match(
+      value,
+      /^(var\(--artifact-width\)|\d+px)$/,
+      'the recording frame is an authored size, never derived from the viewport',
+    );
+  }
   assert.match(
     styles,
     /@media \(max-width:\s*760px\)[\s\S]*?\.app--present \.controls\s*\{[\s\S]*?display:\s*grid/,
@@ -674,6 +1149,633 @@ Look --> there`;
     'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
   );
 
+  const cssNum = (source, prop, label = prop) => {
+    const m = bare(source).match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
+    assert.ok(m, `${label} is declared as a number so the geometry stays derivable`);
+    return Number(m[1]);
+  };
+  // Asserts rather than indexing a null match: `padding` rewritten as the
+  // `padding-block`/`padding-inline` pair this stylesheet also uses is a legal
+  // edit, and it turned this helper into a TypeError — a stack trace where the
+  // suite's job is to name what broke.
+  const cssLengths = (source, prop) => {
+    const m = bare(source).match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+)[;}]`));
+    assert.ok(m, `${prop} is declared as a length shorthand`);
+    return m[1].trim().split(/\s+/).map((v) => Number.parseFloat(v));
+  };
+  // Top-level `@media` blocks, brace-balanced. Splitting on `@media` would be
+  // shorter and wrong: the text after a query's closing brace belongs to no
+  // query, and the reserve guard below asks whether one *specific* block holds
+  // both halves of a pair.
+  const styleRegions = () => {
+    const src = bare(styles);
+    const regions = [];
+    let cursor = 0;
+    for (let at = src.indexOf('\n@media'); at !== -1; at = src.indexOf('\n@media', at + 1)) {
+      let depth = 0;
+      for (let i = at; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) {
+          if (at > cursor) regions.push({ query: null, css: src.slice(cursor, at) });
+          regions.push({
+            query: src.slice(at, src.indexOf('{', at)).trim(),
+            css: src.slice(at, i + 1),
+          });
+          cursor = i + 1;
+          at = i;
+          break;
+        }
+      }
+    }
+    if (cursor < src.length) regions.push({ query: null, css: src.slice(cursor) });
+    return regions;
+  };
+  const mediaBlocks = () => styleRegions().flatMap((r) => (r.query === null ? [] : [r.css]));
+
+  // Media-query modelling, shared by the cascade guards below. `conditions`
+  // returns null for a query it cannot express, so each caller decides what
+  // that means rather than silently reading it as "matches everywhere".
+  const FEATURE = /\((min|max)-(width|height):\s*(\d+)px\)/g;
+  const conditions = (query) => {
+    const parsed = [...query.matchAll(FEATURE)].map((m) => ({
+      bound: m[1],
+      axis: m[2],
+      px: Number(m[3]),
+    }));
+    const modelled = query.replace(FEATURE, '').replace(/@media|and|\s/g, '');
+    return modelled === '' ? parsed : null;
+  };
+  const matches = (conds, w, h) =>
+    conds.every(({ bound, axis, px }) => {
+      const v = axis === 'width' ? w : h;
+      return bound === 'min' ? v >= px : v <= px;
+    });
+
+  // Representative viewports: every breakpoint in the stylesheet and one pixel
+  // either side, so both ladders are sampled on both sides of every step. Media
+  // queries are step functions, so this finite grid covers every distinct
+  // combination the cascade can produce.
+  //
+  // Shared by the two guards that need to evaluate the cascade rather than read
+  // it — the subtitle fit below, and the 560px band's co-application check.
+  // They used to share it by nesting, which is not sharing.
+  const axis = (which) => {
+    const seen = new Set([320, 4000]);
+    for (const m of bareStyles.matchAll(new RegExp(`(?:min|max)-${which}:\\s*(\\d+)px`, 'g'))) {
+      const n = Number(m[1]);
+      seen.add(n - 1);
+      seen.add(n);
+      seen.add(n + 1);
+    }
+    return [...seen].filter((n) => n >= 320);
+  };
+  const widths = axis('width');
+  const heights = axis('height');
+  // Stated where it is knowable. A counter incremented inside the fit loop
+  // said the same thing later and could not fail: that loop has no `continue`
+  // and no early exit, so its trip count is fixed before it starts.
+  assert.ok(
+    widths.length * heights.length > 100,
+    'the breakpoint sample covers both ladders on both sides of every step',
+  );
+
+  // The cue is read at delivery size, not authoring size, so it is sized as a
+  // share of the composed frame the way broadcast captions are. But its track
+  // is `auto`: a cue too big for the track's declared minimum grows the row,
+  // and a *one-line* cue that grows the row shifts the transport the moment a
+  // subtitle appears — exactly the layout stability the fixed track exists to
+  // provide. That shipped: the 761-840px band kept the base cue while dropping
+  // the track, because cue and track lived in different rules and nothing tied
+  // them together. They are now one colocated token pair, and this guard
+  // enforces the colocation rather than checking a single tier.
+  {
+    // Evaluated at real viewports rather than by taking a minimum over the
+    // file. The previous form credited every tier with the *smallest* strip
+    // padding declared anywhere, and larger chrome is the harder constraint —
+    // so it leaned lenient in exactly the direction that matters. It could not
+    // do better in that shape: the strip's padding tiers sit on a different
+    // breakpoint ladder (1040/920/600) from the token tiers (920/760/600), so
+    // "the padding that applies at this tier" was not expressible at all.
+    //
+    // Verified escape: adding `@media (max-height: 700px) { .subtitle-strip {
+    // padding-top: 4px } }` and then dropping the 920 tier's track from 57px to
+    // 54px passed, while at any viewport 840 < h <= 920 the real chrome is 17px
+    // and a one-line 29px cue needs 56.44px — the row grows and the transport
+    // shifts the moment a subtitle appears.
+    //
+    // Media queries are step functions, so a finite set of representative
+    // viewports — every declared breakpoint, and one pixel either side of it —
+    // covers every distinct combination the cascade can produce. Both ladders
+    // are then resolved the way the browser resolves them, in source order, and
+    // the fit is checked where the numbers actually meet.
+    // A region is a tier iff it declares something the fit actually reads.
+    // Selecting on the substring "subtitle" instead meant any block merely
+    // mentioning the word had to be modellable, so adding the accessibility
+    // rule DESIGN.md asks for — `@media (prefers-reduced-motion: reduce) {
+    // .subtitle-strip p { transition: none } }`, which moves none of the five
+    // numbers — failed the suite with a message about width/height terms.
+    const READS =
+      /(--subtitle-track-height|--subtitle-cue-size)\s*:|\.subtitle-strip[^{}]*\{[^}]*(padding[\w-]*|border-block|line-height)\s*:/;
+    const tiers = [];
+    for (const region of styleRegions()) {
+      if (!READS.test(region.css)) continue;
+      const conds = region.query === null ? [] : conditions(region.query);
+      assert.ok(
+        conds,
+        `${region.query} moves a number the subtitle fit reads, so this guard has to be able to place it`,
+      );
+      tiers.push({ conds, css: region.css, decls: new Map() });
+    }
+    assert.ok(tiers.length >= 5, 'the subtitle ladders are found across the sheet');
+
+    // Declarations parsed once per tier, in source order, through the file's
+    // one rule scanner. The grid below asks ~400 questions; resolving each by
+    // re-scanning the stylesheet meant 8k regex compiles and ~35MB re-read per
+    // `npm test`, and — worse for a file whose subject is exactly this — it was
+    // a third and fourth spelling of `cssRules`, seventy lines under the
+    // comment explaining why there is only one.
+    const SELECTORS = [':root', '.subtitle-strip', '.subtitle-strip p'];
+    const DECL = /(?:^|[;{])\s*([\w-]+)\s*:\s*([^;}]+)/g;
+    for (const tier of tiers) {
+      for (const selector of SELECTORS) {
+        const entries = [];
+        for (const rule of cssRules(selector, tier.css)) {
+          for (const [, prop, value] of rule.slice(rule.indexOf('{')).matchAll(DECL)) {
+            entries.push([prop, value.trim()]);
+          }
+        }
+        tier.decls.set(selector, entries);
+      }
+    }
+
+    const px = (v) => Number.parseFloat(v);
+    const resolve = (w, h, selector, prop) => {
+      let value = null;
+      for (const tier of tiers) {
+        if (!matches(tier.conds, w, h)) continue;
+        for (const [p, v] of tier.decls.get(selector)) if (p === prop) value = v;
+      }
+      return value;
+    };
+
+    // Block padding resolved per longhand, in declaration order — `padding`,
+    // `padding-block`, and the two sides all write the same two numbers, and
+    // which one wins is a question of order rather than of precedence. Reading
+    // only the `padding` shorthand is what made an earlier helper throw a
+    // TypeError when the base rule was restated as the `padding-block` /
+    // `padding-inline` pair this stylesheet also uses elsewhere: a legal,
+    // behavior-identical edit, answered with a stack trace instead of a verdict.
+    const blockPadding = (w, h) => {
+      let top = null;
+      let bottom = null;
+      for (const tier of tiers) {
+        if (!matches(tier.conds, w, h)) continue;
+        for (const [prop, value] of tier.decls.get('.subtitle-strip')) {
+          const parts = value.split(/\s+/).map(px);
+          if (prop === 'padding') [top, bottom] = [parts[0], parts[2] ?? parts[0]];
+          else if (prop === 'padding-block') [top, bottom] = [parts[0], parts[1] ?? parts[0]];
+          else if (prop === 'padding-top') top = parts[0];
+          else if (prop === 'padding-bottom') bottom = parts[0];
+        }
+      }
+      assert.ok(
+        top !== null && bottom !== null,
+        `the subtitle strip declares its block padding (unresolved at ${w}x${h})`,
+      );
+      return [top, bottom];
+    };
+
+
+    for (const w of widths) {
+      for (const h of heights) {
+        const track = px(resolve(w, h, ':root', '--subtitle-track-height'));
+        const cue = px(resolve(w, h, ':root', '--subtitle-cue-size'));
+        const lh = px(resolve(w, h, '.subtitle-strip p', 'line-height'));
+        const [padTop, padBottom] = blockPadding(w, h);
+        // The 2px `border-block` is part of the border-box the track measures,
+        // and leaving it out is what made the base-tier comment claim a 46px
+        // content box where the browser has 44.
+        const border = px(resolve(w, h, '.subtitle-strip', 'border-block')) * 2;
+        const needed = cue * lh + padTop + padBottom + border;
+        assert.ok(
+          needed <= track,
+          `at ${w}x${h} a one-line ${cue}px cue needs ${needed.toFixed(2)}px and the track declares ${track}px`,
+        );
+      }
+    }
+
+    // Every `:root` that redefines either token must redefine both — that is
+    // the structural property, and it is what makes the per-tier fit checkable
+    // at all. A tier that moves one number in isolation fails here.
+    const roots = cssRules(':root');
+    const pairs = roots
+      .filter((r) => /--subtitle-(track-height|cue-size)/.test(r))
+      .map((r) => ({
+        track: cssNum(r, '--subtitle-track-height', 'the tier track'),
+        cue: cssNum(r, '--subtitle-cue-size', 'the tier cue'),
+      }));
+    assert.ok(pairs.length >= 4, 'every subtitle tier declares its pair');
+    // The fit itself is checked on the viewport grid above; colocation is what
+    // keeps a tier from moving one of the two numbers without the other, which
+    // the grid would then catch as a real overflow rather than as a drift.
+
+    // Below ~3% of the composed frame the cue stops surviving the downscale
+    // this tool exists to produce; the base was 21px (2.6%). Derive the frame
+    // from the tokens rather than restating 798 as a literal.
+    const base = pairs[0];
+    const artifact = cssNum(cssRule(':root'), '--artifact-width');
+    const seam = cssNum(cssRule(':root'), '--board-seam');
+    const frame = artifact + base.track - seam;
+    assert.ok(
+      base.cue / frame >= 0.03,
+      `the cue holds a caption-scale share of the ${frame}px frame`,
+    );
+
+    // The 560px frame is narrower, so the base cue would wrap to two lines,
+    // double the track, and land the floating bar on the subtitles. Found by
+    // the artifact size it declares rather than by its query text: the point
+    // is that whichever tier shrinks the board also shrinks the cue.
+    const shortDesktop = roots.find((r) => /--artifact-fit-width:\s*560px/.test(r));
+    assert.ok(shortDesktop, 'the 560px band declares its own artifact size');
+    assert.ok(
+      cssNum(shortDesktop, '--subtitle-cue-size') < base.cue,
+      'the 560px frame scales its cue down with the artifact',
+    );
+    // Every viewport the 560 band matches also matches the taller height tiers,
+    // and media queries add no specificity — being declared last is the only
+    // thing that lets its smaller pair win. Nothing in the block itself says so,
+    // and the first attempt at this patched around the ordering with a
+    // complement query rather than fixing it.
+    //
+    // Stated positionally over the real block list rather than as one pairwise
+    // `indexOf` comparison against a query string. That form was wrong twice
+    // over: it failed *open* (a needle that no longer matches returns -1, and
+    // `n > -1` is permanently true, so retuning `920px` to `900px` disarmed the
+    // guard silently), and it said nothing about tiers not yet written — a new
+    // `max-height: 800px` block appended after the 560 band passed it while
+    // handing the 560px board a 27px cue.
+    const regions = styleRegions().filter((r) => r.query !== null);
+    const bandAt = regions.findIndex((r) => /--artifact-fit-width:\s*560px/.test(r.css));
+    assert.notEqual(bandAt, -1, 'the 560px band is a top-level media block');
+    const bandConds = conditions(regions[bandAt].query);
+    assert.ok(bandConds, 'the 560px band states itself in width/height terms');
+    const COUPLED = /--(artifact-fit-width|subtitle-cue-size|subtitle-track-height)\s*:/;
+    // "Can co-apply" is answered by the evaluator, not by reading the query
+    // text: a later block may redeclare the pair only if no viewport satisfies
+    // both it and the band. Two earlier forms each guessed at that from the
+    // header — first requiring a `max-height` (which let a plain
+    // `@media (min-width: 1081px)` block through, no `max-height`, skipped by
+    // the filter, overriding the band everywhere it matches), then requiring a
+    // `max-width` <= 1080 (which fails a later block gated only on height, one
+    // that can never co-apply, and invites the next reader to widen the regex
+    // rather than to use the model sitting in scope).
+    for (const [i, region] of regions.entries()) {
+      if (i <= bandAt || !COUPLED.test(region.css)) continue;
+      const conds = conditions(region.query);
+      assert.ok(
+        conds,
+        `${region.query} redeclares the coupled tokens after the 560px band, so this guard has to be able to place it`,
+      );
+      const overlap = widths.some((w) =>
+        heights.some((h) => matches(bandConds, w, h) && matches(conds, w, h)),
+      );
+      assert.ok(
+        !overlap,
+        `${region.query} is declared after the 560px band and can co-apply with it, so it would override the band's artifact/cue pair`,
+      );
+    }
+  }
+
+  // Present hides the header, panel, and footer and fixes the transport, so
+  // the artifact is `.app`'s only in-flow child. Un-centered it pinned to the
+  // top of a viewport-tall #root and left a 258px void above the floating bar
+  // on a 1210px-tall window — the recording frame sitting at the top edge of
+  // its own presentation view.
+  {
+    const present = cssRule('.app--present');
+    assert.match(present, /min-height:\s*100dvh/, 'present fills the viewport it centers in');
+    // `safe` is the whole reason this is sound on a short window: plain
+    // `center` overflows in both directions and puts the board's top edge
+    // above the scroll origin, where it can never be scrolled back into view.
+    assert.match(
+      present,
+      /justify-content:\s*safe center/,
+      'centering degrades to top-aligned rather than pushing the board out of reach',
+    );
+    // Centering on the bare viewport would slide the artifact under the fixed
+    // bar; the reserve is what makes "centered" mean "centered in what's left".
+    assert.match(
+      present,
+      /padding-bottom:\s*var\(--present-bar-reserve\)/,
+      'the floating transport keeps a reserved footprint',
+    );
+    // ...and gives it back wherever the bar is put in flow, or present mode
+    // parks an empty 130px band under an in-flow console. Checked per query
+    // block, not as two global tallies: equal counts also pass when a tier
+    // un-floats the bar and a *different* tier drops the reserve, which is the
+    // pairing this is for. The earlier form also matched one exact single-line
+    // string, so reformatting the rule would have silently disarmed it.
+    const unfloated = mediaBlocks().filter((b) =>
+      /\.app--present \.controls \{[^}]*position:\s*static/.test(b),
+    );
+    assert.ok(unfloated.length >= 2, 'the bar goes in flow on narrow and on short viewports');
+    for (const block of unfloated) {
+      assert.match(
+        block,
+        /\.app--present\s*\{[^}]*--present-bar-reserve:\s*0/,
+        `${block.slice(0, block.indexOf('{')).trim()} un-floats the bar without dropping its reserve`,
+      );
+    }
+    // The artifact stays its authored size through all of it — the standing
+    // invariant this section is most likely to erode.
+    assert.doesNotMatch(present, /--artifact-fit-width/);
+  }
+
+  // The scrub thumb is the only part of the transport that *looks* draggable,
+  // and it was drawn 10px above the rail — inside the pin row, where the
+  // marker hit extensions sit above the scrub input. Pressing it activated a
+  // seek button instead of starting a drag, so the affordance was dead while
+  // the bare rail 10px below scrubbed fine. Re-derive the arithmetic here
+  // rather than pinning the literal, so the next row-height or gap edit fails
+  // this instead of silently sliding the thumb off the rail again.
+  {
+    const root = cssRule(':root');
+    const token = (name) => cssNum(root, `--${name}`, `--${name}`);
+    const pinRow = token('tl-pin-row');
+    const rail = token('tl-rail');
+    const gap = token('tl-row-gap');
+    const padTop = token('tl-pad-top');
+    const thumb = cssRule('.playhead-thumb');
+    const thumbSize = cssNum(thumb, 'height');
+    // Deliberately no `--tl-crown` term: marker geometry below is measured from
+    // the timeline's own top, while the thumb's `top:` is measured from the
+    // playhead, which starts one crown higher. Adding the crown here would keep
+    // the suite green while changing what the pin-vs-thumb assertion means.
+    const railCenter = padTop + pinRow + gap + rail / 2;
+
+    // The offset is a calc() over those tokens rather than their hand-summed
+    // total, so it cannot drift when a row height changes — which is the
+    // failure that shipped. Assert the derivation, not the arithmetic: a
+    // literal here would be exactly the regression, however correct today.
+    const top = thumb.match(/top:\s*calc\(([\s\S]*?)\);/);
+    assert.ok(top, 'the scrub thumb derives its offset instead of hardcoding it');
+    for (const name of ['tl-crown', 'tl-pad-top', 'tl-pin-row', 'tl-row-gap', 'tl-rail']) {
+      assert.ok(
+        top[1].includes(`var(--${name})`),
+        `the thumb offset accounts for --${name}`,
+      );
+    }
+    // The grid it is derived from must be the grid that is actually drawn.
+    assert.match(
+      cssRule('.timeline'),
+      /grid-template-rows:\s*var\(--tl-pin-row\) var\(--tl-rail\)/,
+      'the ruler rows and the thumb offset read the same tokens',
+    );
+
+    // A 14px thumb on a 6px rail overhangs it, so clearing the *rail* is not
+    // enough: the pin's hit extension has to stop above the thumb itself.
+    const markerBottom = padTop + (pinRow + cssNum(cssRule('.marker'), 'height')) / 2;
+    const [, , insetBottom] = cssLengths(cssRule('.marker::before'), 'inset');
+    assert.ok(
+      markerBottom - insetBottom <= railCenter - thumbSize / 2,
+      'a pin hit target never covers the scrub thumb it sits above',
+    );
+    // The strand's own top is the same crown, so the thumb's offset is
+    // measured from where the playhead actually starts.
+    assert.match(
+      cssRule('.playhead'),
+      /top:\s*calc\(-1 \* var\(--tl-crown\)\)/,
+      'the playhead strand and the thumb share one crown',
+    );
+  }
+
+  // The authored `hl` and the automatic last-move mark are two different
+  // meanings on the same board, and they used to be the same amber flood 3%
+  // of alpha apart (0.55 vs 0.52) — in the recording, a viewer could not tell
+  // "the tool moved a piece here" from "the teacher is pointing here". Kind is
+  // never color alone, so they must differ in FORM. The authored `hl` is the
+  // one that takes a form: it is rare and aimed, and a ring points where a
+  // flood only washes. The last move keeps the flood because it marks two
+  // squares on every single move — ringing those put a hard box on every move
+  // of the recording, and a box around an empty origin square read as a
+  // selection artifact rather than as chess.
+  {
+    assert.ok(boardTokens.boardLastMoveOnDark, 'the last move keeps its flood tokens');
+    // The ring is opaque, and that is load-bearing rather than incidental: a
+    // translucent stroke takes on whatever square it covers, so the same token
+    // composited to two colors and needed a per-square-color alpha pair to
+    // compensate. Opaque is one pen everywhere, so one token replaces the pair.
+    assert.match(
+      boardTokens.boardHighlightRing,
+      /^#[0-9a-f]{6}$/i,
+      'the `hl` ring is an opaque stroke, so it does not take on the square under it',
+    );
+    // No assertion that the per-square-color variants are absent: `git log -S`
+    // over the whole history shows `boardHighlightRingOnLight`/`OnDark` were
+    // never committed under those or any names — the 0.72/0.88 pair was a
+    // considered and rejected design, so guarding it by spelling could only
+    // ever catch someone independently inventing those two exact strings. The
+    // opacity invariant is covered behaviorally two lines up (a six-digit hex
+    // has no alpha) and again where the rendered element's stroke is read.
+    // The board stop is tuned for the flood and is nearly cream's luminance;
+    // a ring drawn in it measured 1.15:1 there. The ring uses marker amber,
+    // which is also what this event's timeline pin and seek dot already use —
+    // asserted here as an equality until `tokens.ts` was changed to *define* it
+    // as `markerColors.highlight`. One highlight reading identically on the
+    // board, the pin, and the seek dot is now a fact about the source, not a
+    // coincidence this file re-checks after the fact.
+    assert.equal(
+      boardTokens.boardHighlight,
+      undefined,
+      'the old flood token is gone, so nothing can quietly re-flood `hl`',
+    );
+    const boardSrc = await readFile(
+      new URL('../src/components/Board.tsx', import.meta.url),
+      'utf8',
+    );
+    const lastMoveRect = boardSrc.slice(
+      boardSrc.indexOf('key={`lm-'),
+      boardSrc.indexOf('litHighlights.map'),
+    );
+    assert.match(
+      lastMoveRect,
+      /fill={lastMoveFill\(f, r\)}/,
+      'the last move stays a flood — a ring on every move is visual noise',
+    );
+    assert.doesNotMatch(lastMoveRect, /stroke=/, 'the last move never takes a stroke');
+    // Both `hl` surfaces — the live overlay and the in-flight gesture preview —
+    // go through one component, so a preview can never promise a mark the
+    // committed script would not draw. `HlRing` returns the element, so this
+    // reads the props it actually renders: calling it is cheap and needs no
+    // renderer, and unlike matching call-site text it survives a rename.
+    //
+    // Returning the element is what makes the geometry safe at all. As a props
+    // bag every call site spread it, and `{...hlRingCircle(v)} r={30}` won
+    // silently — a verified escape past three earlier versions of this guard,
+    // each of which policed a proxy: the count of call sites, then the count of
+    // token names, then where the color could be spelled. That last one also
+    // failed CI on a *comment* mentioning the token, which is how a guard gets
+    // deleted by whoever trips it first.
+    const ring = HlRing({ view: { x: 0, y: 0 } }).props;
+    assert.equal(ring.fill, 'none', 'the ring is a stroke, never a flood');
+    assert.equal(ring.stroke, boardTokens.boardHighlightRing);
+    assert.ok(ring.r > 0 && ring.r < 50, 'the ring stays inside its square');
+    assert.deepEqual([ring.cx, ring.cy], [50, 50], 'the ring centers on its square');
+    assert.deepEqual(
+      HlRing({ view: { x: 3, y: 2 } }).props,
+      { ...ring, cx: 350, cy: 250 },
+      'only the center moves with the square — one pen, one radius, everywhere',
+    );
+    // The optional props may move the ring's opacity and its growth, and
+    // nothing else. A call site cannot reach the pen.
+    const scaled = HlRing({ view: { x: 0, y: 0 }, opacity: 0.5, scale: 2 }).props;
+    assert.deepEqual(
+      { ...scaled, opacity: ring.opacity, transform: ring.transform },
+      ring,
+      'opacity and scale are the only things a call site can vary',
+    );
+    assert.match(
+      scaled.transform,
+      /^translate\(50 50\) scale\(2\) translate\(-50 -50\)$/,
+      'growth pivots on the ring’s own center, not the square’s origin',
+    );
+    // A fourth source census used to sit here, banning the amber's spelling
+    // anywhere outside this function. It was verified to fail in both
+    // directions at once: a hand-rolled `stroke={tokens['boardHighlightRing']}`
+    // — a genuine second pen in the exact highlight amber — passed, while
+    // hoisting `const HL_PEN = tokens.boardHighlightRing` inside the same file,
+    // a behavior-identical refactor, failed CI. Four versions, four proxies for
+    // "where may this color be written".
+    //
+    // It is gone rather than sharpened. The invariant it was reaching for is
+    // already closed one layer down: both `hl` surfaces call `HlRing`, which
+    // returns the element, so the geometry is unreachable from a call site and
+    // `tsc` says so. And the duplicated literal that made its sibling
+    // assertion (`boardHighlightRing === markerColors.highlight`) necessary is
+    // gone too — `tokens.ts` now defines the ring *as* `markerColors.highlight`
+    // rather than restating `#f0b429`, so the equality holds by construction
+    // and neither a runtime check nor a text scan has anything left to catch.
+  }
+
+  // Kind is never color alone, asserted as a relation between two tables
+  // rather than as CSS source text. `markerColors` and `markerForms` are both
+  // `Record<MarkerKind, …>`, so TypeScript already forces each exhaustive over
+  // every event kind; what it cannot state is that two kinds sharing a color
+  // must not share a form. That is this.
+  //
+  // The previous version compared the two rules' declaration bodies, and it
+  // failed in both directions. Re-declaring `rp` with the base rule's own
+  // values — `border-radius: var(--radius-hairline); background: currentColor`,
+  // a pin pixel-identical to a move's in the same blue, the exact bug — read as
+  // "different text" and passed. Rewriting the real two-segment shape into
+  // `background-image`/`background-size` longhands, behavior-identical, read as
+  // changed and failed. Forms are data now, so neither is expressible.
+  // The reset family: three spellings of "put the board back" plus the error
+  // pin, which wears vermillion because a broken line reads as a reset of the
+  // author's expectations. They share a color because they share a meaning.
+  const RESET_FAMILY = new Set(['reset', 'start', 'fen', 'err']);
+  const sharedColor = new Map();
+  for (const [kind, color] of Object.entries(markerColors)) {
+    const peers = sharedColor.get(color) ?? [];
+    peers.push(kind);
+    sharedColor.set(color, peers);
+  }
+  for (const peers of sharedColor.values()) {
+    const forms = peers.map((k) => markerForms[k]);
+    for (const kind of peers) {
+      assert.ok(markerForms[kind], `${kind} declares a pin form`);
+    }
+    // Kinds that are two halves of one gesture (`br`/`ml`, `mind`/`reveal`) or
+    // one meaning with three spellings (`rs`/`st`/`fen`, plus `err`) are
+    // *supposed* to look alike, so sameness is only a bug when the kinds are
+    // independent. `closes` names the paired halves; the reset family shares a
+    // color because it shares a meaning. `rp` and `move` are neither, which is
+    // why they are the pair this rule exists for.
+    const paired = (a, b) =>
+      COMMANDS.some((c) => (c.kind === a && c.closes) || (c.kind === b && c.closes)) ||
+      (RESET_FAMILY.has(a) && RESET_FAMILY.has(b));
+    for (let i = 0; i < peers.length; i += 1) {
+      for (let j = i + 1; j < peers.length; j += 1) {
+        if (paired(peers[i], peers[j])) continue;
+        assert.notEqual(
+          forms[i],
+          forms[j],
+          `${peers[i]} and ${peers[j]} share a marker color, so they must not share a pin form`,
+        );
+      }
+    }
+  }
+  // Every form the table names must be a form the stylesheet can draw.
+  for (const form of new Set(Object.values(markerForms))) {
+    if (form === 'bar') continue; // the base `.marker` rule; no modifier needed
+    assert.ok(
+      cssRules(`.marker[data-form='${form}']`).length > 0,
+      `the stylesheet draws the '${form}' pin form`,
+    );
+  }
+
+  // Time chips sit on two different backdrops, and the lighter one (a
+  // variation's inset) is the one that fails first. A resting opacity fade
+  // pushed them to 4.18:1, under the 4.5:1 body floor — the fade reads as
+  // restraint but spends contrast to get it, and the 10.5px mono already
+  // carries the quiet.
+  assert.doesNotMatch(
+    styles,
+    /\.pgn-time-edit\s*\{[^}]*opacity:/,
+    'the time chip earns its quiet from its token and size, never a contrast-eating fade',
+  );
+  // Editor controls keep the WCAG 2.5.8 24px floor via transparent ::before
+  // extensions; the visible pills stay small so row rhythm is unchanged. Each
+  // of these measured just under 24 before the extension existed.
+  //
+  // This asserted only that an `inset:` declaration *existed*, which any value
+  // satisfies: rewriting both to `inset: 0 0` — deleting the entire hit area —
+  // was verified to leave the suite green. It also covered two of the four
+  // controls in the family. Now it checks the direction (an extension grows the
+  // box outward, so no component may be positive and at least one must be
+  // negative) across all four, and the true 24px arithmetic for the one control
+  // whose box is fully declared in CSS.
+  //
+  // Honest about its own reach: `.pgn-mv`, `.pgn-ret`, and `.pgn-time-edit` are
+  // sized by padding plus font metrics, so their real target height is a
+  // browser measurement this file cannot make. For those three the floor still
+  // rests on having been measured once — the guard pins the mechanism, not the
+  // number.
+  const HIT_EXTENSIONS = ['.pgn-mv', '.pgn-ret', '.pgn-time-edit', '.pgn-x'];
+  for (const sel of HIT_EXTENSIONS) {
+    // `[^{]*` spans a grouped selector — .pgn-mv::before shares its rule.
+    const rule = bareStyles.match(
+      new RegExp(`\\${sel}::before[^{]*\\{[^}]*\\}`),
+    );
+    assert.ok(rule, `${sel} keeps a hit-area extension to the 24px floor`);
+    const inset = cssLengths(rule[0], 'inset');
+    assert.ok(
+      inset.every((v) => v <= 0) && inset.some((v) => v < 0),
+      `${sel}'s hit extension grows its target outward (found inset: ${inset.join(' ')})`,
+    );
+  }
+  {
+    // `.pgn-x` is a declared 16px box, so its target is arithmetic, not a
+    // measurement: 16 + 5 + 5 either side.
+    const x = cssRule('.pgn-x', 'width');
+    const [pad] = cssLengths(cssRule('.pgn-x::before'), 'inset');
+    for (const axis of ['width', 'height']) {
+      assert.ok(
+        cssNum(x, axis) - 2 * pad >= 24,
+        `the row × clears the 24px floor on ${axis}`,
+      );
+    }
+  }
+  // Undo appears the instant a board gesture lands. Anchoring the toggle left
+  // and Import right keeps it from displacing either — a control that moves
+  // out from under the cursor right after an edit is the one the author is
+  // most likely to reach for next.
+  assert.match(
+    styles,
+    /\.panel-title-row \.import-btn\s*\{[^}]*margin-left:\s*auto/,
+    'Import stays pinned right so a transient Undo cannot shove the row',
+  );
+
   // The mind's-eye void is derived from the playback clock, never animated by
   // CSS: a transition runs on wall time, so a paused scrub across `mind` would
   // render a frame that depends on how the playhead arrived rather than on
@@ -683,8 +1785,7 @@ Look --> there`;
   assert.equal(mindAt(10), 0, 'the void starts lit at the mind event');
   assert.equal(mindAt(10.6), 1, 'and is fully sunk one ramp later');
   assert.equal(mindAt(999), 1, 'and stays sunk for the rest of the phase');
-  assert.equal(mindAt(10.3), mindAt(10.3), 'the mid-ramp depth is a pure function of time');
-  assert.ok(mindAt(10.3) > 0 && mindAt(10.3) < 1);
+  assert.ok(mindAt(10.3) > 0 && mindAt(10.3) < 1, 'the mid-ramp is a real ramp');
   // A reset inside mind mode empties the sketch but must not re-sink the
   // board: `since` is the phase clock, so the depth stays saturated.
   assert.equal(mindAt(20), 1, 'a later frame in the same phase is still fully dark');

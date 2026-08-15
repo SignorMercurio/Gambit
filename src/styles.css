@@ -3,6 +3,11 @@
    first paint must not depend on a CDN, and the app must keep its voice
    behind blocked font hosts. Files live in public/fonts/; index.html
    preloads the same two files — keep the paths in sync.
+
+   `font-display: block`, not `swap`: both files are local and preloaded, so
+   the block period is unobservable in practice, while `swap` licenses a
+   fallback flash plus reflow at exactly the moment a creator may be
+   recording. Correct-or-invisible beats wrong-then-shifted here.
    ===================================================================== */
 
 @font-face {
@@ -10,14 +15,44 @@
   src: url('/fonts/schibsted-grotesk-var.woff2') format('woff2');
   font-weight: 400 900;
   font-style: normal;
-  font-display: swap;
+  font-display: block;
 }
 @font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/jetbrains-mono-var.woff2') format('woff2');
-  font-weight: 100 800;
+  font-family: 'Lilex';
+  src: url('/fonts/lilex-var.woff2') format('woff2');
+  /* Lilex's variable wght axis tops out at 700; the mono tiers reach 700 and
+     no further (800 belongs to the Schibsted wordmark alone). */
+  font-weight: 100 700;
   font-style: normal;
-  font-display: swap;
+  font-display: block;
+}
+/* CJK companion for the mono stack. Lesson scripts are frequently Chinese
+   (PRODUCT.md), and the latin subset above holds no Han glyphs — without this
+   the editor drops CJK onto whatever face the OS happens to pick, off the
+   design system entirely. `local()` only: this ships no CJK payload.
+
+   `size-adjust: 120%` is the grid. The mono cell is 0.6em, so two cells are
+   1.2em, while a Han glyph is 1em square; scaling to 120% lands every Han
+   character on exactly two latin cells, which is also the size CJK wants
+   beside latin at these sizes. `unicode-range` keeps this face off latin
+   entirely, so the adjust can never touch a glyph Lilex already covers.
+
+   `local()` matches PostScript / full names, never family names — `local('PingFang
+   SC')` silently fails and takes the whole @font-face down with it. Hence the
+   PostScript names here, and hence the plain family names still listed behind
+   this face in --font-mono: this tier is the best-effort grid, that tier is the
+   guarantee that CJK reaches a chosen face on platforms whose PostScript names
+   we can't verify from here. */
+@font-face {
+  font-family: 'Gambit Mono CJK';
+  src: local('PingFangSC-Regular'), local('HiraginoSansGB-W3'),
+    local('NotoSansCJKsc-Regular'), local('SourceHanSansSC-Regular'),
+    local('MicrosoftYaHei'), local('STHeiti');
+  font-style: normal;
+  font-display: block;
+  size-adjust: 120%;
+  unicode-range: U+2E80-303F, U+3040-30FF, U+3200-4DBF, U+4E00-9FFF,
+    U+F900-FAFF, U+FF00-FFEF, U+20000-2A6DF;
 }
 
 /* =====================================================================
@@ -125,7 +160,43 @@
   /* Present-mode move list: narrower than the editor panel — it holds only a
      numbered mainline, no FEN field or textarea. */
   --present-pgn-width: clamp(220px, 22vw, 320px);
+  /* The cue and the track it sits in are one pair, declared together in every
+     `:root` that redefines either. Split them across tiers and you get what
+     shipped once: the 761–840px band kept the base 29px cue while dropping the
+     track to 48px, so a *one-line* cue grew the row — the transport shifted
+     8px the moment a subtitle appeared, which is precisely the layout
+     stability the fixed track exists to provide. Fit rule for any pair:
+     cue × line-height + padding + 2px border ≤ track. */
   --subtitle-track-height: 64px;
+  --subtitle-cue-size: 29px;
+  /* Timeline ruler geometry. These exist as tokens because the scrub thumb's
+     offset is their sum: hand-computing it shipped `24px` against a true 34px
+     — two terms dropped — which put the thumb inside the pin row, where the
+     marker hit targets sit above the scrub input, and the only control that
+     looks draggable could not be dragged. A calc() of the same tokens cannot
+     be wrong by construction. */
+  --tl-pin-row: 18px;
+  --tl-rail: 6px;
+  --tl-tick-row: 14px;
+  --tl-row-gap: 5px;
+  --tl-pad-top: 2px;
+  --tl-crown: 6px;
+
+  /* Present's floating transport: its own inset plus its height plus a gap.
+     The inset is shared with the bar's `bottom` so the two cannot disagree.
+     The height is measured, not derived — the bar is content-sized, so nothing
+     in CSS knows it. Measured at 80px with the default `.controls` padding;
+     the short-desktop tier tightens that padding and runs 72px, so the reserve
+     is ~8px of slack there rather than wrong. It is a token because the number
+     is also quoted in the floor rationale further down: named once, it is at
+     least obvious where the other reader is. Do not turn it into a
+     `min-height` on the bar — that would grow the 560px tier's transport by
+     8px, in the one tier that exists to give vertical space back. */
+  --present-bar-inset: 28px;
+  --present-bar-height: 80px;
+  --present-bar-reserve: calc(
+    var(--present-bar-inset) + var(--present-bar-height) + 22px
+  );
   /* Overlap between the board's bottom edge and the subtitle strip. The strip
      rides up by this much, so the side panel — which bottom-aligns with the
      strip — must give the same amount back. One value, two consumers. */
@@ -140,7 +211,14 @@
   /* Chrome UI font stack (mirrored as fontUi in src/lib/tokens.ts for the
      SVG layer, which can't read custom properties). */
   --font-ui: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* CJK sits between Lilex and the generics, not after them: 'Gambit Mono CJK'
+     only ever claims Han/kana (unicode-range), so latin still resolves to
+     Lilex, and CJK reaches a chosen face before `ui-monospace` — which carries
+     no Han glyphs — can hand it to an arbitrary system font. The family names
+     after it are the fallback for platforms where the PostScript `local()`
+     lookups miss; they lose the two-cell grid but keep the chosen face. */
+  --font-mono: 'Lilex', 'Gambit Mono CJK', 'PingFang SC', 'Hiragino Sans GB',
+    'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', ui-monospace, monospace;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
@@ -197,6 +275,8 @@ body {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
 .title-block { display: flex; align-items: center; gap: 14px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.export-board-label-compact { display: none; }
 /* Ghost buttons for present mode: the header's enter-present button and the
    floating transport's PGN/Exit toggles. The quiet tonal pair and its hover
    are the transport's (see .ctrl-btn) — shared by selector so the treatment
@@ -228,6 +308,25 @@ body {
   height: 34px; padding: 0 15px;
   border-radius: var(--radius-md);
   font-size: 12.5px;
+}
+.present-btn:disabled,
+.present-toggle:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+.present-btn:disabled::before,
+.present-toggle:disabled::before { display: none; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .logo {
   width: 52px; height: 52px;
@@ -345,7 +444,21 @@ body {
   margin: 0;
   font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
     'Microsoft YaHei', var(--font-ui);
-  font-size: 21px;
+  /* 3.6% of the composed 798px frame (720 board + 64 track + seam). Broadcast
+     and streaming captions sit around 4% of picture height — YouTube's default
+     is ~4.2%, Netflix's 1080p spec ~3.9% — and 21px was 2.6%, near the ~2%
+     floor where type stops surviving a downscale. This is a recording tool, so
+     the cue is read at delivery size, not at authoring size.
+
+     29 and not 32 (a true 4%): the track's content box is 44px — 64 less 18px
+     of padding and the 2px `border-block`, which the border-box measures — so
+     a one-line cue at 29px leaves 4.6px of slack while 32px leaves 0.5px and
+     looks wedged into its own strip. The hard ceiling is 32.4px; past that a
+     single line grows the track, and present mode's floating-bar floor is
+     derived from the track height. The cue is a token declared beside its
+     track in every tier (see `--subtitle-cue-size`) so the pair cannot drift
+     apart the way it did once. */
+  font-size: var(--subtitle-cue-size);
   font-weight: 600;
   line-height: 1.36;
   letter-spacing: 0;
@@ -424,7 +537,11 @@ body {
   min-width: 118px;
   height: 24px;
   padding: 0 2px;
-  font-variant-numeric: tabular-nums;
+  /* No `font-variant-numeric: tabular-nums` here. It used to sit on this rule
+     and did nothing: every family in --font-mono is monospaced, so the digits
+     already share one advance. Keeping it implied the clock's frame-stability
+     came from the property rather than from the Mono-for-Chess rule, which is
+     the thing that actually has to hold. */
 }
 .t-now { color: var(--color-sodium-chalk); font-weight: 700; }
 .t-sep { color: var(--color-stage-mauve); opacity: 0.72; }
@@ -437,11 +554,11 @@ body {
 .timeline {
   position: relative;
   display: grid;
-  grid-template-rows: 18px 6px 14px;
-  row-gap: 5px;
+  grid-template-rows: var(--tl-pin-row) var(--tl-rail) var(--tl-tick-row);
+  row-gap: var(--tl-row-gap);
   align-items: center;
   min-width: 0;
-  padding: 2px 8px 0;
+  padding: var(--tl-pad-top) 8px 0;
 }
 
 .timeline-pins {
@@ -459,7 +576,11 @@ body {
 .timeline-rail {
   position: relative;
   width: 100%;
-  height: 6px;
+  /* The grid rows are centered, not stretched, and both this and the tick row
+     are empty boxes with absolutely-positioned children — so each restates its
+     own row height. Same token, or the thumb's calc() drifts from the rail it
+     is supposed to sit on. */
+  height: var(--tl-rail);
   background: var(--tonal-white-08);
   border-radius: var(--radius-pill);
 }
@@ -474,7 +595,7 @@ body {
 .timeline-ticks {
   position: relative;
   width: 100%;
-  height: 14px;
+  height: var(--tl-tick-row);
   font-family: var(--font-mono);
   /* Label-tier floor (10.5px): 9.5px was below the system's smallest type
      size and started to alias on downscaled recordings. */
@@ -501,12 +622,12 @@ body {
   transform: translateX(-50%);
 }
 
-/* Playhead spans the full timeline height (47px = 18 + 5 + 6 + 5 + 14) plus
-   a 6px crown above. Keeps the round thumb on the rail center but adds the
-   vertical strand that ties pin to tick. */
+/* Playhead spans the full timeline height plus a crown above it (`--tl-crown`).
+   Keeps the round thumb on the rail center but adds the vertical strand that
+   ties pin to tick. */
 .playhead {
   position: absolute;
-  top: -6px;
+  top: calc(-1 * var(--tl-crown));
   bottom: 0;
   width: 1px;
   margin-left: -0.5px;
@@ -521,7 +642,15 @@ body {
 }
 .playhead-thumb {
   position: absolute;
-  top: 24px; /* sits on the rail center: 6 (crown) + 18 (pins) + 5/2 (gap) ≈ 26.5; tuned */
+  /* The rail center, measured from the playhead's own top. Derived, not
+     hand-summed: this was `24px` against a true 34px, and those 10px put the
+     thumb inside the pin row where the marker hit targets sit above the scrub
+     input — the only control that looks draggable was the only band that
+     wasn't. */
+  top: calc(
+    var(--tl-crown) + var(--tl-pad-top) + var(--tl-pin-row) + var(--tl-row-gap)
+      + var(--tl-rail) / 2
+  );
   left: 50%;
   width: 14px;
   height: 14px;
@@ -556,17 +685,35 @@ body {
 /* Kind is never color alone: annotation pins (hl / arrow / clear) read as
    capsules, structural breaks (rs / st / fen) and script errors read as
    pointed pennants, moves and br/ml stay square-cut. Decodable in grayscale. */
-.marker[data-kind='highlight'],
-.marker[data-kind='arrow'],
-.marker[data-kind='clear'],
-.marker[data-kind='mind'],
-.marker[data-kind='reveal'] {
+.marker[data-form='capsule'] {
   border-radius: var(--radius-pill);
 }
-.marker[data-kind='reset'],
-.marker[data-kind='start'],
-.marker[data-kind='fen'],
-.marker[data-kind='err'] {
+/* `cl` hollows, matching its own seek dot — the pin and the dot for one event
+   should read the same, and it also separates `cl` from `mind`/`reveal`, which
+   share its grey. Inset ring rather than `border`, so the 5x16 box (and the
+   ::before hit target measured against it) is unchanged. */
+.marker[data-form='hollow'] {
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+/* `rp` is the fourth form. On the ruler it wore move's exact blue *and*
+   move's square cut — the one place in the vocabulary where two kinds were
+   separated by nothing at all, in the surface an author scrubs to find things.
+   Frequency decides which one yields: a move is on every other line, a replay
+   is rare and deliberate, so the replay takes the distinctive mark. Two
+   stacked segments read as "run it again" and stay decodable in grayscale at
+   recording size, where a 1px outline or a side-by-side pair would blur into
+   the solid bar it has to differ from. Painted as background layers for the
+   same reason the pennant is: clip-path would clip ::before too and collapse
+   the 40x45 hit target back to 5x16. */
+.marker[data-form='stack'] {
+  border-radius: 0;
+  background:
+    linear-gradient(currentColor, currentColor) top / 100% 40% no-repeat,
+    linear-gradient(currentColor, currentColor) bottom / 100% 40% no-repeat;
+}
+.marker[data-form='pennant'] {
   border-radius: 0;
   /* Paint the pennant without clipping the button: clip-path would also clip
      ::before, collapsing the promised 44px hit target back to 5×16. */
@@ -590,10 +737,15 @@ body {
 .marker::before {
   content: '';
   position: absolute;
-  /* Hit extension reaches up into the console's free padding and stops at
-     the rail's top edge below — a pin's 44px target must never steal the
-     rail's own scrub clicks. */
-  inset: -22px -20px -6px;
+  /* Hit extension reaches up into the console's free padding and stops just
+     above the scrub thumb — a pin's target must never steal the rail's own
+     scrub clicks. The bottom used to stop at the *rail's* top edge, but the
+     thumb is 14px on a 6px rail and overhangs it by 4px, so the pin still
+     owned the top slice of the one control users aim at. Those 4px can't be
+     won back upward (the subtitle strip already wins above -22px), so the
+     target is 40×45 rather than 44×45: past the 24×24 floor either way, and
+     the pin is the one that yields. */
+  inset: -22px -20px -2px;
 }
 .marker:hover, .marker:focus-visible {
   opacity: 1;
@@ -682,7 +834,25 @@ body {
   margin-bottom: var(--board-seam);
   backdrop-filter: blur(8px);
 }
-@media (max-width: 1380px) {
+/* Between the two-column floor and the old 1380px stack point the panel can
+   still sit beside the board — just not at its 560px resting width. 1380 was
+   derived from that floor (1380 - 72 page padding - 740 board and gap = 568,
+   the last width that seats a 560px panel), so holding the floor is the only
+   thing that forced 1280x800 to stack. Stacked, the panel lands under a 720px
+   board and pushed the transport 889px down the page: first paint was a board
+   and a header, and the tool read as a static image viewer.
+
+   Here the panel fills what the board leaves instead (468px at 1280, 429px at
+   the 1241px floor) and the workspace clamp releases to full width, since a
+   centered fixed workspace is what created the leftover gutter in the first
+   place. The board never moves: it keeps its authored track. */
+@media (min-width: 1241px) and (max-width: 1380px) {
+  :root { --workspace-width: 100%; }
+  .main {
+    grid-template-columns: var(--artifact-fit-width) minmax(0, 1fr);
+  }
+}
+@media (max-width: 1240px) {
   .main {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
@@ -705,7 +875,7 @@ body {
 }
 
 .panel-header {
-  padding: 16px 18px 13px;
+  padding: 12px 18px 13px;
   border-bottom: 1px solid var(--line-faint);
   background: var(--well-11);
 }
@@ -715,12 +885,11 @@ body {
   justify-content: space-between;
   gap: 12px;
 }
-.panel-title {
-  font-size: 13px; font-weight: 700; letter-spacing: 0;
-  text-transform: uppercase; color: var(--color-rim-light-pewter);
-  margin: 0;
-}
+/* `.panel-title` survives only as an `aria-labelledby` target — both elements
+   also carry `sr-only`, which clips them, so every visual declaration this
+   rule used to hold rendered nothing. */
 .panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin-top: 4px; font-family: var(--font-mono); }
+.nowrap { white-space: nowrap; }
 /* Narration section has no textarea; the hint carries the section body. */
 .narration-hint { margin: 0; padding: 0 18px 12px; }
 .editor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -730,14 +899,6 @@ body {
   padding: 9px 18px 10px;
   border-bottom: 1px solid var(--line-faint);
   background: var(--well-08);
-}
-.fen-field label {
-  color: var(--color-rim-light-pewter);
-  font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
 }
 .fen-field input {
   width: 100%;
@@ -761,6 +922,19 @@ body {
 .fen-field input[aria-invalid='true'] {
   border-color: rgba(207, 93, 93, 0.72);
 }
+.orientation-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--well-08);
+}
+.orientation-field .view-toggle { flex: 0 0 auto; }
 .editor textarea {
   width: 100%;
   background: transparent;
@@ -784,8 +958,8 @@ body {
   border-top: 1px solid var(--line-faint);
   background: var(--well-08);
 }
-/* Setup page: the fen field's bottom border already separates the sections. */
-.fen-field + .subtitle-editor { border-top: 0; }
+/* Setup page: the orientation row's bottom border separates these sections. */
+.orientation-field + .subtitle-editor { border-top: 0; }
 /* Setup page: the subtitle editor takes the free column space; the narration
    section below stays compact. */
 .subtitle-editor.grow {
@@ -807,6 +981,11 @@ body {
   justify-content: space-between;
   gap: 12px;
 }
+/* The panel's field-label tier. One recipe, one selector list: these render
+   a row apart on the Setup page, so a type-scale change that reaches two of
+   the three is visible side by side. */
+.fen-field label,
+.orientation-label,
 .subtitle-editor-head label,
 .upload-btn {
   color: var(--color-rim-light-pewter);
@@ -821,6 +1000,19 @@ body {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+/* Script header: the view toggle anchors left and Import anchors right, so the
+   transient Undo grows into the gap between them instead of shoving the row.
+   Undo used to displace the toggle by its own width the moment it appeared —
+   a control moving out from under the cursor right after a board edit, which
+   is exactly when the author is most likely to reach for it again. Pinning
+   Import also breaks the segment illusion: sitting flush against the toggle it
+   read as a third view ("Moves | Text | Import") rather than an action. */
+.panel-title-row > .subtitle-actions {
+  flex: 1;
+}
+.panel-title-row .import-btn {
+  margin-left: auto;
 }
 /* Import-row metadata type (filename, narration length). */
 .subtitle-file,
@@ -875,16 +1067,172 @@ body {
   color: var(--color-rim-light-pewter);
 }
 
+/* =====================================================================
+   Insert menu
+   The way into the script language. Twelve event kinds ship in the parser;
+   before this only three had an input path (the board gestures), so the
+   menu is both an inserter and the app's only syntax reference. It docks at
+   the bottom of the Moves view and expands upward in the flow rather than
+   floating: the panel is a tall column with room, and an in-flow disclosure
+   can't be clipped by an ancestor's overflow.
+
+   Type sizes here start at 12.5px rather than joining the surrounding
+   10.5/11.5px chrome. These rows are read as prose, once, by someone
+   learning the language — the density that serves a move list works against
+   a reference.
+   ===================================================================== */
+.insert-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line-faint);
+}
+.insert-trigger {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  /* 44px so the one affordance that teaches the language isn't the smallest
+     target in the panel. */
+  min-height: 44px;
+  padding: 0 18px;
+  background: none;
+  border: 0;
+  color: var(--color-foley-slate);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--duration-state), background var(--duration-state);
+}
+.insert-trigger:hover { background: var(--tonal-white-04); color: var(--color-sodium-chalk); }
+.insert-trigger[aria-expanded='true'] { color: var(--color-sodium-chalk); }
+/* Glyph size, not a type-ramp step: the `+` is an icon that happens to be a
+   character, so it is sized to sit optically with the 44px trigger rather than
+   to any text tier. Same exemption as .pgn-x's `×`. */
+.insert-plus {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-studio-steel-blue);
+}
+.insert-kbd {
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--tonal-white-06);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-foley-slate);
+}
+.insert-panel {
+  /* Bounded so a long catalogue can never push the move list out of the
+     panel; it scrolls itself instead. */
+  max-height: 300px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line-faint);
+  background: var(--tonal-white-04);
+  animation: insert-panel-in var(--duration-state) ease-out;
+}
+/* Opacity and transform only — the project's motion rule bans animating
+   layout properties, and the panel's arrival changes the list's height. */
+@keyframes insert-panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.insert-group-label {
+  margin: 0;
+  padding: 10px 18px 6px;
+  border-top: 1px solid var(--line-faint);
+  font-size: 11.5px;
+  color: var(--color-foley-slate);
+}
+.insert-list { list-style: none; margin: 0; padding: 8px 8px; }
+.insert-row { display: flex; flex-direction: column; }
+.insert-item {
+  display: grid;
+  /* Token column sized to the longest syntax example the catalogue carries,
+     so a reference row never wraps its own name. */
+  grid-template-columns: 8px 88px 1fr;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: background var(--duration-state);
+}
+button.insert-item:hover { background: var(--tonal-white-08); }
+.insert-item--static { cursor: default; }
+.insert-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  align-self: center;
+}
+.insert-token {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-sodium-chalk);
+}
+.insert-hint {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-foley-slate);
+  text-wrap: pretty;
+}
+/* The three gesture-authored kinds and `fen` are listed for discovery, not
+   for clicking: they read at reduced strength and carry their real route. */
+.insert-row--ref .insert-token,
+.insert-row--ref .insert-hint { color: var(--color-rim-light-pewter); }
+.insert-row--ref .insert-dot { opacity: 0.55; }
+.insert-via {
+  padding: 0 10px 6px 116px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-studio-steel-blue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insert-panel { animation: none; }
+}
+
+/* Collapsed by default to ERRORS_COLLAPSED_ROWS, so the band sizes itself
+   instead of turning into a nested scroll region inside an already-scrolling
+   panel — at the old fixed 140px, six errors scrolled the report out of sight.
+   Expanded it still needs a ceiling (a badly broken paste can produce dozens),
+   but that scroll is now something the user asked for. */
 .errors {
   border-top: 1px solid var(--errors-border);
   background: var(--errors-bg);
-  max-height: 140px; overflow: auto;
   padding: 8px 0;
 }
+.errors--expanded {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.errors-toggle {
+  margin: 2px 18px 0;
+  padding: 3px 0;
+  background: none;
+  border: 0;
+  color: var(--color-error-line);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+/* Caption tier, not a 12px step of its own: the errors band is prose the
+   author reads before going to fix a line, so it belongs to the same size as
+   every other working-surface small text. */
 .err-row {
   display: flex; gap: 10px;
   padding: 4px 18px;
-  font-size: 12px; color: var(--color-error-text);
+  font-size: 11.5px; color: var(--color-error-text);
   font-family: var(--font-mono);
 }
 .err-line {
@@ -895,7 +1243,7 @@ body {
 /* PGN move list: mainline moves in numbered white/black rows, variations as
    inset flow blocks, non-move events as kind-colored seek dots. The lichess
    analysis convention restated in Gambit's chrome: number rail on the tonal
-   ladder, JetBrains Mono for every move, a steel-blue pill (Five Meanings:
+   ladder, Lilex for every move, a steel-blue pill (Five Meanings:
    move) on the current position. Reached events read at full strength;
    not-yet-reached ones sit dimmed — the recording-progress cue the old list
    carried, kept. */
@@ -932,10 +1280,19 @@ body {
   border-radius: var(--radius-xs);
 }
 .pgn-mv {
+  position: relative;
   border: 0; background: transparent; cursor: pointer;
   font-size: 13px;
   padding: 3px 7px;
   transition: background var(--duration-chrome), color var(--duration-chrome);
+}
+/* Hit-area extension to the 24px floor (WCAG 2.5.8). The visible pill keeps
+   its 3px padding so row rhythm is unchanged; only the target grows. */
+.pgn-mv::before,
+.pgn-var-mv::before {
+  content: '';
+  position: absolute;
+  inset: -1px 0;
 }
 .pgn-mv.past,
 .present-mv.past { color: var(--color-rim-light-pewter); }
@@ -991,7 +1348,8 @@ body {
 }
 /* Kind is never color alone (same doctrine as the timeline pins): highlight
    dots square off, arrow dots point, clear dots hollow to a ring. */
-.pgn-dot[data-kind='highlight']::before { border-radius: 1.5px; }
+.pgn-dot[data-kind='highlight']::before,
+.pgn-dot[data-kind='replay']::before { border-radius: 1.5px; }
 .pgn-dot[data-kind='arrow']::before {
   border-radius: 0;
   clip-path: polygon(12% 8%, 96% 50%, 12% 92%);
@@ -1013,6 +1371,7 @@ body {
   color: var(--color-foley-slate);
 }
 .pgn-var-mv {
+  position: relative;
   display: inline; border: 0; background: transparent; cursor: pointer;
   font: inherit; font-weight: 600;
   color: var(--color-foley-slate);
@@ -1032,7 +1391,7 @@ body {
 .pgn-ret::before {
   content: '';
   position: absolute;
-  inset: -4px -2px;
+  inset: -4px -4px;
 }
 .pgn-ret:hover { opacity: 1; background: var(--row-hover-bg); color: var(--color-sodium-chalk); }
 .pgn-ret.current { opacity: 1; background: var(--tonal-white-10); color: var(--color-sodium-chalk); }
@@ -1042,7 +1401,7 @@ body {
   display: flex; align-items: center; gap: 8px; width: 100%;
   min-height: 26px; margin: 3px 0; padding: 2px 10px;
   border: 0; border-radius: var(--radius-xs); background: transparent;
-  font-family: var(--font-mono); font-size: 11px;
+  font-family: var(--font-mono); font-size: 11.5px;
   color: var(--color-reset-text); cursor: pointer; text-align: left;
   transition: background var(--duration-chrome);
 }
@@ -1114,16 +1473,21 @@ body {
   border: 0; cursor: pointer;
   background: var(--tonal-white-06);
   padding: 1px 4px; border-radius: var(--radius-pill);
-  opacity: 0.9;
 }
+/* No resting opacity fade. It cost real contrast rather than reading as
+   restraint: inside a variation's lighter `tonal-white-04` inset the chips
+   measured 4.18:1, under the 4.5:1 body floor, and the fade is what put them
+   there (4.80:1 without it, on the same foley-slate). The quiet comes from the
+   token and the 10.5px size, which is where it belongs — brightening the token
+   instead would have made timestamps compete with the moves. */
 /* Hit-area extension to the 24px floor (WCAG 2.5.8); visual pill stays tiny
    so timestamps keep reading as metadata. */
 .pgn-time-edit::before {
   content: '';
   position: absolute;
-  inset: -4px -3px;
+  inset: -5px -3px;
 }
-.pgn-time-edit:hover { background: var(--tonal-white-10); color: var(--color-sodium-chalk); opacity: 1; }
+.pgn-time-edit:hover { background: var(--tonal-white-10); color: var(--color-sodium-chalk); }
 /* Rejected edit feedback: a vermillion fade on the chip instead of a silent
    revert. Pure color crossfade (no movement), so it stays under reduced
    motion; the class clears on animationend. */
@@ -1147,6 +1511,7 @@ body {
   position: relative;
   flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
   width: 16px; height: 16px; padding: 0; border-radius: var(--radius-xs);
+  /* Glyph size, not a type-ramp step — the `×` is an icon (see .insert-plus). */
   color: var(--color-foley-slate); font-size: 12px; line-height: 1;
   opacity: 0;
   /* A hidden destructive control must not be a click target: while invisible
@@ -1222,19 +1587,14 @@ body {
   }
 }
 
-/* Only genuinely short desktop viewports trade recording size for a 560px
-   working board. Ordinary 800–900px laptop heights keep the 720px artifact;
-   the page may scroll rather than silently shrinking a recording frame. */
-@media (min-width: 1081px) and (max-height: 760px) {
-  :root {
-    --artifact-fit-width: 560px;
-  }
-}
-
 @media (max-height: 920px) {
   :root {
-    --subtitle-track-height: 56px;
     --main-row-gap: 12px;
+    /* The full-size artifact keeps the base cue, so this tier's track floor is
+       the cue's own height: 29 × 1.36 + 15px padding (7/8 at this height) + 2px
+       border = 56.44. */
+    --subtitle-track-height: 57px;
+    --subtitle-cue-size: 29px;
   }
 
   .app {
@@ -1256,7 +1616,8 @@ body {
 /* Short laptops tighten chrome without changing the recording artifact. */
 @media (max-height: 840px) {
   :root {
-    --subtitle-track-height: 48px;
+    /* No subtitle override: the track floor here is the cue's own height, and
+       this band is inside `max-height: 920px`, which already sets the pair. */
     --main-row-gap: 10px;
   }
 
@@ -1272,6 +1633,36 @@ body {
   .controls {
     padding: 8px 14px;
   }
+}
+
+/* Only genuinely short desktop viewports trade recording size for a 560px
+   working board. Ordinary 800–900px laptop heights keep the 720px artifact;
+   the page may scroll rather than silently shrinking a recording frame.
+   This band is the narrowest of the height tiers and every viewport it matches
+   also matches the two above, so it is declared last: media queries add no
+   specificity, and source order is the only thing that lets it win. */
+@media (min-width: 1081px) and (max-height: 760px) {
+  :root {
+    --artifact-fit-width: 560px;
+    /* The cue is part of the artifact, so it scales with it — 560/720 of the
+       base, rounded to keep a one-line cue inside this tier's track (22 × 1.36
+       + 15 + 2 = 46.9). Holding the base 29px here would wrap the same cue onto
+       two lines on the narrower board, double the track to 96px, and land the
+       floating bar on the subtitles. Artifact size and cue size move together
+       or not at all — which is why the two are declared side by side. */
+    --subtitle-track-height: 48px;
+    --subtitle-cue-size: 22px;
+  }
+
+  .app--present .controls {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .app--present .time-readout { min-width: 100px; }
+  .app--present .speed-btn { padding-inline: 6px; }
+  .app--present .present-controls { gap: 4px; }
+  .app--present .present-toggle,
+  .app--present .exit-present-btn { padding-inline: 8px; }
 }
 
 /* =====================================================================
@@ -1293,6 +1684,7 @@ body {
 @media (max-width: 600px) {
   :root {
     --subtitle-track-height: 58px;
+    --subtitle-cue-size: 26px;
     --board-radius: 8px;
   }
 
@@ -1305,6 +1697,11 @@ body {
   .app { padding: 16px 16px 20px; gap: 16px; }
 
   .title-block { gap: 12px; }
+  .header { gap: 8px; }
+  .export-board-btn { width: 44px; padding-inline: 0; }
+  .export-board-label-wide { display: none; }
+  .export-board-label-compact { display: inline; }
+  .header-actions .present-btn:not(.export-board-btn) { padding-inline: 12px; }
   .logo, .logo img { width: 44px; height: 44px; }
   .logo { border-radius: var(--radius-lg); }
 
@@ -1315,7 +1712,6 @@ body {
   }
   .subtitle-strip p {
     max-width: 28ch;
-    font-size: 19px;
     font-weight: 600;
     line-height: 1.34;
   }
@@ -1349,6 +1745,29 @@ body {
 .app--present .footer {
   display: none;
 }
+/* With those three gone and the transport fixed (below), `.app`'s only
+   in-flow child is the artifact — so it pinned to the top of a viewport-tall
+   #root and opened a void between the board and the floating bar (258px on a
+   1210px-tall window). Edit mode never showed it because the side panel and
+   the in-flow console filled that height. Present is the recording frame, so
+   the artifact belongs on the optical center, not at the top edge.
+
+   `safe center` is load-bearing: on a window too short to seat the artifact
+   plus the reserve, it degrades to top-aligned and the page scrolls, instead
+   of centering overflow and pushing the board's top edge out of reach above
+   the scroll origin. A browser that can't parse it drops the declaration and
+   lands back on today's top-aligned layout — no breakage either way. */
+.app--present {
+  min-height: 100dvh;
+  justify-content: safe center;
+  /* The floating bar's own footprint, so centering can never slide the
+     artifact under it. Reserving it here (rather than centering on the full
+     viewport) is what keeps the result centered in the space the bar leaves —
+     and it is zeroed in the two queries below that put the bar back in flow,
+     where reserving space for a float that no longer exists just parks 130px
+     of empty page under the console. */
+  padding-bottom: var(--present-bar-reserve);
+}
 /* The board keeps the authored recording size (720px, or the 560px
    short-desktop fallback via the existing height media query); with the
    editing chrome gone it simply has more room. Present must NOT introduce a
@@ -1356,7 +1775,7 @@ body {
    authored size and the page scrolls on a short window. That invariant is
    guarded by scripts/test-regressions.mjs. */
 /* minmax(0, …) rather than a bare track: these selectors outrank the
-   max-width:1380px `1fr` collapse at every width (0,2,0 beats 0,1,0, and media
+   max-width:1240px `1fr` collapse at every width (0,2,0 beats 0,1,0, and media
    queries add no specificity), so a fixed track would keep demanding 720px on
    a narrow window — overflowing .main, which body's overflow-x:hidden then
    center-crops with no scrollbar. The max stays the authored size, so ordinary
@@ -1377,11 +1796,17 @@ body {
 .app--present .controls {
   position: fixed;
   left: 50%;
-  bottom: 28px;
+  bottom: var(--present-bar-inset);
   transform: translateX(-50%);
-  /* Tracks the board it sits under, including the short-viewport fallback —
-     a literal 720px here would outgrow a 560px board. */
-  width: min(var(--artifact-fit-width), 92vw);
+  /* Not the board's width. The bar floats *below* the artifact and fades out
+     during playback, so matching the frame bought nothing visually and cost the
+     timeline everything: six control groups eat ~620px, which left the scrubber
+     99px at 1512px wide — 1.03s per pixel on a 1:42 script, with the tick
+     labels overlapping into an unreadable smear. The timeline is the control
+     that must survive; give it room and let the bar run wider than the board,
+     the way a video editor's transport does. Capped so it stays anchored under
+     the frame rather than spanning an ultrawide desktop. */
+  width: min(1080px, 92vw);
   z-index: 20;
   display: flex;
   align-items: center;
@@ -1446,6 +1871,9 @@ body {
   /* Present's desktop flex override cannot seat six controls at compact tablet
      widths (at 601px the timeline collapsed to 16px). Use four bands so the
      speed selector and PGN/Exit retain useful hit and scrub areas. */
+  /* The bar is in flow here, so there is no float to reserve for. */
+  .app--present { --present-bar-reserve: 0px; }
+
   .app--present .controls {
     /* On a short phone a 211px fixed console covers the subtitle track. The
        mobile console returns to its authored slot below the subtitle; hiding
@@ -1498,6 +1926,66 @@ body {
     width: 100%;
     height: clamp(200px, 38vh, 320px);
   }
+}
+
+/* A floating bar only works when the window is tall enough to seat the whole
+   recording frame above it. At 1280x800 it is not: the fixed console covered
+   the board's first rank and its a-h coordinates by 28px across the full width,
+   whenever playback was paused — exactly the frame a creator is looking at
+   while framing the shot and arming a screen recorder. The artifact keeps its
+   authored size (AGENTS.md guards that), so the console returns to the flow and
+   the page scrolls instead; scroll over a shrunken frame is the trade this
+   project already prefers.
+
+   In the flow the bar is only as wide as the board column, so a single row
+   would put the scrubber right back where it started (107px at 1280px). Two
+   bands instead: transport and secondaries on top, timeline spanning its own
+   full-width row underneath.
+
+   The two queries are the widths where the frame is still 720px and cannot
+   clear a floating bar. They deliberately skip the 560px short-desktop band
+   (min-width:1081px and max-height:760px), where the smaller frame frees the
+   room again and the base floating rule should keep applying, and they start at
+   761px so the <=760px mobile grid above keeps its own four-band placement.
+
+   970px is the measured floor, not a round number: anything shorter lands the
+   bar on the subtitles, which DESIGN.md forbids just as firmly as landing it
+   on the board. It was 905px, measured against a *one-line* track (12 top +
+   720 frame + 66 track = 798, versus an 80px bar at bottom:28px). But the
+   track is `auto` and grows with the cue, and a two-line cue already left
+   exactly 0px of clearance at 1440x920 — the floor had no margin, it just
+   hadn't been measured against the format captions actually use. Two lines is
+   the cap in every caption standard (Netflix, BBC, EBU), so that is what this
+   is measured against now, and measured rather than derived: the app's own
+   top padding shifts across height tiers, so the arithmetic that predicts 958
+   is wrong on the page (1440x960 clears by 1px, not 10). Observed clearance
+   runs vh − 959, so 970 buys ~11px; past 972 the artifact centers and the gap
+   only widens. Common laptop viewports sit in the band this recovers —
+   1470x956 is one. A 3+ line cue is outside the caption convention and
+   outside this floor. */
+@media (min-width: 761px) and (max-width: 1080px) and (max-height: 970px),
+       (min-width: 1081px) and (min-height: 761px) and (max-height: 970px) {
+  /* In flow here too — nothing floats, so nothing needs reserving. */
+  .app--present { --present-bar-reserve: 0px; }
+
+  .app--present .controls {
+    position: static;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto auto auto 1fr auto;
+    grid-template-rows: auto auto;
+    column-gap: 12px;
+    row-gap: 10px;
+  }
+  .app--present .play-btn { grid-row: 1; grid-column: 1; }
+  .app--present .ctrl-btn { grid-row: 1; grid-column: 2; }
+  .app--present .time-readout { grid-row: 1; grid-column: 3; }
+  .app--present .speed-group { grid-row: 1; grid-column: 4; justify-self: end; }
+  .app--present .present-controls { grid-row: 1; grid-column: 5; }
+  .app--present .timeline { grid-row: 2; grid-column: 1 / -1; width: 100%; }
 }
 
 /* Reduced motion: cut decorative animation, keep functional motion (piece

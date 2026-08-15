@@ -294,6 +294,40 @@ export function checkedKingSquare(state: GameState): string | null {
   return king ? idxToSq(king[0], king[1]) : null;
 }
 
+const PIECE_NAMES: Record<PieceType, string> = {
+  p: 'pawn',
+  n: 'knight',
+  b: 'bishop',
+  r: 'rook',
+  q: 'queen',
+  k: 'king',
+};
+
+// Why a left-drag from `from` cannot start. The board rejects such a press
+// silently, and "nothing happened" is indistinguishable from a broken app —
+// especially on the two cases that look identical to a piece the author
+// expected to move: it is the other side's turn, or the piece is pinned or
+// boxed in. Returns null when no explanation is warranted: an empty square
+// never offered a drag in the first place (the cursor already says so), and
+// clicking empty board space is too ordinary to annotate.
+//
+// The last branch re-derives legality rather than trusting the caller's empty
+// target set. Asserting "no legal move" on the strength of someone else's
+// check is how a confident sentence ends up describing a piece that could in
+// fact move, and this text exists precisely to be believed. Re-deriving is
+// free here because `legalMoves` memoizes on the immutable GameState — an
+// independent derivation, just not a repeated one.
+export function explainNoMoves(state: GameState, from: string): string | null {
+  const { f, r } = sqToIdx(from);
+  const piece = state.board[r]?.[f];
+  if (!piece) return null;
+  if (piece.side !== state.turn) return `it's ${state.turn === 'w' ? 'White' : 'Black'} to move`;
+  const stuck = !legalMoves(state).some((m) => m.from[0] === f && m.from[1] === r);
+  return stuck ? `that ${PIECE_NAMES[piece.type]} has no legal move` : null;
+}
+
+
+
 export function applyMove(state: GameState, mv: Move): GameState {
   const board = cloneBoard(state.board);
   const [ff, fr] = mv.from;
@@ -357,7 +391,30 @@ export function applyMove(state: GameState, mv: Move): GameState {
   };
 }
 
-export function legalMoves(state: GameState): Move[] {
+// Memoized on the snapshot itself. Board snapshots are immutable and shared by
+// reference across frames, so the whole list is generated once per position
+// however many times anything asks — the resting cursor asks per hovered
+// square, `legalTargets` asks per gesture start, `explainNoMoves` asks again
+// when that start is refused, and `parseSAN` asks once per scripted move on
+// every rebuild (i.e. on every keystroke in the Text view).
+//
+// Inside the primitive rather than beside it. A `legalMovesFor` wrapper left
+// `legalMoves` reachable and uncached, so the four callers inside this file
+// kept regenerating — and nothing at a call site distinguished the two, which
+// is exactly the condition that produced the bug the memo was added for. The
+// return is `readonly` because it is now shared: a caller that sorted it in
+// place would poison every later reader of that position.
+const LEGAL_MOVES_CACHE = new WeakMap<GameState, readonly Move[]>();
+
+export function legalMoves(state: GameState): readonly Move[] {
+  const cached = LEGAL_MOVES_CACHE.get(state);
+  if (cached) return cached;
+  const generated = generateLegalMoves(state);
+  LEGAL_MOVES_CACHE.set(state, generated);
+  return generated;
+}
+
+function generateLegalMoves(state: GameState): readonly Move[] {
   const moves: Move[] = [];
   const board = state.board;
   for (let r = 0; r < 8; r++)

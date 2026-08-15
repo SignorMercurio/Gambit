@@ -8,6 +8,7 @@
 //   [mm:ss] fen <FEN>               (or setfen; sets board to that FEN)
 //   [mm:ss] br                      (or branch; enters a variation)
 //   [mm:ss] ml                      (or mainline; exits current variation)
+//   [mm:ss] rp                      (or replay; replays prior mainline moves)
 // Branches nest: every `br` must be paired with a later `ml`.
 // `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, `st`, or `fen`;
 // without it they auto-fade after their lifetime window.
@@ -120,6 +121,7 @@ export type ParsedEvent =
   | { t: number; kind: 'fen'; fen: string; line: number; raw: string }
   | { t: number; kind: 'branch'; line: number; raw: string }
   | { t: number; kind: 'mainline'; line: number; raw: string }
+  | { t: number; kind: 'replay'; line: number; raw: string }
   | { t: number; kind: 'mind'; line: number; raw: string }
   | { t: number; kind: 'reveal'; line: number; raw: string };
 
@@ -129,7 +131,7 @@ export type TimelineEvent = ParsedEvent | ErrorEvent;
 
 type SimpleEventKind = Extract<
   ParsedEvent['kind'],
-  'clear' | 'reset' | 'start' | 'branch' | 'mainline' | 'mind' | 'reveal'
+  'clear' | 'reset' | 'start' | 'branch' | 'mainline' | 'replay' | 'mind' | 'reveal'
 >;
 
 const SIMPLE_COMMANDS = new Map<string, SimpleEventKind>([
@@ -144,6 +146,8 @@ const SIMPLE_COMMANDS = new Map<string, SimpleEventKind>([
   ['branch', 'branch'],
   ['ml', 'mainline'],
   ['mainline', 'mainline'],
+  ['rp', 'replay'],
+  ['replay', 'replay'],
   ['mind', 'mind'],
   ['reveal', 'reveal'],
 ]);
@@ -228,6 +232,8 @@ export function eventBody(e: ParsedEvent): string {
       return 'begin variation';
     case 'mainline':
       return 'end variation';
+    case 'replay':
+      return 'replay mainline';
     case 'mind':
       return "mind's eye";
     case 'reveal':
@@ -307,6 +313,23 @@ export function parseScript(text: string): TimelineEvent[] {
     }
     if (/^(?:fen|setfen)$/i.test(body)) {
       events.push({ t, error: `Line ${i + 1}: missing FEN`, line: i + 1, raw });
+      continue;
+    }
+    // Derived from the table rather than by restating two of its keys. The
+    // alias set lived in two places for one kind, so a new alias — or the
+    // thirteenth argument-free kind the catalogue chain exists to force into
+    // the UI — would have fallen through to SAN and reported an illegal move,
+    // naming the wrong problem. Deriving it also ends an asymmetry: only `rp 1`
+    // got the accurate message, while `cl e4`, `br 1`, and `mind x` were told
+    // they were bad chess.
+    const firstWord = body.split(/\s+/)[0].toLowerCase();
+    if (SIMPLE_COMMANDS.has(firstWord)) {
+      events.push({
+        t,
+        error: `Line ${i + 1}: ${firstWord} takes no arguments`,
+        line: i + 1,
+        raw,
+      });
       continue;
     }
     // The chess parser owns the strict SAN suffix grammar; the timeline only

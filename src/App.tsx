@@ -3,10 +3,21 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
 import { Board } from './components/Board';
+import {
+  BOARD_EXPORT_SIZE,
+  BOARD_EXPORT_TIMEOUT_MESSAGE,
+  BOARD_EXPORT_TIMEOUT_MS,
+  downloadBoardPng,
+  loadExporter,
+  withTimeout,
+} from './lib/boardExport';
+import type { BoardOrientation } from './lib/boardOrientation';
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
+import { InsertMenu } from './components/InsertMenu';
 import { MoveList } from './components/MoveList';
+import { SYNTAX_HINT } from './components/SyntaxHint';
 import { PresentationMoves } from './components/PresentationMoves';
 import { scrollEviIntoView } from './lib/scrollEventIntoView';
 import {
@@ -21,9 +32,10 @@ import {
   lastEventIndexAt,
   parseScript,
 } from './lib/timeline';
-import { markerColors } from './lib/tokens';
+import { markerColors, markerForms, markerKindFor } from './lib/tokens';
+import { useLatest } from './components/useLatest';
 import { useRovingTabIndex } from './components/useRovingTabIndex';
-import { buildWorld, setupFromFen } from './lib/world';
+import { buildWorld, setupFromFen, worldFrameAt } from './lib/world';
 import {
   landBetween,
   MAX_SAFE_PLAYBACK_SECONDS,
@@ -34,21 +46,96 @@ import {
 } from './lib/playback';
 
 type NarrationTrack = { url: string; name: string; duration: number };
-const LEGAL_MOVES_CACHE = new WeakMap<Chess.GameState, Chess.Move[]>();
-
-function legalMovesFor(state: Chess.GameState): Chess.Move[] {
-  const cached = LEGAL_MOVES_CACHE.get(state);
-  if (cached) return cached;
-  const moves = Chess.legalMoves(state);
-  LEGAL_MOVES_CACHE.set(state, moves);
-  return moves;
-}
-
-function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
+type BoardExportState = 'idle' | 'exporting' | 'success' | 'error';
+// Just the surfaces where a printable character means "type this character".
+// Narrower than isInteractiveShortcutTarget on purpose: see the `/` branch in
+// the window keydown listener.
+function isTextEntryTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(
-    target.closest('button, input, textarea, select, [role="button"], [role="tab"], [contenteditable="true"]'),
+    target.closest('input, textarea, [contenteditable="true"]'),
   );
 }
+
+// The wider set is built on the narrower one rather than restating it: every
+// text-entry surface is also an interactive one, and spelling the three
+// selectors twice meant a fourth (a `[role="textbox"]`) had to be remembered in
+// both places, after which `/` and Space would disagree about what counts as
+// typing.
+function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
+  return (
+    isTextEntryTarget(target) ||
+    (target instanceof HTMLElement &&
+      Boolean(target.closest('button, select, [role="button"], [role="tab"]')))
+  );
+}
+
+// How many error rows the band shows before collapsing the rest behind a
+// count. Three keeps the band a fixed, readable strip: the common case (one
+// typo) never gets a toggle, and a broken paste reports its scale instead of
+// burying it in a 140px scroll well.
+const ERRORS_COLLAPSED_ROWS = 3;
+
+// One row per export state, the same shape PLAY_LABELS uses below. These were
+// three inline four-branch ternaries, two of them byte-identical copies.
+const EXPORT_LABELS: Record<BoardExportState, string> = {
+  idle: 'Export PNG',
+  exporting: 'Exporting…',
+  success: 'Saved',
+  error: 'Retry PNG',
+};
+const EXPORT_GLYPHS: Record<BoardExportState, string> = {
+  idle: 'PNG',
+  exporting: '…',
+  success: '✓',
+  error: '!',
+};
+
+// Transport glyphs. Module scope, not inline JSX: `App` re-renders on every
+// animation frame of playback, and an element rebuilt per frame is an element
+// React must reconcile per frame — while these depend on nothing the clock
+// changes. Hoisted, the identity is stable and React bails out of the subtree,
+// the same reason `timelinePins` and the tick row below are memoized. `Board`
+// already does this for its own static layers (CHECK_GLOW_DEFS, SQUARE_RECTS).
+const PLAY_GLYPHS: Record<PlayState, React.ReactElement> = {
+  pause: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
+      <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+    </svg>
+  ),
+  replay: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        d="M5 12 a 7 7 0 1 1 14 0 a 7 7 0 1 1 -14 0 M5 5 v6 h6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  play: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M7 5 L19 12 L7 19 Z" fill="currentColor" />
+    </svg>
+  ),
+};
+
+// Named separately because it is used on its own, not through a state table.
+const REWIND_GLYPH = (
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <path
+      d="M5 5 v14 M19 5 L8 12 L19 19 Z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const SPEEDS = [0.5, 1, 2, 4];
 
 const PLAY_LABELS: Record<PlayState, string> = {
   play: 'Play',
@@ -60,6 +147,7 @@ const DRAFT_KEYS = {
   script: 'gambit:draft:script',
   subtitles: 'gambit:draft:subtitles',
   fen: 'gambit:draft:start-fen',
+  orientation: 'gambit:draft:board-orientation',
   scriptView: 'gambit:draft:script-view',
   presentPgn: 'gambit:draft:present-pgn',
 } as const;
@@ -88,15 +176,6 @@ function saveDraft(key: string, value: string): void {
   } catch {
     // Local persistence is best-effort; playback must keep working if storage is unavailable.
   }
-}
-
-// Render-mirrored ref: always the latest committed value, for callbacks that
-// must read state at call time without taking it as a dep (which would
-// re-identify them — and re-subscribe listeners — on every change).
-function useLatest<T>(value: T) {
-  const ref = useRef(value);
-  ref.current = value;
-  return ref;
 }
 
 function useDraftText(key: string, fallback: string) {
@@ -168,7 +247,7 @@ function ImportButton({
     <>
       <button
         type="button"
-        className="upload-btn"
+        className="upload-btn import-btn"
         aria-label={label}
         aria-describedby={describedBy}
         onClick={() => inputRef.current?.click()}
@@ -193,10 +272,16 @@ export default function App() {
   const [subtitleText, setSubtitleText] = useDraftText(DRAFT_KEYS.subtitles, DEFAULT_SUBTITLES);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
   const [fenText, setFenText] = useDraftText(DRAFT_KEYS.fen, Chess.STARTING_FEN);
+  const [orientationRaw, setOrientation] = useDraftText(DRAFT_KEYS.orientation, 'white');
+  const orientation: BoardOrientation = orientationRaw === 'black' ? 'black' : 'white';
   const events = useMemo(() => parseScript(scriptText), [scriptText]);
   const subtitleResult = useMemo(() => parseSrt(subtitleText), [subtitleText]);
   const subtitleCues = subtitleResult.cues;
   const initialSetup = useMemo(() => setupFromFen(fenText), [fenText]);
+  const worldBuild = useMemo(
+    () => buildWorld(events, initialSetup),
+    [events, initialSetup],
+  );
   // Narration audio rides the playback clock. Session-only by design: object
   // URLs die with the page and audio blobs don't fit the localStorage drafts.
   const [narration, setNarration] = useState<NarrationTrack | null>(null);
@@ -207,18 +292,22 @@ export default function App() {
   } | null>(null);
 
   const duration = useMemo(() => {
-    const lastEvent = events[events.length - 1];
     return playbackDuration(
-      lastEvent?.t,
+      worldBuild.visualEndTime,
       getSubtitleEnd(subtitleCues),
       // Like subtitles, narration that outlasts the chess script extends
       // playback so the tail of the recording stays audible.
       narration?.duration,
     );
-  }, [events, subtitleCues, narration]);
+  }, [worldBuild.visualEndTime, subtitleCues, narration]);
 
   const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  // Paused on load. The board is an authoring surface before it is a
+  // recording: opening the app used to start the clock immediately, so a
+  // returning author's first act was to catch a script already in motion and
+  // scrub back to where they were. Playback is a deliberate act — the
+  // transport, space, or a seek starts it.
+  const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   // Side panel: the script editor is the primary surface; setup (start FEN,
   // subtitles, narration audio) lives on its own quieter page.
@@ -234,6 +323,10 @@ export default function App() {
   const [present, setPresent] = useState(false);
   const [presentPgnRaw, setPresentPgn] = useDraftText(DRAFT_KEYS.presentPgn, '0');
   const presentPgn = presentPgnRaw === '1';
+  // The insert menu only exists in the Moves view of the Script tab; `/` is
+  // inert everywhere else so the key never fires at a surface that can't show
+  // the result of pressing it.
+  const canInsert = !present && tab === 'script' && scriptView === 'moves';
   // Chrome (floating transport + cursor) fades out while present + playing +
   // pointer idle; pointer movement or contact brings it back.
   const [chromeHidden, setChromeHidden] = useState(false);
@@ -246,16 +339,29 @@ export default function App() {
   // pauseToggle reads the clock only for its at-end restart branch; a `time`
   // dep would re-identify it (and the window keydown listener) every frame.
   const timeRef = useLatest(time);
+  // Read by the window keydown listener, which must not re-subscribe every
+  // time the user flips a tab.
+  const canInsertRef = useLatest(canInsert);
   // Pre-insert script snapshot for one-step undo of the last board gesture or
   // structured edit. Hand edits clear it so undo never reverts typing.
   const [gestureUndo, setGestureUndo] = useState<string | null>(null);
+  const [insertOpen, setInsertOpen] = useState(false);
+  const [errorsExpanded, setErrorsExpanded] = useState(false);
   const [scriptEditError, setScriptEditError] = useState<string | null>(null);
   const [scriptImportError, setScriptImportError] = useState<string | null>(null);
   const [subtitleImportError, setSubtitleImportError] = useState<string | null>(null);
+  const [boardExportState, setBoardExportState] = useState<BoardExportState>('idle');
+  const [boardExportError, setBoardExportError] = useState<string | null>(null);
 
   useEffect(() => {
     setTime((t) => Math.min(t, duration));
   }, [duration]);
+
+  // Leaving the Moves view unmounts the menu's trigger; drop the open flag with
+  // it so returning doesn't land on a panel the user never reopened.
+  useEffect(() => {
+    if (!canInsert) setInsertOpen(false);
+  }, [canInsert]);
 
   const editorLabelId = useId();
   const subtitleLabelId = useId();
@@ -273,6 +379,9 @@ export default function App() {
   const setupTabRef = useRef<HTMLButtonElement>(null);
   const scriptTabRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const boardExportInFlightRef = useRef(false);
+  const boardExportResetRef = useRef<number | null>(null);
   const latestScriptReadRef = useRef(0);
   const latestSubtitleReadRef = useRef(0);
 
@@ -440,20 +549,17 @@ export default function App() {
     // at tick granularity on purpose; see narrationDriftTick above.
   }, [narrationDriftTick, narration, playing]);
 
-  // snapshots[0] is the initial state; snapshots[i + 1] is the state after
-  // events[i]. World derivation is pure and independently regression-tested;
-  // React only selects the snapshot for the current playback clock.
-  const { snapshots, scriptErrors, moveStates, rejectedEventIndexes } = useMemo(
-    () => buildWorld(events, initialSetup),
-    [events, initialSetup],
-  );
+  const { scriptErrors, moveStates, rejectedEventIndexes } = worldBuild;
 
   const reachedEventIndex = lastEventIndexAt(events, time);
 
-  // snapshots[i + 1] is the state AFTER events[i], so the reached index maps
-  // straight to a snapshot slot. Board owns timed overlay visibility; passing
-  // the stable snapshot arrays avoids filtering and rebuilding them at 60Hz.
-  const world = snapshots[reachedEventIndex + 1];
+  // Most events select their stable authored snapshot. A successful `rp`
+  // selects one of its half-second mainline frames from the same playback
+  // clock; Present follows the source move without duplicating PGN rows.
+  const worldFrame = worldFrameAt(worldBuild, reachedEventIndex, time);
+  const world = worldFrame.snapshot;
+  const presentationEventIndex =
+    worldFrame.replaySourceEventIndex ?? reachedEventIndex;
 
   // Full-script errors are returned once beside the board snapshots. Keeping
   // a growing copy on every snapshot made an all-error script retain O(N²)
@@ -538,12 +644,26 @@ export default function App() {
     (from: string): string[] => {
       const { f, r } = Chess.sqToIdx(from);
       const out = new Set<string>();
-      for (const m of legalMovesFor(world.chessState)) {
+      for (const m of Chess.legalMoves(world.chessState)) {
         if (m.from[0] === f && m.from[1] === r) out.add(Chess.idxToSq(m.to[0], m.to[1]));
       }
       return [...out];
     },
     [world.chessState],
+  );
+
+  // A press that can't start a move used to return in silence, which reads as
+  // a dead board rather than a refused gesture. Reuses the EDIT row the
+  // planners already write to, so gesture feedback has one home.
+  const onMoveRejected = useCallback(
+    (from: string) => {
+      const reason = Chess.explainNoMoves(world.chessState, from);
+      if (!reason) return;
+      setScriptEditError(
+        `Can't move from ${from} at ${fmtTime(timeRef.current, 'always')}: ${reason}.`,
+      );
+    },
+    [world.chessState, timeRef],
   );
 
   // Move gestures: chess resolution (legality, SAN, same-move comparison)
@@ -556,7 +676,7 @@ export default function App() {
       if (gestureIsStale()) return;
       const f = Chess.sqToIdx(from);
       const t = Chess.sqToIdx(to);
-      const candidates = legalMovesFor(world.chessState).filter(
+      const candidates = Chess.legalMoves(world.chessState).filter(
         (m) => m.from[0] === f.f && m.from[1] === f.r && m.to[0] === t.f && m.to[1] === t.r,
       );
       // Promotion records a queen; underpromotion stays a hand edit.
@@ -647,6 +767,91 @@ export default function App() {
     }
   }, [duration]);
 
+  const exportBoard = useCallback(async () => {
+    if (boardExportInFlightRef.current) return;
+    const resumePlayback = playingRef.current;
+    boardExportInFlightRef.current = true;
+    if (boardExportResetRef.current != null) {
+      window.clearTimeout(boardExportResetRef.current);
+      boardExportResetRef.current = null;
+    }
+    setBoardExportError(null);
+    setBoardExportState('exporting');
+    setPlaying(false);
+    const abandoned = new AbortController();
+    try {
+      // One ceiling over the whole operation, not just the rasterize: the frame
+      // wait, the exporter's dynamic import, and the rasterize can each stall,
+      // and an await that never settles never runs the `finally` — which is
+      // what used to leave playback paused and this button disabled for the
+      // rest of the session.
+      await withTimeout(
+        (async () => {
+          // Start the exporter chunk now: it needs nothing the frame wait
+          // produces, so awaiting it afterwards only added a cold fetch to the
+          // pause. Both are inside the one ceiling.
+          const exporter = loadExporter();
+          // Let React commit the paused clock before cloning the board. Two
+          // frames also let SVG/image layout settle without advancing the
+          // authored time.
+          //
+          // Raced against a timer, because requestAnimationFrame does not fire
+          // in a hidden or throttled tab and this wait would otherwise never
+          // resolve — the actual cause of the export hang seen here. Nothing is
+          // painting in that state, so the frames have nothing to settle and
+          // skipping them costs the export nothing.
+          await Promise.race([
+            new Promise<void>((resolve) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            }),
+            new Promise<void>((resolve) => window.setTimeout(resolve, 200)),
+          ]);
+          const board = boardRef.current;
+          if (!board) throw new Error('The board is not available.');
+          await downloadBoardPng(board, timeRef.current, { signal: abandoned.signal, exporter });
+        })(),
+        BOARD_EXPORT_TIMEOUT_MS,
+        BOARD_EXPORT_TIMEOUT_MESSAGE,
+      );
+      setBoardExportState('success');
+      boardExportResetRef.current = window.setTimeout(() => {
+        setBoardExportState('idle');
+        boardExportResetRef.current = null;
+      }, 1800);
+    } catch (error) {
+      // The rasterize we gave up on can still be running. Tell it not to
+      // deliver a file the user has already been told they aren't getting.
+      abandoned.abort();
+      const detail = error instanceof Error ? error.message : 'Unknown browser error.';
+      setBoardExportError(`Could not export board PNG: ${detail}`);
+      setBoardExportState('error');
+    } finally {
+      boardExportInFlightRef.current = false;
+      setPlaying(resumePlayback);
+    }
+  }, [playingRef, timeRef]);
+
+  // Two buttons run this — one in the header, one in present mode — and the
+  // half they share is the whole accessibility contract: the announced size,
+  // the disabled-while-exporting rule, and the convention that the error rides
+  // in the tooltip. Present mode has no visible label to contradict a stale
+  // one, so a fix landing in only one copy is invisible exactly where it
+  // matters. The size is templated off the exporter's own constant rather than
+  // spelled out, so the announcement cannot outlive a change to the output.
+  const exportButtonProps = {
+    type: 'button' as const,
+    onClick: exportBoard,
+    disabled: boardExportState === 'exporting',
+    'aria-label': `Export current board as a ${BOARD_EXPORT_SIZE} by ${BOARD_EXPORT_SIZE} PNG`,
+    title: boardExportError ?? 'Export current board as PNG',
+  };
+
+  useEffect(() => () => {
+    if (boardExportResetRef.current != null) {
+      window.clearTimeout(boardExportResetRef.current);
+    }
+  }, []);
+
   const enterPresent = useCallback(() => setPresent(true), []);
   const exitPresent = useCallback(() => setPresent(false), []);
   const togglePresentPgn = useCallback(
@@ -721,6 +926,17 @@ export default function App() {
         setPresent(false);
         return;
       }
+      // `/` opens the insert menu. Its guard is narrower than the transport's:
+      // the transport keys must stay off every control (Space would re-trigger
+      // a focused button), but `/` is only ever ambiguous inside real text
+      // entry, and blocking it on buttons would kill the shortcut exactly when
+      // focus is parked on the move list.
+      if (e.key === '/' && !isTextEntryTarget(e.target)) {
+        if (!canInsertRef.current) return;
+        e.preventDefault();
+        setInsertOpen(true);
+        return;
+      }
       if (isInteractiveShortcutTarget(e.target)) return;
       // Space scrolls the page by default; the arrows keep their native
       // scroll behavior at window level.
@@ -731,7 +947,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [handleTransportKey]);
 
-  const ticks = useMemo(() => timelineTicks(duration), [duration]);
 
   const activeSubtitle = getActiveSubtitle(subtitleCues, time);
   const activeSubtitleText = useMemo(
@@ -774,6 +989,59 @@ export default function App() {
     scrollEviIntoView(list, reachedEventIndex);
   }, [reachedEventIndex, playing, tab, scriptView]);
 
+  // Three booleans, rebuilt as an array + filter + join on every frame of
+  // playback. None of them is a clock input.
+  const appClass = useMemo(
+    () =>
+      [
+        'app',
+        present && 'app--present',
+        present && presentPgn && 'app--present-pgn',
+        present && chromeHidden && 'app--idle',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    [present, presentPgn, chromeHidden],
+  );
+
+  // The ruler's fixed furniture. Both sit inside `.controls`, which re-renders
+  // on every animation frame of playback, and both depend only on the script:
+  // the ticks on the duration they divide, the speed buttons on the selected
+  // rate. Unmemoized they rebuilt ~28 elements and as many style objects and
+  // closures per frame for a row whose content had not changed since the last
+  // edit — next to `timelinePins`, which is memoized for exactly this reason.
+  const tickRow = useMemo(
+    () => (
+      <div className="timeline-ticks" aria-hidden="true">
+        {timelineTicks(duration).map((t) => (
+          <span key={t} className="timeline-tick" style={{ left: `${(t / duration) * 100}%` }}>
+            {fmtTime(t)}
+          </span>
+        ))}
+      </div>
+    ),
+    [duration],
+  );
+  const speedGroup = useMemo(
+    () => (
+      <div className="speed-group" role="group" aria-label="Playback speed">
+        {SPEEDS.map((s) => (
+          <button
+            type="button"
+            key={s}
+            className="speed-btn"
+            aria-pressed={speed === s}
+            aria-label={`${s} times speed`}
+            onClick={() => setSpeed(s)}
+          >
+            {s}×
+          </button>
+        ))}
+      </div>
+    ),
+    [speed],
+  );
+
   const playState = playStateAt(playing, time, duration);
   const playLabel = PLAY_LABELS[playState];
   const currentTimeText = fmtTime(time, 'always');
@@ -783,8 +1051,7 @@ export default function App() {
   // One roving tab stop for the whole pin row (toolbar pattern): a script's
   // dozens of pins must not each cost keyboard users a Tab press between the
   // transport and the speed selector. Arrows walk pins; Tab leaves the row.
-  const pinsRef = useRef<HTMLDivElement | null>(null);
-  const pinsRoving = useRovingTabIndex(pinsRef, '.marker');
+  const pinsRoving = useRovingTabIndex<HTMLDivElement>('.marker');
 
   // Event pins depend only on the parsed script, not the clock — memoized so
   // 60Hz frames reuse the element and React bails out of the subtree. Error
@@ -797,7 +1064,7 @@ export default function App() {
         role="toolbar"
         aria-orientation="horizontal"
         aria-label="Event markers"
-        ref={pinsRef}
+        ref={pinsRoving.ref}
         onKeyDown={pinsRoving.onKeyDown}
         onFocus={pinsRoving.onFocus}
       >
@@ -805,7 +1072,7 @@ export default function App() {
           // Parse errors are error events; runtime errors (illegal SAN, bad
           // FEN) stay move/fen events whose line the snapshot builder
           // rejected. Both pin as vermillion pennants.
-          const kind = 'error' in e || errorLines.has(e.line) ? 'err' : e.kind;
+          const kind = 'error' in e ? 'err' : markerKindFor(e.kind, e.line, errorLines);
           const isErr = kind === 'err';
           return (
             <button
@@ -813,6 +1080,7 @@ export default function App() {
               key={i}
               className="marker"
               data-kind={kind}
+              data-form={markerForms[kind]}
               title={isErr ? `L${e.line} ${e.raw} — script error` : e.raw}
               aria-label={
                 isErr
@@ -834,62 +1102,37 @@ export default function App() {
 
   // Rendered at the bottom of whichever panel page is open: an error anywhere
   // (FEN, script, subtitles, narration) must stay visible on both pages.
-  const errorsBlock = useMemo(() => (initialSetup.error ||
-    narrationError ||
-    scriptImportError ||
-    subtitleImportError ||
-    scriptEditError ||
-    scriptErrors.length > 0 ||
-    subtitleResult.errors.length > 0) && (
-    // role="status" (implicitly polite): errors persist and update as the
-    // user types — an assertive alert would interrupt every edit.
-    <div className="errors" role="status">
-      {initialSetup.error && (
-        <div className="err-row">
-          <span className="err-line">FEN</span>
-          <span id={fenErrorId}>{initialSetup.error}</span>
-        </div>
-      )}
-      {narrationError && (
-        <div className="err-row">
-          <span className="err-line">AUD</span>
-          <span id={narrationErrorId}>{narrationError}</span>
-        </div>
-      )}
-      {scriptEditError && (
-        <div className="err-row">
-          <span className="err-line">EDIT</span>
-          <span>{scriptEditError}</span>
-        </div>
-      )}
-      {scriptImportError && (
-        <div className="err-row">
-          <span className="err-line">SCRIPT</span>
-          <span id={scriptImportErrorId}>{scriptImportError}</span>
-        </div>
-      )}
-      {subtitleImportError && (
-        <div className="err-row">
-          <span className="err-line">SRT</span>
-          <span id={subtitleImportErrorId}>{subtitleImportError}</span>
-        </div>
-      )}
-      {scriptErrors.map((er, i) => (
-        <div key={i} className="err-row">
-          <span className="err-line">L{er.line}</span>
-          <span>{er.error}</span>
-        </div>
-      ))}
-      {subtitleResult.errors.map((er, i) => (
-        <div key={`subtitle-${i}`} className="err-row">
-          <span className="err-line">S{er.line}</span>
-          <span>{er.error}</span>
-        </div>
-      ))}
-    </div>
-  ), [
+  // Built as one ordered list rather than eight inline conditionals so the band
+  // can count itself — a fixed 140px cap turned six errors into a nested scroll
+  // region inside an already-scrolling panel, which hides the very thing it is
+  // trying to report.
+  const errorRows = useMemo(() => {
+    // Rows are keyed by position, not by `tag`. The tag looked like a free
+    // identity — one row per source, one event per line — but `S{line}` is not
+    // unique: an SRT can produce two errors on the same line (a missing blank
+    // separator *and* an empty cue), and both rows then render with `key="S4"`
+    // in the one surface whose job is to report malformed input completely.
+    // The index is position-stable inside this memo and cannot drift from a
+    // label, which is what the tag was chosen to avoid.
+    const rows: { tag: string; text: string; id?: string }[] = [];
+    if (initialSetup.error) rows.push({ tag: 'FEN', text: initialSetup.error, id: fenErrorId });
+    if (narrationError) rows.push({ tag: 'AUD', text: narrationError, id: narrationErrorId });
+    if (boardExportError) rows.push({ tag: 'PNG', text: boardExportError });
+    if (scriptEditError) rows.push({ tag: 'EDIT', text: scriptEditError });
+    if (scriptImportError) {
+      rows.push({ tag: 'SCRIPT', text: scriptImportError, id: scriptImportErrorId });
+    }
+    if (subtitleImportError) {
+      rows.push({ tag: 'SRT', text: subtitleImportError, id: subtitleImportErrorId });
+    }
+    // Already line-sorted by buildWorld; the band preserves that order.
+    for (const er of scriptErrors) rows.push({ tag: `L${er.line}`, text: er.error });
+    for (const er of subtitleResult.errors) rows.push({ tag: `S${er.line}`, text: er.error });
+    return rows;
+  }, [
     initialSetup.error,
     narrationError,
+    boardExportError,
     scriptImportError,
     subtitleImportError,
     scriptEditError,
@@ -901,19 +1144,45 @@ export default function App() {
     subtitleImportErrorId,
   ]);
 
+  const errorsBlock = useMemo(() => {
+    if (errorRows.length === 0) return false;
+    const collapsed = !errorsExpanded && errorRows.length > ERRORS_COLLAPSED_ROWS;
+    const shown = collapsed ? errorRows.slice(0, ERRORS_COLLAPSED_ROWS) : errorRows;
+    return (
+      // role="status" (implicitly polite): errors persist and update as the
+      // user types — an assertive alert would interrupt every edit.
+      <div className={`errors${errorsExpanded ? ' errors--expanded' : ''}`} role="status">
+        {shown.map((row, i) => (
+          <div key={i} className="err-row">
+            <span className="err-line">{row.tag}</span>
+            <span id={row.id}>{row.text}</span>
+          </div>
+        ))}
+        {errorRows.length > ERRORS_COLLAPSED_ROWS && (
+          <button
+            type="button"
+            className="errors-toggle"
+            aria-expanded={errorsExpanded}
+            onClick={() => setErrorsExpanded((v) => !v)}
+          >
+            {collapsed ? `Show ${errorRows.length - ERRORS_COLLAPSED_ROWS} more` : 'Show fewer'}
+          </button>
+        )}
+      </div>
+    );
+  }, [errorRows, errorsExpanded]);
+
   return (
     <div
-      className={[
-        'app',
-        present && 'app--present',
-        present && presentPgn && 'app--present-pgn',
-        present && chromeHidden && 'app--idle',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      className={appClass}
     >
       {/* Narration track: invisible, driven entirely by the playback clock. */}
       {narration && <audio ref={audioRef} src={narration.url} preload="auto" />}
+      <div className="sr-only" role="status" aria-live="polite">
+        {boardExportState === 'exporting' && 'Exporting board PNG.'}
+        {boardExportState === 'success' && 'Board PNG downloaded.'}
+        {boardExportState === 'error' && boardExportError}
+      </div>
       <header className="header">
         <div className="title-block">
           <div className="logo" aria-hidden="true">
@@ -924,19 +1193,33 @@ export default function App() {
             <div className="app-sub">Chess timeline renderer</div>
           </div>
         </div>
-        <button
-          type="button"
-          className="present-btn"
-          onClick={enterPresent}
-          aria-label="Enter present mode"
-        >
-          Present
-        </button>
+        <div className="header-actions">
+          <button
+            {...exportButtonProps}
+            className="present-btn export-board-btn"
+          >
+            <span className="export-board-label-wide">
+              {EXPORT_LABELS[boardExportState]}
+            </span>
+            <span className="export-board-label-compact" aria-hidden="true">
+              {EXPORT_GLYPHS[boardExportState]}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="present-btn"
+            onClick={enterPresent}
+            aria-label="Enter present mode"
+          >
+            Present
+          </button>
+        </div>
       </header>
 
       <main className="main">
         <div className="board-col">
           <Board
+            ref={boardRef}
             positions={world.positions}
             lastMove={world.lastMove}
             highlights={world.highlights}
@@ -946,8 +1229,10 @@ export default function App() {
             mind={world.mind}
             revealedAt={world.revealedAt}
             time={time}
-            interactive={tab === 'script' && !present}
+            orientation={orientation}
+            interactive={tab === 'script' && !present && !worldFrame.replayActive}
             legalTargets={legalTargets}
+            onMoveRejected={onMoveRejected}
             onMoveGesture={onMoveGesture}
             onArrowGesture={onArrowGesture}
             onHighlightGesture={onHighlightGesture}
@@ -970,38 +1255,10 @@ export default function App() {
               onClick={pauseToggle}
               aria-label={`${playLabel} (space)`}
             >
-              {playState === 'pause' ? (
-                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                  <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
-                  <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
-                </svg>
-              ) : playState === 'replay' ? (
-                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                  <path
-                    d="M5 12 a 7 7 0 1 1 14 0 a 7 7 0 1 1 -14 0 M5 5 v6 h6"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                  <path d="M7 5 L19 12 L7 19 Z" fill="currentColor" />
-                </svg>
-              )}
+              {PLAY_GLYPHS[playState]}
             </button>
             <button type="button" className="ctrl-btn" onClick={restart} aria-label="Rewind to start">
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <path
-                  d="M5 5 v14 M19 5 L8 12 L19 19 Z"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              {REWIND_GLYPH}
             </button>
 
             <div
@@ -1018,17 +1275,7 @@ export default function App() {
               <div className="timeline-rail">
                 <div className="scrub-fill" style={{ width: `${(time / duration) * 100}%` }} />
               </div>
-              <div className="timeline-ticks" aria-hidden="true">
-                {ticks.map((t) => (
-                  <span
-                    key={t}
-                    className="timeline-tick"
-                    style={{ left: `${(t / duration) * 100}%` }}
-                  >
-                    {fmtTime(t)}
-                  </span>
-                ))}
-              </div>
+              {tickRow}
               <div
                 className="playhead"
                 style={{ left: `${(time / duration) * 100}%` }}
@@ -1056,25 +1303,18 @@ export default function App() {
               />
             </div>
 
-            <div className="speed-group" role="group" aria-label="Playback speed">
-              {[0.5, 1, 2, 4].map((s) => (
-                <button
-                  type="button"
-                  key={s}
-                  className="speed-btn"
-                  aria-pressed={speed === s}
-                  aria-label={`${s} times speed`}
-                  onClick={() => setSpeed(s)}
-                >
-                  {s}×
-                </button>
-              ))}
-            </div>
+            {speedGroup}
 
             {/* Present-only controls: they ride the floating transport, so
                they auto-hide with the rest of the chrome during recording. */}
             {present && (
               <div className="present-controls">
+                <button
+                  {...exportButtonProps}
+                  className="present-toggle"
+                >
+                  {EXPORT_GLYPHS[boardExportState]}
+                </button>
                 <button
                   type="button"
                   className="present-toggle"
@@ -1101,7 +1341,7 @@ export default function App() {
           <PresentationMoves
             events={events}
             states={moveStates}
-            reachedEventIndex={reachedEventIndex}
+            reachedEventIndex={presentationEventIndex}
             rejectedEventIndexes={rejectedEventIndexes}
           />
         )}
@@ -1159,7 +1399,11 @@ export default function App() {
                 <>
                 <div className="panel-header">
                   <div className="panel-title-row">
-                    <h2 className="panel-title" id={editorLabelId}>Script</h2>
+                    {/* The tab directly above already reads "Script". Kept in
+                        the DOM because it names the editor for assistive tech
+                        (aria-labelledby), hidden because repeating the tab
+                        label spent a row of a panel that is always short. */}
+                    <h2 className="panel-title sr-only" id={editorLabelId}>Script</h2>
                     <div className="subtitle-actions">
                       <div className="view-toggle" role="group" aria-label="Script view mode">
                         <button
@@ -1201,9 +1445,7 @@ export default function App() {
                   </div>
                   {/* One hint per view: syntax belongs to Text, gestures to Moves. */}
                   {scriptView === 'text' ? (
-                    <p className="panel-hint">
-                      [mm:ss.s] SAN · hl · a1-&gt;b2 · cl · rs · st · fen · br / ml
-                    </p>
+                    SYNTAX_HINT
                   ) : (
                     <p className="panel-hint">
                       Drag to move · right-drag arrow · right-click highlight
@@ -1211,6 +1453,7 @@ export default function App() {
                   )}
                 </div>
                 {scriptView === 'moves' ? (
+                  <>
                   <MoveList
                     events={events}
                     states={moveStates}
@@ -1224,6 +1467,17 @@ export default function App() {
                     onPointerEnter={pauseFollowOnHover}
                     onPointerLeave={resumeFollowOnLeave}
                   />
+                  {/* The structured editor could retime and delete but never
+                      create, so nine of twelve event kinds had no way in.
+                      Insertion reuses recordGestureLine — the board gesture's
+                      own commit path — rather than opening a second one. */}
+                  <InsertMenu
+                    open={insertOpen}
+                    onOpenChange={setInsertOpen}
+                    onInsert={recordGestureLine}
+                    timeLabel={currentTimeText}
+                  />
+                  </>
                 ) : (
                   <textarea
                     id="script-text"
@@ -1245,11 +1499,9 @@ export default function App() {
                 </>
               ) : (
                 <>
-                <div className="panel-header">
-                  <div className="panel-title-row">
-                    <h2 className="panel-title">Setup</h2>
-                  </div>
-                </div>
+                {/* No header band: with the title hidden this one held nothing
+                    but padding and a rule above the first field. */}
+                <h2 className="panel-title sr-only">Setup</h2>
                 <div className="fen-field">
                   <label htmlFor="start-fen">Start FEN</label>
                   <input
@@ -1262,6 +1514,27 @@ export default function App() {
                     aria-errormessage={initialSetup.error ? fenErrorId : undefined}
                     onChange={(e) => setFenText(e.target.value)}
                   />
+                </div>
+                <div className="orientation-field">
+                  <span className="orientation-label">Board orientation</span>
+                  <div className="view-toggle" role="group" aria-label="Board orientation">
+                    <button
+                      type="button"
+                      className="view-btn"
+                      aria-pressed={orientation === 'white'}
+                      onClick={() => setOrientation('white')}
+                    >
+                      White
+                    </button>
+                    <button
+                      type="button"
+                      className="view-btn"
+                      aria-pressed={orientation === 'black'}
+                      onClick={() => setOrientation('black')}
+                    >
+                      Black
+                    </button>
+                  </div>
                 </div>
                 <section className="subtitle-editor grow" aria-labelledby={subtitleLabelId}>
                   <div className="subtitle-editor-head">
@@ -1345,6 +1618,7 @@ export default function App() {
             >
               Staunty by sadsnake1
             </a>
+            {' (modified)'}
             {' · '}
             <a href="/licenses/LICENSE-pieces.txt">CC BY-NC-SA 4.0</a>
           </span>

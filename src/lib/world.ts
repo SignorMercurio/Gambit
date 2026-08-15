@@ -5,6 +5,7 @@
 import * as Chess from './chess';
 import type { MindWorld } from './mind';
 import type { ErrorEvent, MoveAnnotation, ParsedEvent, TimelineEvent } from './timeline';
+import { isValidScriptTimestamp } from './playback';
 
 export type PiecePos = {
   f: number;
@@ -28,6 +29,18 @@ export type LastMove = {
   t: number;
   annotation?: MoveAnnotation;
 };
+// Built at two instants — when the script's move applies, and again per frame
+// of a replay — so the flattening of `move.from` / `move.to` into the four
+// fields the board renders lives in one place.
+const lastMoveAt = (move: Chess.Move, t: number, annotation?: MoveAnnotation): LastMove => ({
+  fromF: move.from[0],
+  fromR: move.from[1],
+  toF: move.to[0],
+  toR: move.to[1],
+  t,
+  annotation,
+});
+
 export type BoardHighlight = { sq: string; t: number; pinned?: boolean };
 export type BoardArrow = { from: string; to: string; t: number; pinned?: boolean };
 export type CaptureFlash = { f: number; r: number; t: number; id: string };
@@ -47,6 +60,7 @@ export const BOARD_OVERLAY_LIFETIME = {
 // memory. Repeating an existing arrow remains allowed; `cl`/reset/FEN opens the
 // budget again.
 export const MAX_LIVE_ARROWS = 128;
+export const REPLAY_STEP_SECONDS = 0.5;
 
 export type WorldSnapshot = {
   positions: Positions;
@@ -73,7 +87,60 @@ export type WorldBuild = {
   // errors are deliberately excluded so presentation readers still honor the
   // br/ml depth encoded by the event stream.
   rejectedEventIndexes: ReadonlySet<number>;
+  replaySequences: ReadonlyMap<number, ReplaySequence>;
+  visualEndTime: number;
 };
+
+// No `t`: the frame's time is `sequence.start + index * REPLAY_STEP_SECONDS`,
+// which is exactly how `worldFrameAt` selects a frame in the first place.
+// Storing it too made the one function that derives frames from the clock
+// carry a second copy of the timing it derives.
+type ReplayFrame = {
+  sourceEventIndex: number;
+  snapshot: WorldSnapshot;
+};
+
+type ReplaySequence = {
+  start: number;
+  end: number;
+  frames: ReplayFrame[];
+};
+
+export type WorldFrame = {
+  snapshot: WorldSnapshot;
+  replaySourceEventIndex: number | null;
+  replayActive: boolean;
+};
+
+// Select the authored snapshot or the clock-derived frame of a successful
+// replay directive. Exact half-second boundaries keep the outgoing move so a
+// paused event seek (+0.5s) shows the first replayed move rather than skipping
+// straight to the second; normal playback advances on the following frame.
+export function worldFrameAt(
+  build: WorldBuild,
+  reachedEventIndex: number,
+  time: number,
+): WorldFrame {
+  const sequence = build.replaySequences.get(reachedEventIndex);
+  if (!sequence) {
+    return {
+      snapshot: build.snapshots[reachedEventIndex + 1],
+      replaySourceEventIndex: null,
+      replayActive: false,
+    };
+  }
+  const elapsed = Math.max(0, time - sequence.start);
+  const frameIndex = Math.min(
+    sequence.frames.length - 1,
+    Math.max(0, Math.ceil(elapsed / REPLAY_STEP_SECONDS) - 1),
+  );
+  const frame = sequence.frames[frameIndex];
+  return {
+    snapshot: frame.snapshot,
+    replaySourceEventIndex: frame.sourceEventIndex,
+    replayActive: time < sequence.end,
+  };
+}
 
 function positionsFromBoard(board: Chess.Board): Positions {
   const positions: Positions = {};
@@ -226,6 +293,15 @@ function movePosition(
 
 export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): WorldBuild {
   type BranchSnapshot = WorldSnapshot & { line: number; t: number; raw: string };
+  type MainlineAction =
+    | { kind: 'setup'; setup: BoardSetup }
+    | {
+        kind: 'move';
+        move: Chess.Move;
+        annotation?: MoveAnnotation;
+        sourceEventIndex: number;
+        sourceLine: number;
+      };
 
   const checkAt = (state: Chess.GameState, t: number): BoardCheck | null => {
     const sq = Chess.checkedKingSquare(state);
@@ -248,6 +324,9 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   const moveStates: Chess.MoveState[] = [];
   const rejectedEventIndexes = new Set<number>();
   const branchStack: BranchSnapshot[] = [];
+  const replaySequences = new Map<number, ReplaySequence>();
+  const mainlineActions: MainlineAction[] = [{ kind: 'setup', setup: initialSetup }];
+  let visualEndTime = events[events.length - 1]?.t ?? 0;
 
   const reject = (eventIndex: number, event: ParsedEvent, error: string) => {
     rejectedEventIndexes.add(eventIndex);
@@ -276,7 +355,11 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     mind = { since: mind.since, touches: mind.touches, held };
   };
 
-  const applySetup = (setup: BoardSetup, t: number) => {
+  // What a setup resets. Shared with the replay walk, which re-applies the same
+  // top-level setups while rebuilding the mainline: that branch used to
+  // hand-write five of these assignments, so "what a setup clears" lived in two
+  // places and a sixth field added here would have left replay stale.
+  const seedFromSetup = (setup: BoardSetup, t: number) => {
     positions = setup.positions;
     chessState = setup.chessState;
     lastMove = null;
@@ -286,6 +369,17 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     check = checkAt(chessState, t);
     // Reset the sketch, not the mind phase clock.
     if (mind) mind = { since: mind.since, touches: new Map(), held: new Set() };
+  };
+
+  const applySetup = (setup: BoardSetup, t: number) => {
+    seedFromSetup(setup, t);
+    // Replay derives from top-level setups only, and recording that belongs
+    // here rather than after each call site: it was written out three times
+    // identically, so a fourth setup path could silently omit it. It cannot
+    // move into `seedFromSetup` — replay calls that while iterating
+    // `mainlineActions`, and appending to the array being walked would not
+    // terminate.
+    if (branchStack.length === 0) mainlineActions.push({ kind: 'setup', setup });
   };
 
   const snapshot = (): WorldSnapshot => ({
@@ -299,6 +393,89 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     mind,
     revealedAt,
   });
+
+  const applyReplay = (eventIndex: number, event: Extract<ParsedEvent, { kind: 'replay' }>) => {
+    if (branchStack.length > 0) {
+      reject(eventIndex, event, 'Replay is only available on the main line');
+      return;
+    }
+    if (mind) {
+      reject(eventIndex, event, 'Replay requires reveal before replaying the board');
+      return;
+    }
+    const moveCount = mainlineActions.reduce(
+      (count, action) => count + (action.kind === 'move' ? 1 : 0),
+      0,
+    );
+    if (moveCount === 0) {
+      reject(eventIndex, event, 'Replay requires at least one applied mainline move');
+      return;
+    }
+    const end = event.t + moveCount * REPLAY_STEP_SECONDS;
+    if (!isValidScriptTimestamp(end)) {
+      reject(eventIndex, event, 'Replay exceeds the maximum playback time');
+      return;
+    }
+    const nextEvent = events[eventIndex + 1];
+    if (nextEvent && nextEvent.t < end) {
+      reject(
+        eventIndex,
+        event,
+        `Replay needs ${(moveCount * REPLAY_STEP_SECONDS).toFixed(1)}s before the next event`,
+      );
+      return;
+    }
+
+    // Replay drives the walk's own state rather than a parallel set of `replay*`
+    // locals. Every reject path has returned by here, so the board is already
+    // committed to being overwritten, and the walk ends where the last frame
+    // does — no trailing destructure to copy it back.
+    //
+    // That destructure was the reason to do this: it spelled out the whole
+    // `WorldSnapshot` field list a third time, and it was the one copy the
+    // compiler could not check. A field added to the type and omitted there
+    // typechecks clean and leaves the walk stale for every event after an `rp`.
+    // Frames now come from `snapshot()`, the same builder every other event uses.
+    //
+    // Overlays clear once rather than per frame. Every write in this file
+    // reassigns these arrays instead of mutating them, so one empty array is
+    // safe to share across frames — and a stable identity is what keeps Board's
+    // `arrows` memo from recomputing on every replay step. A mid-replay setup
+    // rebinds them through `seedFromSetup`, so the sharing runs between setup
+    // boundaries rather than across the whole sequence; that is still every
+    // frame of an ordinary replay, which has exactly one setup at its head.
+    highlights = [];
+    arrows = [];
+    mind = null;
+    revealedAt = Number.NEGATIVE_INFINITY;
+
+    const frames: ReplayFrame[] = [];
+    for (const action of mainlineActions) {
+      if (action.kind === 'setup') {
+        // `mainlineActions` always opens with the initial setup, so the first
+        // pass through here is what seeds the replay.
+        seedFromSetup(action.setup, event.t);
+        continue;
+      }
+
+      const frameT = event.t + frames.length * REPLAY_STEP_SECONDS;
+      const moved = movePosition(positions, action.move, frameT);
+      positions = moved.positions;
+      chessState = Chess.applyMove(chessState, action.move);
+      check = checkAt(chessState, frameT);
+      lastMove = lastMoveAt(action.move, frameT, action.annotation);
+      if (moved.captureFlash) {
+        lastCapture = {
+          ...moved.captureFlash,
+          id: `replay-${event.line}-${action.sourceLine}`,
+        };
+      }
+      frames.push({ sourceEventIndex: action.sourceEventIndex, snapshot: snapshot() });
+    }
+
+    replaySequences.set(eventIndex, { start: event.t, end, frames });
+    visualEndTime = Math.max(visualEndTime, end);
+  };
 
   snapshots.push(snapshot());
 
@@ -415,6 +592,9 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
             revealedAt = event.t;
           }
           break;
+        case 'replay':
+          applyReplay(eventIndex, event);
+          break;
         case 'move': {
           const move = Chess.parseSAN(event.san, chessState);
           if (!move) {
@@ -427,18 +607,20 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           chessState = Chess.applyMove(chessState, move);
           if (check) touch(event.t, check.sq);
           check = checkAt(chessState, event.t);
-          lastMove = {
-            fromF: move.from[0],
-            fromR: move.from[1],
-            toF: move.to[0],
-            toR: move.to[1],
-            t: event.t,
-            annotation: event.annotation,
-          };
+          lastMove = lastMoveAt(move, event.t, event.annotation);
           if (moved.captureFlash) {
             lastCapture = { ...moved.captureFlash, id: String(event.line) };
           }
           nameMove(event.t, ...moved.touched, check?.sq);
+          if (branchStack.length === 0) {
+            mainlineActions.push({
+              kind: 'move',
+              move,
+              annotation: event.annotation,
+              sourceEventIndex: eventIndex,
+              sourceLine: event.line,
+            });
+          }
           break;
         }
       }
@@ -456,5 +638,17 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     });
   }
 
-  return { snapshots, scriptErrors, moveStates, rejectedEventIndexes };
+  return {
+    snapshots,
+    // Errors arrive in two passes — the parser's, then this walk's — so the
+    // natural order interleaves them by stage rather than by script: six broken
+    // lines came out L7, L3, L4, L5, L6, L8. The band is read top-to-bottom
+    // against the text the author is about to go fix, and `role="status"`
+    // announces it in exactly that order, so sort by line.
+    scriptErrors: scriptErrors.slice().sort((a, b) => a.line - b.line),
+    moveStates,
+    rejectedEventIndexes,
+    replaySequences,
+    visualEndTime,
+  };
 }

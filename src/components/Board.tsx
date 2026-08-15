@@ -1,8 +1,25 @@
 // Pieces translate via `translate3d` so motion stays on the GPU compositor.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import { BOARD_GESTURE_CLASS } from '../lib/boardExport';
 import { Piece } from './Piece';
 import { idxToSq, sqToIdx } from '../lib/chess';
+import {
+  boardViewPosition,
+  squareViewPosition,
+  squareFromBoardView,
+  type BoardOrientation,
+  type BoardViewPosition,
+} from '../lib/boardOrientation';
 import {
   beginAnnotationGesture,
   beginMoveGesture,
@@ -52,6 +69,7 @@ type BoardProps = {
   // fades in from the ghost floor instead of popping (-Infinity: no fade).
   revealedAt: number;
   time: number;
+  orientation?: BoardOrientation;
   // Interactive editing (Script tab only). Gestures never draw directly —
   // they report intents that App records as script lines, so the script
   // text stays the single source of truth. Mouse-only by design: this is a
@@ -61,6 +79,9 @@ type BoardProps = {
   onMoveGesture?: (from: string, to: string) => void;
   onArrowGesture?: (from: string, to: string) => void;
   onHighlightGesture?: (sq: string) => void;
+  // A left-press on a square that can't start a move. Reported rather than
+  // swallowed so App can say why; Board never decides the wording.
+  onMoveRejected?: (from: string) => void;
 };
 
 const BOARD_ARROW = {
@@ -202,8 +223,17 @@ function captureFlashVisual(age: number) {
   };
 }
 
-function squareCenter(f: number, r: number): [number, number] {
-  return [f * SQ + SQ / 2, (7 - r) * SQ + SQ / 2];
+const viewCenter = (view: BoardViewPosition): [number, number] => [
+  view.x * SQ + SQ / 2,
+  view.y * SQ + SQ / 2,
+];
+
+function squareCenter(
+  f: number,
+  r: number,
+  orientation: BoardOrientation,
+): [number, number] {
+  return viewCenter(boardViewPosition(f, r, orientation));
 }
 
 function insetPoint(
@@ -217,11 +247,15 @@ function insetPoint(
   return [x1 + ((x2 - x1) / len) * inset, y1 + ((y2 - y1) / len) * inset];
 }
 
-function arrowPoints(from: string, to: string): Array<readonly [number, number]> {
+function arrowPoints(
+  from: string,
+  to: string,
+  orientation: BoardOrientation,
+): Array<readonly [number, number]> {
   const fromXY = sqToIdx(from);
   const toXY = sqToIdx(to);
-  const [x1, y1] = squareCenter(fromXY.f, fromXY.r);
-  const [x2, y2] = squareCenter(toXY.f, toXY.r);
+  const [x1, y1] = squareCenter(fromXY.f, fromXY.r, orientation);
+  const [x2, y2] = squareCenter(toXY.f, toXY.r, orientation);
   const df = toXY.f - fromXY.f;
   const dr = toXY.r - fromXY.r;
   const isKnight =
@@ -232,7 +266,7 @@ function arrowPoints(from: string, to: string): Array<readonly [number, number]>
     const verticalFirst = Math.abs(dr) === 2;
     const elbowF = verticalFirst ? fromXY.f : toXY.f;
     const elbowR = verticalFirst ? toXY.r : fromXY.r;
-    const [ex, ey] = squareCenter(elbowF, elbowR);
+    const [ex, ey] = squareCenter(elbowF, elbowR, orientation);
     const start = insetPoint(x1, y1, ex, ey, BOARD_ARROW.startInset);
     const end = insetPoint(x2, y2, ex, ey, BOARD_ARROW.endInset);
     return [start, [ex, ey], end];
@@ -250,27 +284,99 @@ const isLightSquare = (f: number, r: number) => (f + r) % 2 === 1;
 const lastMoveFill = (f: number, r: number) =>
   isLightSquare(f, r) ? tokens.boardLastMoveOnLight : tokens.boardLastMoveOnDark;
 
+// The `hl` ring, in board units (SQ = 100) so it scales with the board rather
+// than the viewport. A circle, not a rounded square. An outlined rounded rect restates the
+// square's own geometry, so it reads as the square being *selected* — UI
+// language — no matter how thin or how softly cornered it gets. A circle does
+// not echo the grid, so it reads as a mark drawn on top of the square, and it
+// is the annotation shape chess players already know from ring-a-square.
+// 6% stroke still resolves at 480p, where the board is ~50px per square.
+const HL_RING = 6;
+const HL_RADIUS = 43;
+
+// The ring in one place: the live overlay and the in-flight gesture preview
+// must draw the same shape, or the preview promises a mark the script will not
+// produce.
+//
+// It returns the element, not a props bag. A bag is only a default — every
+// call site spreads it, and `{...hlRingCircle(v)} r={30} strokeWidth={2}`
+// silently wins, which is the invariant this helper exists for. Owning the
+// element makes a second radius unrepresentable at a call site rather than
+// merely discouraged.
+//
+// `scale` is the fade-in growth, applied here because it pivots on the ring's
+// own center: two expressions for one point can drift, and the ring would then
+// grow about a spot that is not its middle.
+//
+// No per-square-color variant: the stroke is opaque, so it does not take on the
+// square underneath and reads as one pen on both. See tokens.ts.
+export function HlRing({
+  view,
+  opacity = 1,
+  scale = 1,
+}: {
+  view: BoardViewPosition;
+  opacity?: number;
+  scale?: number;
+}) {
+  const [cx, cy] = viewCenter(view);
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={HL_RADIUS}
+      fill="none"
+      stroke={tokens.boardHighlightRing}
+      strokeWidth={HL_RING}
+      opacity={opacity}
+      transform={
+        scale === 1
+          ? undefined
+          : `translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})`
+      }
+    />
+  );
+}
+
 const SQUARES: { f: number; r: number; isLight: boolean }[] = [];
 for (let r = 7; r >= 0; r--) {
   for (let f = 0; f < 8; f++) SQUARES.push({ f, r, isLight: isLightSquare(f, r) });
 }
 
-const COORD_LABELS: { x: number; y: number; isLight: boolean; text: string; anchor: 'end' | 'start' }[] = [
-  ...Array.from({ length: 8 }, (_, f) => ({
-    x: f * SQ + SQ - 8,
-    y: 8 * SQ - 8,
-    isLight: f % 2 === 1,
-    text: String.fromCharCode(97 + f),
-    anchor: 'end' as const,
-  })),
-  ...Array.from({ length: 8 }, (_, r) => ({
-    x: 4,
-    y: (7 - r) * SQ + 16,
-    isLight: r % 2 === 1,
-    text: String(r + 1),
-    anchor: 'start' as const,
-  })),
-];
+type CoordLabel = {
+  x: number;
+  y: number;
+  isLight: boolean;
+  text: string;
+  anchor: 'end' | 'start';
+};
+
+function coordLabels(orientation: BoardOrientation): CoordLabel[] {
+  const bottomRank = orientation === 'white' ? 0 : 7;
+  const leftFile = orientation === 'white' ? 0 : 7;
+  return [
+    ...Array.from({ length: 8 }, (_, x) => {
+      const f = orientation === 'white' ? x : 7 - x;
+      return {
+        x: x * SQ + SQ - 8,
+        y: 8 * SQ - 8,
+        isLight: isLightSquare(f, bottomRank),
+        text: String.fromCharCode(97 + f),
+        anchor: 'end' as const,
+      };
+    }),
+    ...Array.from({ length: 8 }, (_, y) => {
+      const r = orientation === 'white' ? 7 - y : y;
+      return {
+        x: 4,
+        y: y * SQ + 16,
+        isLight: isLightSquare(leftFile, r),
+        text: String(r + 1),
+        anchor: 'start' as const,
+      };
+    }),
+  ];
+}
 
 // Static gradient defs, hoisted so 60Hz renders reuse one element instead of
 // rebuilding (and remounting) the defs subtree with the check state.
@@ -332,8 +438,8 @@ function voidLayer(sink: number) {
 // left, so they must read at full strength).
 // `ink` null means the per-square board pair; a color means the one bright
 // mind's-eye ink.
-const coordTexts = (ink: string | null) =>
-  COORD_LABELS.map((c, i) => (
+const coordTexts = (ink: string | null, orientation: BoardOrientation) =>
+  coordLabels(orientation).map((c, i) => (
     <text
       key={`coord-${i}`}
       x={c.x}
@@ -348,8 +454,14 @@ const coordTexts = (ink: string | null) =>
       {c.text}
     </text>
   ));
-const COORD_TEXTS = coordTexts(null);
-const COORD_TEXTS_MIND = coordTexts(tokens.mindCoordInk);
+const COORD_TEXTS = {
+  white: coordTexts(null, 'white'),
+  black: coordTexts(null, 'black'),
+};
+const COORD_TEXTS_MIND = {
+  white: coordTexts(tokens.mindCoordInk, 'white'),
+  black: coordTexts(tokens.mindCoordInk, 'black'),
+};
 
 // Full-size SVG planes share one positioning contract; each layer only adds
 // its own pointer and stacking behavior.
@@ -368,20 +480,23 @@ const COORD_LAYER_STYLE: CSSProperties = {
 // Both steady states are whole hoisted layers, so every frame outside the
 // 0.6s ramp — which is every frame of an ordinary script — bails out on
 // element identity instead of reconciling 16 labels.
-const COORD_LAYER = (
+const coordSvg = (texts: ReactNode) => (
   <svg className="board-coords" viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={COORD_LAYER_STYLE}>
-    {COORD_TEXTS}
+    {texts}
   </svg>
 );
-const COORD_LAYER_MIND = (
-  <svg className="board-coords" viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={COORD_LAYER_STYLE}>
-    {COORD_TEXTS_MIND}
-  </svg>
-);
+const COORD_LAYER = {
+  white: coordSvg(COORD_TEXTS.white),
+  black: coordSvg(COORD_TEXTS.black),
+};
+const COORD_LAYER_MIND = {
+  white: coordSvg(COORD_TEXTS_MIND.white),
+  black: coordSvg(COORD_TEXTS_MIND.black),
+};
 
-function coordLayer(sink: number) {
-  if (sink <= 0) return COORD_LAYER;
-  if (sink >= 1) return COORD_LAYER_MIND;
+function coordLayer(sink: number, orientation: BoardOrientation) {
+  if (sink <= 0) return COORD_LAYER[orientation];
+  if (sink >= 1) return COORD_LAYER_MIND[orientation];
   return (
     <svg
       className="board-coords"
@@ -389,8 +504,8 @@ function coordLayer(sink: number) {
       aria-hidden="true"
       style={COORD_LAYER_STYLE}
     >
-      {COORD_TEXTS}
-      <g opacity={sink}>{COORD_TEXTS_MIND}</g>
+      {COORD_TEXTS[orientation]}
+      <g opacity={sink}>{COORD_TEXTS_MIND[orientation]}</g>
     </svg>
   );
 }
@@ -413,13 +528,13 @@ function squareInk(sq: string): string {
   return isLightSquare(f, r) ? tokens.coordOnLight : tokens.coordOnDark;
 }
 
-function insetSquareMarker(sq: string, key: string) {
-  const { f, r } = sqToIdx(sq);
+function insetSquareMarker(sq: string, key: string, orientation: BoardOrientation) {
+  const view = squareViewPosition(sq, orientation);
   return (
     <rect
       key={key}
-      x={f * SQ + 4}
-      y={(7 - r) * SQ + 4}
+      x={view.x * SQ + 4}
+      y={view.y * SQ + 4}
       width={SQ - 8}
       height={SQ - 8}
       rx={8}
@@ -455,9 +570,11 @@ const BADGE_LAYER_STYLE: CSSProperties = {
 function GestureOverlay({
   gesture,
   positions,
+  orientation,
 }: {
   gesture: BoardGesture;
   positions: Positions;
+  orientation: BoardOrientation;
 }) {
   // Memoized on positions (not gesture start): a scripted move firing during
   // playback must restyle the dots, but a 60Hz drag frame must not rebuild
@@ -472,46 +589,53 @@ function GestureOverlay({
     [positions],
   );
 
-  if (gesture.kind === 'annotate') {
-    const { from, over } = gesture;
-    const fromIdx = sqToIdx(from);
-    return (
-      <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={OVERLAY_LAYER_STYLE}>
-        {over == null ? null : over !== from ? (
-          <path d={buildArrowPath(arrowPoints(from, over))} fill={tokens.boardArrow} opacity={0.55} />
-        ) : (
-          <rect
-            x={fromIdx.f * SQ}
-            y={(7 - fromIdx.r) * SQ}
-            width={SQ}
-            height={SQ}
-            fill={tokens.boardHighlight}
-            opacity={0.5}
-          />
-        )}
-      </svg>
+  // One wrapper for both gesture kinds. `BOARD_GESTURE_CLASS` is the single
+  // hook the PNG export filters on, so a branch that grew its own <svg> and
+  // missed the class would bake the in-flight preview into a user's 1440×1440
+  // export with nothing failing. The early return existed only to narrow
+  // `gesture.kind`; a ternary narrows just as well.
+  const body =
+    gesture.kind === 'annotate' ? (
+      gesture.over == null ? null : gesture.over !== gesture.from ? (
+        <path
+          d={buildArrowPath(arrowPoints(gesture.from, gesture.over, orientation))}
+          fill={tokens.boardArrow}
+          opacity={0.55}
+        />
+      ) : (
+        <HlRing view={squareViewPosition(gesture.from, orientation)} opacity={0.5} />
+      )
+    ) : (
+      <>
+        {insetSquareMarker(gesture.from, 'from', orientation)}
+        {[...gesture.targets].map((sq) => {
+          const [cx, cy] = viewCenter(squareViewPosition(sq, orientation));
+          return occupied.has(sq) ? (
+            <circle key={sq} cx={cx} cy={cy} r={40} fill="none" stroke={squareInk(sq)} strokeWidth={7} opacity={0.5} />
+          ) : (
+            <circle key={sq} cx={cx} cy={cy} r={13} fill={squareInk(sq)} opacity={0.45} />
+          );
+        })}
+        {gesture.over &&
+          gesture.over !== gesture.from &&
+          gesture.targets.has(gesture.over) &&
+          insetSquareMarker(gesture.over, 'over', orientation)}
+      </>
     );
-  }
 
-  const { from, over, targets } = gesture;
   return (
-    <svg viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={OVERLAY_LAYER_STYLE}>
-      {insetSquareMarker(from, 'from')}
-      {[...targets].map((sq) => {
-        const { f, r } = sqToIdx(sq);
-        const [cx, cy] = squareCenter(f, r);
-        return occupied.has(sq) ? (
-          <circle key={sq} cx={cx} cy={cy} r={40} fill="none" stroke={squareInk(sq)} strokeWidth={7} opacity={0.5} />
-        ) : (
-          <circle key={sq} cx={cx} cy={cy} r={13} fill={squareInk(sq)} opacity={0.45} />
-        );
-      })}
-      {over && over !== from && targets.has(over) && insetSquareMarker(over, 'over')}
+    <svg
+      className={BOARD_GESTURE_CLASS}
+      viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+      aria-hidden="true"
+      style={OVERLAY_LAYER_STYLE}
+    >
+      {body}
     </svg>
   );
 }
 
-export function Board({
+export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
   positions,
   lastMove,
   highlights,
@@ -521,19 +645,30 @@ export function Board({
   mind,
   revealedAt,
   time,
+  orientation = 'white',
   interactive,
   legalTargets,
   onMoveGesture,
   onArrowGesture,
   onHighlightGesture,
-}: BoardProps) {
+  onMoveRejected,
+}: BoardProps, forwardedRef) {
   const boardRef = useRef<HTMLDivElement | null>(null);
+  useImperativeHandle(forwardedRef, () => boardRef.current as HTMLDivElement, []);
   const [gesture, setGesture] = useState<BoardGesture | null>(null);
+  // Whether the square under the pointer can start a move, so the board can
+  // offer a resting `grab` cursor. Without it an editable board is visually
+  // identical to an inert one and nothing invites the drag at all.
+  const [hoverGrab, setHoverGrab] = useState(false);
+  // The square that answer was computed for. `legalTargets` generates the
+  // whole legal move list per call, which is far too heavy to run per
+  // mousemove — only a square change can change the answer.
+  const hoverSqRef = useRef<string | null>(null);
   const positionEntries = useMemo(() => Object.entries(positions), [positions]);
   const arrowShapes = useMemo(
     () =>
       arrows.map((arrow, index) => {
-        const points = arrowPoints(arrow.from, arrow.to);
+        const points = arrowPoints(arrow.from, arrow.to, orientation);
         return {
           arrow,
           d: buildArrowPath(points),
@@ -541,7 +676,7 @@ export function Board({
           maskId: `arrow-mask-${index}-${arrow.from}-${arrow.to}`,
         };
       }),
-    [arrows],
+    [arrows, orientation],
   );
 
   // Interactive mode can turn off while a pointer is still captured (for
@@ -557,6 +692,14 @@ export function Board({
     setGesture(null);
   }, [interactive, gesture]);
 
+  // A new position makes the cached hover answer wrong on the very same
+  // square — the piece that could move a moment ago may be the opponent's now.
+  // `legalTargets`'s identity changes with the position, so it is the signal.
+  useEffect(() => {
+    hoverSqRef.current = null;
+    setHoverGrab(false);
+  }, [legalTargets, interactive]);
+
   // Map a pointer event to the square under it, or null outside the board.
   const squareAtPointer = (e: React.PointerEvent): string | null => {
     const rect = boardRef.current?.getBoundingClientRect();
@@ -564,7 +707,7 @@ export function Board({
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
     if (x < 0 || x >= 1 || y < 0 || y >= 1) return null;
-    return idxToSq(Math.floor(x * 8), 7 - Math.floor(y * 8));
+    return squareFromBoardView(Math.floor(x * 8), Math.floor(y * 8), orientation);
   };
 
   const onGesturePointerDown = (e: React.PointerEvent) => {
@@ -593,13 +736,26 @@ export function Board({
       return;
     }
     const targets = new Set(legalTargets?.(sq) ?? []);
-    if (targets.size === 0) return;
+    if (targets.size === 0) {
+      onMoveRejected?.(sq);
+      return;
+    }
     e.preventDefault();
     capturePointer(e);
     setGesture(beginMoveGesture(owner, sq, targets, onMoveGesture));
   };
 
+  // Resting affordance only — a drag in flight already owns the cursor.
+  const updateHoverCursor = (e: React.PointerEvent) => {
+    if (gesture || !interactive || e.pointerType !== 'mouse') return;
+    const sq = squareAtPointer(e);
+    if (sq === hoverSqRef.current) return;
+    hoverSqRef.current = sq;
+    setHoverGrab(sq != null && (legalTargets?.(sq)?.length ?? 0) > 0);
+  };
+
   const onGesturePointerMove = (e: React.PointerEvent) => {
+    updateHoverCursor(e);
     if (!gesture || e.pointerId !== gesture.pointerId) return;
     // The effect above owns normal mode transitions; this guard closes the
     // event-ordering window before that effect has run.
@@ -638,7 +794,7 @@ export function Board({
 
   const lastMoveOpacity = lastMove ? timedProgress(time - lastMove.t, 0.12) : 0;
   const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
-  const checkIdx = check ? sqToIdx(check.sq) : null;
+  const checkView = check ? squareViewPosition(check.sq, orientation) : null;
 
   // Which highlights are lit, resolved once: the rects render from this list
   // and mind mode's rehearsal reads it, so "is this alarm showing" has exactly
@@ -672,7 +828,7 @@ export function Board({
 
   const sink = mindSink(mind, revealedAt, time);
   const boardVoid = voidLayer(sink);
-  const coordinates = coordLayer(sink);
+  const coordinates = coordLayer(sink, orientation);
   // Outside mind mode every piece shares one strength (the reveal fade-up, or
   // a saturated 1 for scripts that never darken), so it is computed once here
   // instead of per piece per frame.
@@ -681,6 +837,9 @@ export function Board({
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
       ? captureFlashVisual(time - captureFlash.t)
       : null;
+  const captureView = captureFlash
+    ? boardViewPosition(captureFlash.f, captureFlash.r, orientation)
+    : null;
 
   return (
     <div className="board-wrap">
@@ -688,11 +847,15 @@ export function Board({
         ref={boardRef}
         className="board"
         role="img"
-        aria-label="Chess board"
+        aria-label={`Chess board, ${orientation} perspective`}
         onPointerDown={onGesturePointerDown}
         onPointerMove={onGesturePointerMove}
         onPointerUp={onGesturePointerUp}
         onPointerCancel={onGesturePointerCancel}
+        onPointerLeave={() => {
+          hoverSqRef.current = null;
+          if (hoverGrab) setHoverGrab(false);
+        }}
         onContextMenu={(e) => {
           if (interactive) e.preventDefault();
         }}
@@ -703,7 +866,13 @@ export function Board({
           borderRadius: 'var(--board-radius)',
           overflow: 'hidden',
           boxShadow: tokens.shadowBoard,
-          cursor: gesture ? (gesture.kind === 'move' ? 'grabbing' : 'crosshair') : undefined,
+          cursor: gesture
+            ? gesture.kind === 'move'
+              ? 'grabbing'
+              : 'crosshair'
+            : hoverGrab
+              ? 'grab'
+              : undefined,
         }}
       >
         {/* squares */}
@@ -727,33 +896,28 @@ export function Board({
                 [lastMove.fromF, lastMove.fromR],
                 [lastMove.toF, lastMove.toR],
               ] as const
-            ).map(([f, r], i) => (
-              <rect
-                key={`lm-${i}`}
-                x={f * SQ}
-                y={(7 - r) * SQ}
-                width={SQ}
-                height={SQ}
-                fill={lastMoveFill(f, r)}
-                opacity={lastMoveOpacity}
-              />
-            ))}
+            ).map(([f, r], i) => {
+              const view = boardViewPosition(f, r, orientation);
+              return (
+                <rect
+                  key={`lm-${i}`}
+                  x={view.x * SQ}
+                  y={view.y * SQ}
+                  width={SQ}
+                  height={SQ}
+                  fill={lastMoveFill(f, r)}
+                  opacity={lastMoveOpacity}
+                />
+              );
+            })}
 
           {litHighlights.map(({ h, age, opacity }, i) => {
-            const { f, r } = sqToIdx(h.sq);
-            const cx = f * SQ + SQ / 2;
-            const cy = (7 - r) * SQ + SQ / 2;
-            const scale = 0.94 + timedProgress(age, HIGHLIGHT_FADE_IN) * 0.06;
             return (
-              <rect
+              <HlRing
                 key={`hl-${h.sq}-${h.t}-${i}`}
-                x={f * SQ}
-                y={(7 - r) * SQ}
-                width={SQ}
-                height={SQ}
-                fill={tokens.boardHighlight}
+                view={squareViewPosition(h.sq, orientation)}
                 opacity={opacity}
-                transform={`translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})`}
+                scale={0.94 + timedProgress(age, HIGHLIGHT_FADE_IN) * 0.06}
               />
             );
           })}
@@ -761,10 +925,10 @@ export function Board({
           {/* Check glow: vermillion radial under the checked king. A board
              state (not a timed overlay), so it persists while the check
              lasts and clears the moment the position resolves it. */}
-          {checkIdx && checkOpacity > 0 && (
+          {checkView && checkOpacity > 0 && (
             <rect
-              x={checkIdx.f * SQ}
-              y={(7 - checkIdx.r) * SQ}
+              x={checkView.x * SQ}
+              y={checkView.y * SQ}
               width={SQ}
               height={SQ}
               fill="url(#board-check-glow)"
@@ -785,8 +949,9 @@ export function Board({
               : revealStrength;
             if (strength <= 0) return null;
             const visual = pieceVisual(p, time);
-            const tx = visual.f * 100;
-            const ty = (7 - visual.r) * 100;
+            const view = boardViewPosition(visual.f, visual.r, orientation);
+            const tx = view.x * 100;
+            const ty = view.y * 100;
             return (
               <div
                 key={id}
@@ -860,17 +1025,19 @@ export function Board({
           </g>
         </svg>
 
-        {gesture && <GestureOverlay gesture={gesture} positions={positions} />}
+        {gesture && (
+          <GestureOverlay gesture={gesture} positions={positions} orientation={orientation} />
+        )}
 
-        {captureFlash && flash && flash.opacity > 0 && (
+        {captureFlash && captureView && flash && flash.opacity > 0 && (
           <div
             key={captureFlash.id}
             className="capture-flash"
             aria-hidden="true"
             style={{
               position: 'absolute',
-              left: `${(captureFlash.f / 8) * 100}%`,
-              top: `${((7 - captureFlash.r) / 8) * 100}%`,
+              left: `${(captureView.x / 8) * 100}%`,
+              top: `${(captureView.y / 8) * 100}%`,
               width: '12.5%',
               height: '12.5%',
               borderRadius: '50%',
@@ -896,8 +1063,9 @@ export function Board({
             {(() => {
               const annotation = lastMove.annotation;
               const mark = ANNOTATION_MARKS[annotation];
-              const cx = lastMove.toF * SQ + SQ - 16;
-              const cy = (7 - lastMove.toR) * SQ + 16;
+              const view = boardViewPosition(lastMove.toF, lastMove.toR, orientation);
+              const cx = view.x * SQ + SQ - 16;
+              const cy = view.y * SQ + 16;
               const r = 22;
               const isWide = mark.length === 2;
               const badgeProgress = timedProgress(time - lastMove.t - BADGE_DELAY, BADGE_IN_DURATION);
@@ -936,4 +1104,4 @@ export function Board({
       </div>
     </div>
   );
-}
+});
