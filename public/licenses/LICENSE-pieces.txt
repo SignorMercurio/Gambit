@@ -1,14 +1,27 @@
 Chess piece SVGs in public/pieces/
 ==================================
 
-The 12 chess piece SVG files in public/pieces/ are the Staunty set
-from Lichess. The SVG contents are unchanged; only the local filenames
-map Lichess's piece names to Gambit's light/dark naming convention.
+The 12 chess piece SVG files in public/pieces/ are a MODIFIED version of
+the Staunty set from Lichess. The local filenames map Lichess's piece
+names to Gambit's light/dark naming convention.
+
+One change was made to the upstream SVGs:
+
+  Outline strokes were recolored from neutral to warm dark:
+  #3c3c3c -> #4b4847 (light pieces), #1e1e1e -> #312e2b (dark pieces).
+  The warmer outline sits better against the board's cream squares.
+
+Nothing else differs. Stroke widths, fills, shading, highlights, path
+data, and the 50x50 viewBox are byte-for-byte upstream; reversing the two
+color substitutions above reproduces the original files exactly.
 
 Source:   https://github.com/lichess-org/lila/tree/master/public/piece/staunty
 Author:   sadsnake1
 License:  Creative Commons Attribution-NonCommercial-ShareAlike 4.0
           International (CC BY-NC-SA 4.0)
+
+ShareAlike: this modified version is distributed under the same
+CC BY-NC-SA 4.0 license as the original.
 
 License text:
   https://creativecommons.org/licenses/by-nc-sa/4.0/

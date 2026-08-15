@@ -1,0 +1,41 @@
+Web fonts in public/fonts/
+==========================
+
+Both files are latin-subset variable builds taken from Fontsource. Neither
+font is modified; only the local filenames are shortened.
+
+The SIL Open Font License requires its copyright notice and license to travel
+with the font files, which is what this file is for.
+
+
+lilex-var.woff2
+---------------
+
+Mono voice: every numeric, chess square, SAN move, and script line.
+
+Source:   https://github.com/mishamyrt/Lilex
+Package:  @fontsource-variable/lilex 5.3.0 (lilex-latin-wght-normal.woff2)
+Axes:     wght 100-700, normal style
+License:  SIL Open Font License 1.1
+
+Copyright 2019 The Lilex Project Authors
+(https://github.com/mishamyrt/Lilex)
+
+
+schibsted-grotesk-var.woff2
+---------------------------
+
+Chrome voice: the wordmark, panel titles, tab and button labels.
+
+Source:   https://github.com/schibsted/schibsted-grotesk
+Package:  @fontsource-variable/schibsted-grotesk 5.3.0
+          (schibsted-grotesk-latin-wght-normal.woff2)
+Axes:     wght 400-900, normal style
+License:  SIL Open Font License 1.1
+
+Copyright 2023 The Schibsted-Grotesk Project Authors
+(https://github.com/schibsted/schibsted-grotesk)
+
+
+License text:
+  https://openfontlicense.org

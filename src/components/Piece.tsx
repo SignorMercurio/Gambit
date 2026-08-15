@@ -1,8 +1,11 @@
-// Chess pieces — Staunty SVG set from Lichess.
-// Licensed under CC BY-NC-SA 4.0 by sadsnake1.
-// Each piece is decorative inside the Board (which is exposed to AT as
-// `role="img" aria-label="Chess board"`); empty alt prevents 32 piece
-// announcements from drowning the page.
+// Chess pieces — Staunty SVG set from Lichess, modified for Gambit: the
+// outline strokes are recolored warm (#4b4847 / #312e2b) to sit better
+// against the cream squares. Nothing else differs from upstream.
+// See public/licenses/LICENSE-pieces.txt.
+// Licensed under CC BY-NC-SA 4.0 by sadsnake1; ShareAlike applies.
+// Each piece is decorative inside the Board, which is the labelled
+// `role="img"` (see its aria-label); empty alt prevents 32 piece announcements
+// from drowning the page.
 
 import { memo, type CSSProperties } from 'react';
 import type { PieceType, Side } from '../lib/chess';
