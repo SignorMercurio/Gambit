@@ -29,7 +29,7 @@ Three words: **cinematic, precise, chess-native**.
 
 - *Cinematic*: confident dark surface, the board is the hero, transport controls feel like a video editor (DaVinci Resolve, Figma dev-mode timeline, Linear's playback affordances), not a media-player widget.
 - *Precise*: monospaced numerics, exact scrub, frame-stable animations, no marketing language anywhere in the UI. When the tool speaks, it speaks like a developer console: terse, factual, no exclamation marks.
-- *Chess-native*: respects the conventions chess players already know (file/rank coordinates, SAN as input, last-move tinting, arrow gestures from analysis culture), but executes them with an original visual language rather than mimicking Lichess or chess.com tile-for-tile.
+- *Chess-native*: respects the conventions chess players already know (file/rank coordinates, SAN as input, last-move tinting, arrow gestures from analysis culture), but executes them with an original visual language rather than mimicking Lichess or chess.com tile-for-tile. One deliberate exception, taken with the trade understood: the move-quality marks (`!!` / `!` / `?` / `??`) adopt chess.com's classification treatment outright — see the anti-reference below.
 
 ## Anti-references
 
@@ -37,7 +37,11 @@ What Gambit must not look like:
 
 - **Generic SaaS dashboard.** No hero-metric template, no identical icon-headline-blurb card grids, no gradient-accent CTA buttons. The tool has zero "marketing" in it.
 - **Toy or cartoon chess apps.** No oversize rounded everything, no candy palette, no XP bars, streaks, badges, mascots, or gamified rewards. Adults are using this for work.
-- **Default chess.com aesthetic.** Keep the visual distance the prototype already established: no green-and-cream board, no chess.com red-and-yellow accent set. Chess-native conventions, fresh execution.
+- **Default chess.com aesthetic**, with one carve-out. Everything Gambit draws keeps the visual distance the prototype established: no green-and-cream board, no chess.com red-and-yellow accent set. Chess-native conventions, fresh execution.
+
+  The carve-out is scoped to **one artifact, not one surface**: the **move-quality marks are exempt wherever they appear** — the board badge and the move list's `!!` / `??` alike, since the whole point is that one mark reads as one thing in both places. They copy chess.com deliberately — their classification colors, a white glyph, no rim, the corner-straddling disc. The reasoning that made this an anti-reference in the first place is about *ownership of the frame*: a creator's board appears inside their own video under their own name, so a board that reads as someone else's screenshot hands them the attribution. A badge is not the frame. It is a four-value legend a viewer has to decode in a second, most of this audience already knows this one, and originality there costs comprehension without buying identity. Everything that is not a quality mark — the board palette, the panel chrome, the transport — is still where Gambit's look lives, and none of it is open to this.
+
+  The trade is real and is recorded rather than glossed: white ink measures under 3:1 on two of the four fills (`mistake` 1.96, `brilliant` 2.80), and chess.com's `great` blue sits 1.08:1 against Gambit's dark square — a collision they never hit, because their board is green and cream. There is no rim to buy any of it back; the drop shadow is the disc's only edge, as in the reference, and it is deepened to 70% to carry that one case.
 - **Glassy / blurry / glowy AI-tool reflex.** No stacked translucent panels, no neon glows, no gradient-mesh hero, no decorative backdrop-filter. The current controls strip uses a 6px blur for a real reason (it floats over the board's color); that is the ceiling, not the floor.
 
 ## Design Principles
