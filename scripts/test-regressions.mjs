@@ -36,10 +36,17 @@ try {
     },
     { syncRovingTabStops },
     { buildMainline, findMainlineCursor },
-    { HlRing },
+    { BADGE_EDGE_MARGIN, BADGE_R, BOARD_SIZE, BadgeDisc, HlRing, badgeCenter, lastMoveSquares },
     { AUTHORED_ELSEWHERE_COMMANDS, COMMANDS, INSERTABLE_COMMANDS, SYNTAX_GROUPS },
     { SYNTAX_HINT },
-    { markerColors, markerForms, tokens: boardTokens },
+    {
+      annotationColors,
+      annotationInk,
+      annotationMarkColors,
+      markerColors,
+      markerForms,
+      tokens: boardTokens,
+    },
     { mindPieceStrength, mindRevealStrength, mindSink },
     { getActiveSubtitle, getSubtitleEnd, parseSrt },
     {
@@ -59,6 +66,7 @@ try {
     },
     Chess,
     styles,
+    boardSource,
   ] = await Promise.all([
     vite.ssrLoadModule('/src/lib/timeline.ts'),
     vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
@@ -77,6 +85,7 @@ try {
     vite.ssrLoadModule('/src/lib/playback.ts'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/Board.tsx', import.meta.url), 'utf8'),
   ]);
 
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
@@ -1589,20 +1598,44 @@ Look --> there`;
       undefined,
       'the old flood token is gone, so nothing can quietly re-flood `hl`',
     );
-    const boardSrc = await readFile(
-      new URL('../src/components/Board.tsx', import.meta.url),
-      'utf8',
+    const lastMoveRect = boardSource.slice(
+      boardSource.indexOf('{lastMove &&'),
+      boardSource.indexOf('litHighlights.map'),
     );
-    const lastMoveRect = boardSrc.slice(
-      boardSrc.indexOf('key={`lm-'),
-      boardSrc.indexOf('litHighlights.map'),
-    );
+    assert.ok(lastMoveRect.length > 0, 'the last-move overlay slice found its bounds');
     assert.match(
       lastMoveRect,
-      /fill={lastMoveFill\(f, r\)}/,
+      /fill={fill}/,
       'the last move stays a flood — a ring on every move is visual noise',
     );
     assert.doesNotMatch(lastMoveRect, /stroke=/, 'the last move never takes a stroke');
+    // …and which fill each square gets is asserted by calling the rule, not by
+    // quoting it. `lastMoveSquares` returns the pair, so the guard can state
+    // the thing that actually matters — an annotated move repaints only where
+    // it *landed* — instead of matching a ternary that any rename breaks.
+    // e2 (light) → e5 (dark), so the pair also pins the per-square amber stops
+    // in place; a single flood value for both would pass a same-color move.
+    const plain = { fromF: 4, fromR: 1, toF: 4, toR: 4, t: 0 };
+    assert.deepEqual(
+      lastMoveSquares(plain).map((sq) => sq.fill),
+      [boardTokens.boardLastMoveOnLight, boardTokens.boardLastMoveOnDark],
+      'an unannotated move is amber on both squares, per-square alpha unchanged',
+    );
+    const judged = lastMoveSquares({ ...plain, annotation: 'blunder' });
+    assert.equal(
+      judged[0].fill,
+      boardTokens.boardLastMoveOnLight,
+      'the origin square keeps the amber, so a move still reads directionally',
+    );
+    assert.equal(
+      judged[1].fill,
+      annotationColors.blunder,
+      'the landing square carries the judgment',
+    );
+    assert.ok(
+      judged[1].alpha > 0 && judged[1].alpha < 1,
+      'the judgment is a tint over the square, not a repaint of it',
+    );
     // Both `hl` surfaces — the live overlay and the in-flight gesture preview —
     // go through one component, so a preview can never promise a mark the
     // committed script would not draw. `HlRing` returns the element, so this
@@ -1655,6 +1688,125 @@ Look --> there`;
     // gone too — `tokens.ts` now defines the ring *as* `markerColors.highlight`
     // rather than restating `#f0b429`, so the equality holds by construction
     // and neither a runtime check nor a text scan has anything left to catch.
+  }
+
+  // Move-quality marks: chess.com's classification set, adopted deliberately
+  // against PRODUCT.md's original anti-reference. Two tables, because the
+  // board and the panel are two different grounds; both are
+  // `Record<MoveAnnotation, string>`, so TypeScript already forces each
+  // exhaustive and a fifth quality cannot ship colorless.
+  {
+    const channel = (c) => {
+      const n = c / 255;
+      return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = (hex) => {
+      const n = parseInt(hex.slice(1), 16);
+      return (
+        0.2126 * channel((n >> 16) & 255) +
+        0.7152 * channel((n >> 8) & 255) +
+        0.0722 * channel(n & 255)
+      );
+    };
+    const contrast = (a, b) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    // Sanity-check the arithmetic before trusting it — a broken ratio function
+    // passes every assertion below by inventing large numbers. Both ends of
+    // the scale, on pairs whose answer is fixed by the spec: black on white is
+    // the maximum, and mid-grey on white is not (a function that returned its
+    // first argument's luminance would pass the first check alone).
+    assert.equal(contrast('#ffffff', '#000000').toFixed(2), '21.00');
+    assert.equal(contrast('#ffffff', '#777777').toFixed(2), '4.48');
+
+    // The move list is chrome and holds body AA. This is the floor the board
+    // badge deliberately gave up (see below), so it is the one that has to be
+    // guarded — otherwise "we accepted a contrast cost on the badge" quietly
+    // becomes "we accepted it everywhere".
+    //
+    // Measured on the *worst* backdrop a mark renders against, not the common
+    // one. The panel well alone was the common one, and it passed `brilliant`
+    // at 4.69 while the variation inset — lighter, and the surface half the
+    // annotated moves in a script sit on — had it at 4.16.
+    //
+    // The current row is not in this set: its pill is studio-steel-blue, where
+    // every mark measures under 2:1, so `sanLabel` drops the color there and
+    // inherits the row's chalk rather than pretending a lighter teal fixes it.
+    const CHROME_BACKDROPS = {
+      'panel well': '#283045',
+      'variation inset': '#31384c',
+    };
+    for (const [where, backdrop] of Object.entries(CHROME_BACKDROPS)) {
+      for (const [quality, hex] of Object.entries(annotationMarkColors)) {
+        const ratio = contrast(backdrop, hex);
+        assert.ok(
+          ratio >= 4.5,
+          `${quality}'s mark is 13px/700 body text and holds AA on the ${where} (${ratio.toFixed(2)}:1)`,
+        );
+      }
+    }
+
+    // The board badge is the same set on a different ground, and there it
+    // takes a contrast cost knowingly: white ink is under the 3:1 large-text
+    // floor on `mistake` (1.96) and `brilliant` (2.80), and there is no rim to
+    // buy any of it back. Recorded rather than guarded — a floor this design
+    // cannot meet is not a floor, it is a deleted test waiting to happen.
+    //
+    // What *is* guarded is the rim's absence, because that is the drift this
+    // replica keeps inviting and the one thing a call site could reintroduce.
+    // Asserted by calling `BadgeDisc` and reading the element it returns, the
+    // way `HlRing` is checked above. The first version of this guard matched
+    // JSX source text between `r={BADGE_R}` and `<text` — and an earlier
+    // `<text` inside a comment put the end before the start, so it sliced the
+    // empty string and passed for a rim, a halo, or a disc that had been
+    // deleted outright.
+    const disc = BadgeDisc({ annotation: 'great', cx: 100, cy: 200 }).props;
+    assert.equal(disc.stroke, undefined, 'the disc has no rim');
+    assert.equal(disc.strokeWidth, undefined, 'nor a rim by another name');
+    assert.equal(disc.fill, annotationColors.great, 'the disc is its quality’s fill');
+    assert.deepEqual([disc.cx, disc.cy, disc.r], [100, 200, BADGE_R]);
+    assert.equal(annotationInk, '#ffffff', 'the badge glyph is white, as in the reference');
+
+    // The badge hangs off its square's top-right corner, which puts it outside
+    // the 800-unit viewBox on the h-file and the 8th rank. The PNG export
+    // rasterizes that same box, so an unclamped badge ships a sliced disc in
+    // the artifact — and only for edge moves, which is exactly the case a
+    // hand-check of the opening position never reaches.
+    for (let x = 0; x < 8; x++) {
+      for (let y = 0; y < 8; y++) {
+        const [cx, cy] = badgeCenter({ x, y });
+        for (const [axis, v] of [['x', cx], ['y', cy]]) {
+          assert.ok(
+            v - BADGE_R >= 0 && v + BADGE_R <= BOARD_SIZE,
+            `the badge on view cell ${x},${y} stays on the board (${axis}=${v})`,
+          );
+        }
+      }
+    }
+    // …and it really does hang off the corner wherever the board allows it. A
+    // clamp wide enough to swallow the overhang everywhere satisfies the loop
+    // above while silently restoring the contained badge this replaced — a
+    // verified escape: `limit = BOARD_SIZE - SQ / 2` parks the h-file badge in
+    // the middle of its square's top edge and stays on the board.
+    //
+    // So pin both halves of the rule. Interior squares get the corner itself…
+    assert.deepEqual(
+      badgeCenter({ x: 3, y: 3 }),
+      [400, 300],
+      'an interior badge centers on its square’s corner rather than inside it',
+    );
+    // …and an edge square gets the closest point to that corner the board
+    // still permits, which is exactly one radius plus the margin in. That is
+    // the two rules composed rather than the clamp's arithmetic restated: it
+    // stays blind to a retuned margin (a design choice the loop above already
+    // bounds) and catches a clamp that gives up more of the overhang than
+    // staying on the board costs.
+    assert.deepEqual(
+      badgeCenter({ x: 7, y: 0 }),
+      [BOARD_SIZE - BADGE_R - BADGE_EDGE_MARGIN, BADGE_R + BADGE_EDGE_MARGIN],
+      'a corner badge sits as close to its corner as the viewBox allows',
+    );
   }
 
   // Kind is never color alone, asserted as a relation between two tables
