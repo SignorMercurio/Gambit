@@ -36,8 +36,14 @@ import {
   type MindFrame,
   type MindWorld,
 } from '../lib/mind';
-import { ANNOTATION_MARKS } from '../lib/timeline';
-import { annotationColors, annotationInk, fontUi, tokens } from '../lib/tokens';
+import { ANNOTATION_MARKS, type MoveAnnotation } from '../lib/timeline';
+import {
+  annotationColors,
+  annotationInk,
+  annotationSquareAlpha,
+  fontUi,
+  tokens,
+} from '../lib/tokens';
 import {
   BOARD_OVERLAY_LIFETIME,
   type BoardArrow,
@@ -50,7 +56,10 @@ import {
 } from '../lib/world';
 
 const SQ = 100;
-const BOARD_SIZE = SQ * 8;
+// The board's own coordinate box. Exported because the badge-clamp guard
+// asserts the disc stays inside it, and a second `800` there would be a clamp
+// check that cannot see the box it is clamping to.
+export const BOARD_SIZE = SQ * 8;
 const HIGHLIGHT_FADE_IN = 0.16;
 const OVERLAY_FADE_OUT = 0.32;
 const ARROW_DRAW_DURATION = 0.34;
@@ -284,6 +293,92 @@ const isLightSquare = (f: number, r: number) => (f + r) % 2 === 1;
 const lastMoveFill = (f: number, r: number) =>
   isLightSquare(f, r) ? tokens.boardLastMoveOnLight : tokens.boardLastMoveOnDark;
 
+// The two squares a last move paints, origin first. One function rather than a
+// conditional at each rect, because the rule is about the *pair*: an annotated
+// move repaints only where it landed, and the origin keeps the amber, so the
+// move still reads directionally — where it came from, and what it was worth.
+// Written as a ternary inside the map, that rule lived in the difference
+// between two iterations of the same expression, and the only way to state it
+// was to quote the source line.
+type PaintedSquare = { f: number; r: number; fill: string; alpha: number };
+
+export function lastMoveSquares(move: LastMove): [PaintedSquare, PaintedSquare] {
+  const { fromF, fromR, toF, toR, annotation } = move;
+  return [
+    { f: fromF, r: fromR, fill: lastMoveFill(fromF, fromR), alpha: 1 },
+    {
+      f: toF,
+      r: toR,
+      ...(annotation
+        ? {
+            fill: annotationColors[annotation],
+            alpha: annotationSquareAlpha[isLightSquare(toF, toR) ? 'onLight' : 'onDark'],
+          }
+        : { fill: lastMoveFill(toF, toR), alpha: 1 }),
+    },
+  ];
+}
+
+// The move-quality badge, in board units (SQ = 100). Exported because the
+// suite checks the disc stays on the board, and a second `23` there would be
+// a clamp guard that can't see the radius it is clamping.
+export const BADGE_R = 23;
+// The disc hangs off the square's top-right corner rather than sitting inside
+// it. Two reasons, both about the recording: a badge contained in the square
+// competes with the piece standing on it — on a pawn move the disc lands on the
+// pawn's head — and a mark that breaks the grid reads as applied *to* the move
+// rather than as one more thing painted on the square, which is the whole
+// distinction between the author's judgment and the board's own state. So the
+// center sits exactly on the corner; there is no inset to tune.
+//
+// It must never leave the board, though. The overhang clips against the
+// viewBox on the h-file and the 8th rank, and the PNG export rasterizes the
+// same 800-unit box, so an edge move would ship a sliced disc.
+export const BADGE_EDGE_MARGIN = 4;
+
+// The badge glyphs. Real characters, set in the chrome face — `!` and `?` are
+// text, and drawing them as paths traded a maintainable line for control we
+// did not need. Weight 700 rather than the display 900 it started at: at the
+// ~40px the disc is drawn, 900 closes the question mark's aperture and the
+// pair of a doubled mark starts to fuse.
+//
+// One thing the path version did buy, noted so it is a known risk rather than
+// a surprise: `<text>` inside the SVG that `html-to-image` clones rasterizes in
+// the right face only if that face is loaded and embeddable. Both board fonts
+// are self-hosted and preloaded, so the export has them.
+const GLYPH_WEIGHT = 700;
+// `!` / `?` are tall and narrow; `!!` / `??` are a pair of them side by side.
+// One size cannot set both, and the doubled pair also needs its tracking
+// pulled in — at the default it runs wider than the disc's usable width.
+const GLYPH_SIZE_SINGLE = 44;
+const GLYPH_SIZE_DOUBLE = 30;
+const GLYPH_TRACKING_DOUBLE = -1.5;
+
+export function badgeCenter(view: BoardViewPosition): [number, number] {
+  const limit = BOARD_SIZE - BADGE_R - BADGE_EDGE_MARGIN;
+  const floor = BADGE_R + BADGE_EDGE_MARGIN;
+  return [Math.min((view.x + 1) * SQ, limit), Math.max(view.y * SQ, floor)];
+}
+
+// The disc in one place, returning the element rather than a props bag, for
+// the reason `HlRing` does it below: the reference has no rim, and a `stroke`
+// added at a call site is the exact drift this replica keeps inviting. Owning
+// the element makes a rim unrepresentable there, and lets the suite assert its
+// absence by calling this function instead of pattern-matching JSX source —
+// which is how the first version of that guard came to slice an empty string
+// out of Board.tsx and pass without reading a character of the disc.
+export function BadgeDisc({
+  annotation,
+  cx,
+  cy,
+}: {
+  annotation: MoveAnnotation;
+  cx: number;
+  cy: number;
+}) {
+  return <circle cx={cx} cy={cy} r={BADGE_R} fill={annotationColors[annotation]} />;
+}
+
 // The `hl` ring, in board units (SQ = 100) so it scales with the board rather
 // than the viewport. A circle, not a rounded square. An outlined rounded rect restates the
 // square's own geometry, so it reads as the square being *selected* — UI
@@ -299,7 +394,7 @@ const HL_RADIUS = 43;
 // produce.
 //
 // It returns the element, not a props bag. A bag is only a default — every
-// call site spreads it, and `{...hlRingCircle(v)} r={30} strokeWidth={2}`
+// call site spreads it, and `{...hlRingCircle(v)} r={30} strokeWidth={2.5}`
 // silently wins, which is the invariant this helper exists for. Owning the
 // element makes a second radius unrepresentable at a call site rather than
 // merely discouraged.
@@ -396,10 +491,18 @@ const ARROW_SHADOW_DEFS = (
     </filter>
   </defs>
 );
+// The badge's only edge, now that the rim is gone. Deeper than an ordinary
+// board shadow on purpose: chess.com's `great` blue is 1.08:1 against our dark
+// square, so on half the board this filter is the entire difference between a
+// disc and a smudge. Compared on the page at 0.34 / 0.55 / 0.70 / 0.85 — 0.34
+// left the circle's edge to guesswork on blue, and 0.85 turned into a grey
+// halo that reads as grime on the cream squares, where the fills already have
+// contrast to spare. 0.70 is the last stop that helps the blue case without
+// dirtying the cream one.
 const ANNOTATION_BADGE_SHADOW_DEFS = (
   <defs>
-    <filter id="annotation-badge-shadow" x="-35%" y="-35%" width="170%" height="170%">
-      <feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor="#0f1525" floodOpacity="0.30" />
+    <filter id="annotation-badge-shadow" x="-45%" y="-45%" width="190%" height="190%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" floodColor="#0f1525" floodOpacity="0.7" />
     </filter>
   </defs>
 );
@@ -891,12 +994,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
           {boardVoid}
 
           {lastMove &&
-            (
-              [
-                [lastMove.fromF, lastMove.fromR],
-                [lastMove.toF, lastMove.toR],
-              ] as const
-            ).map(([f, r], i) => {
+            lastMoveSquares(lastMove).map(({ f, r, fill, alpha }, i) => {
               const view = boardViewPosition(f, r, orientation);
               return (
                 <rect
@@ -905,8 +1003,8 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
                   y={view.y * SQ}
                   width={SQ}
                   height={SQ}
-                  fill={lastMoveFill(f, r)}
-                  opacity={lastMoveOpacity}
+                  fill={fill}
+                  opacity={lastMoveOpacity * alpha}
                 />
               );
             })}
@@ -1063,10 +1161,9 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
             {(() => {
               const annotation = lastMove.annotation;
               const mark = ANNOTATION_MARKS[annotation];
-              const view = boardViewPosition(lastMove.toF, lastMove.toR, orientation);
-              const cx = view.x * SQ + SQ - 16;
-              const cy = view.y * SQ + 16;
-              const r = 22;
+              const [cx, cy] = badgeCenter(
+                boardViewPosition(lastMove.toF, lastMove.toR, orientation),
+              );
               const isWide = mark.length === 2;
               const badgeProgress = timedProgress(time - lastMove.t - BADGE_DELAY, BADGE_IN_DURATION);
               if (badgeProgress <= 0) return null;
@@ -1077,19 +1174,14 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
                   opacity={badgeProgress}
                   transform={`translate(${cx} ${cy}) scale(${badgeScale}) translate(${-cx} ${-cy})`}
                 >
-                  <circle
-                    cx={cx}
-                    cy={cy}
-                    r={r}
-                    fill={annotationColors[annotation]}
-                  />
+                  <BadgeDisc annotation={annotation} cx={cx} cy={cy} />
                   <text
                     x={cx}
-                    y={cy + (isWide ? 0 : 1)}
+                    y={cy + 1}
                     fontFamily={fontUi}
-                    fontSize={isWide ? 22 : 38}
-                    fontWeight={900}
-                    letterSpacing={0}
+                    fontSize={isWide ? GLYPH_SIZE_DOUBLE : GLYPH_SIZE_SINGLE}
+                    fontWeight={GLYPH_WEIGHT}
+                    letterSpacing={isWide ? GLYPH_TRACKING_DOUBLE : 0}
                     fill={annotationInk}
                     textAnchor="middle"
                     dominantBaseline="central"

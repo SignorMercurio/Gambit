@@ -8,7 +8,7 @@
 // neutral rim-light-pewter so they don't compete with chess content. 'err'
 // covers parse-error events and lines the snapshot builder rejected —
 // semantically distinct from reset even while both wear vermillion today.
-import type { ParsedEvent } from './timeline';
+import type { MoveAnnotation, ParsedEvent } from './timeline';
 export type MarkerKind = ParsedEvent['kind'] | 'err';
 export const markerColors: Record<MarkerKind, string> = {
   move: '#5d8fc9',
@@ -167,19 +167,77 @@ export const tokens = {
   shadowPieceMoving: 'drop-shadow(0 6px 5px rgba(15, 21, 37, 0.28))',
 } as const;
 
-// Move-quality annotation palette: badge fills on the board and quality
-// marks in the move list. Mirrored by --color-annot-* in styles.css :root.
-export const annotationColors = {
-  brilliant: '#4fb9b2',
-  great: '#7da9dc',
-  mistake: '#d9a93f',
-  blunder: '#cf5d5d',
-} as const;
+// Move-quality annotation palette — chess.com's move-classification treatment,
+// adopted deliberately and against PRODUCT.md's original anti-reference, which
+// has been amended to carve out this one artifact — the quality mark, wherever
+// it appears — rather than a surface. The four values are chess.com's own
+// classification colors.
+//
+// Two contrast costs come with them, both accepted rather than overlooked:
+//
+//   1. White ink on these fills is under the 3:1 large-text floor on two of
+//      the four — `mistake` at 1.96 and `brilliant` at 2.80 (`great` 3.64 and
+//      `blunder` 3.58 clear it). Darkening the ink would fix that and break
+//      the replica, so the trade is paid at the disc's edge instead of at its
+//      glyph; see the drop shadow in Board.tsx.
+//   2. `great` (#5c8bb0) is 1.08:1 against Gambit's dark square — all but the
+//      same luminance. chess.com never hits this because their board is green
+//      and cream, so a blue badge never lands on a blue square; ours does. On
+//      those squares that shadow is the entire difference between a disc and
+//      a smudge, which is what it was tuned against.
+//
+// No rim. The reference has none, and a halo was the wrong way to buy that
+// separation back: it puts a ring of Gambit's own making around a mark whose
+// whole point is to be the borrowed one. `BadgeDisc` in Board.tsx owns the
+// circle so a rim is unrepresentable at a call site.
+export const annotationColors: Record<MoveAnnotation, string> = {
+  brilliant: '#1baca6',
+  great: '#5c8bb0',
+  mistake: '#ffa459',
+  blunder: '#fa412d',
+};
 
-// Ink for the badge marks on all four fills — the palette's studio-cream,
-// named separately from the board-surface tokens so square tuning can't
-// silently recolor badge text.
-export const annotationInk = '#f1ecde';
+// The same marks as 13px/700 text in the move list. Chrome, not artifact — the
+// replica was asked for on the board, and a color chosen to sit on a cream
+// chess square has no reason to also govern body text on a dark panel.
+//
+// Spread from the board fills and overridden only where the panel forces it,
+// so "one mark, one color" stays the default and each exception costs a line
+// with a number attached. The floor is body AA against the *worst* backdrop a
+// mark renders on, which is a variation's inset (#31384c) — lighter than the
+// panel well, and the surface every earlier reading of this was taken on:
+//
+//   great     #5c8bb0 → 3.21    blunder   #fa412d → 3.25
+//   brilliant #1baca6 → 4.16, close enough to look right and still fail
+//
+// `mistake` clears it unchanged at 5.95 and stays the board value.
+//
+// The current row is the one place a mark drops its color entirely: its pill
+// is studio-steel-blue, where all four measure 1.20–1.72 and no lightening
+// rescues them. See `sanLabel` in MoveList.tsx.
+export const annotationMarkColors: Record<MoveAnnotation, string> = {
+  ...annotationColors,
+  brilliant: '#2cb9b3',
+  great: '#8fb6d8',
+  blunder: '#ff7f6d',
+};
+
+// Ink for the badge marks on all four fills — white, as in the reference.
+export const annotationInk = '#ffffff';
+
+// The destination square's tint. An annotated move repaints its landing square
+// in the annotation's own color instead of the last-move amber; the origin
+// square keeps the amber, so a move still reads as a pair and now reads
+// directionally — where it came from, and what it was worth.
+//
+// Two systems were painting one square, and the tool's automatic mark was
+// sitting on top of the author's explicit judgment. Frequency decides who
+// yields, as always, and an annotation is the rarest thing an author writes.
+//
+// Applied as `opacity` on a rect filled with the annotation color, so the hue
+// stays single-sourced above rather than respelled as eight rgba literals that
+// could drift from it.
+export const annotationSquareAlpha = { onLight: 0.42, onDark: 0.58 } as const;
 
 // Chrome UI font stack — mirrored by --font-ui in styles.css :root, because
 // SVG text attributes (the annotation badge) can't read CSS custom properties.

@@ -118,13 +118,6 @@
   --row-active-bg-reset: rgba(207, 93, 93, 0.16);
   --row-active-bg-err: rgba(207, 93, 93, 0.18);
 
-  /* Move-quality annotation palette (board badges + move-list marks).
-     Mirrored by annotationColors in src/lib/tokens.ts. */
-  --color-annot-brilliant: #4fb9b2;
-  --color-annot-great: #7da9dc;
-  --color-annot-mistake: #d9a93f;
-  --color-annot-blunder: #cf5d5d;
-
   /* Errors band */
   --errors-bg: rgba(207, 93, 93, 0.08);
   --errors-border: rgba(207, 93, 93, 0.30);
@@ -1316,12 +1309,11 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   background: var(--color-studio-steel-blue);
   color: var(--color-sodium-chalk);
 }
-/* Move-quality marks share the annotation badge palette (--color-annot-*). */
+/* Move-quality marks. Weight only — the color arrives inline from
+   `annotationMarkColors`, the same way a seek dot takes `markerColors`, so
+   the four hexes live in one table instead of also being custom properties
+   this rule and a per-kind class had to keep agreeing with. */
 .pgn-annot { font-weight: 700; }
-.annot-brilliant { color: var(--color-annot-brilliant); }
-.annot-great { color: var(--color-annot-great); }
-.annot-mistake { color: var(--color-annot-mistake); }
-.annot-blunder { color: var(--color-annot-blunder); }
 /* Non-move events as seek dots, colored per event kind (same vocabulary as
    the timeline pins). Current state rings the dot instead of filling a pill
    so the Five Meanings hue stays legible. */

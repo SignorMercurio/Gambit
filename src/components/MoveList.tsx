@@ -22,7 +22,12 @@ import {
   type MoveAnnotation,
   type TimelineEvent,
 } from '../lib/timeline';
-import { markerColors, markerKindFor, type MarkerKind } from '../lib/tokens';
+import {
+  annotationMarkColors,
+  markerColors,
+  markerKindFor,
+  type MarkerKind,
+} from '../lib/tokens';
 import { useRovingTabIndex } from './useRovingTabIndex';
 
 type Mark = { i: number; kind: MarkerKind; t: number; line: number; body: string };
@@ -470,12 +475,28 @@ export const MoveList = memo(function MoveList({
     return tok(`m${m.i}`, dot, m.line, m.t, m.body, m.kind === 'err' ? { chip: false } : undefined);
   };
 
-  const sanLabel = (san: string, annotation?: MoveAnnotation) => {
+  // The quality mark keeps its color from `annotationMarkColors` directly,
+  // the way the seek dot above takes `markerColors[kind]` — a per-kind class
+  // plus a custom property is one more place the same four hexes have to agree.
+  //
+  // On the current row it takes none. That pill is studio-steel-blue, where
+  // every mark color measures 1.20–1.72:1 and no lightening rescues them;
+  // inheriting the row's chalk is the same move `.pgn-varnum` already makes.
+  // Nothing is lost — the mark's own `!!`/`??` still reads, and the board
+  // badge is showing the color full size at that exact moment.
+  const sanLabel = (san: string, annotation?: MoveAnnotation, current = false) => {
     const { text, mark } = splitSanAnnotation(san);
     return (
       <>
         {text}
-        {mark && annotation && <span className={`pgn-annot annot-${annotation}`}>{mark}</span>}
+        {mark && annotation && (
+          <span
+            className="pgn-annot"
+            style={current ? undefined : { color: annotationMarkColors[annotation] }}
+          >
+            {mark}
+          </span>
+        )}
         {mark && !annotation && mark}
       </>
     );
@@ -493,7 +514,7 @@ export const MoveList = memo(function MoveList({
         aria-label={`Seek to ${fmtTime(c.t, 'auto')}: ${c.san}${hasError ? ' (script error)' : ''}`}
         onClick={() => onSeek(c.t)}
       >
-        {sanLabel(c.san, c.annotation)}
+        {sanLabel(c.san, c.annotation, c.i === reachedEventIndex)}
       </button>
     );
   };
@@ -530,7 +551,7 @@ export const MoveList = memo(function MoveList({
                 {n.side === 'b' ? '…' : '.'}
               </span>
             )}
-            {sanLabel(n.san, n.annotation)}
+            {sanLabel(n.san, n.annotation, n.i === reachedEventIndex)}
           </button>
         );
         return tok(`v${n.i}`, btn, n.line, n.t, n.san);
