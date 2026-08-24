@@ -1,0 +1,24 @@
+# Script Language
+
+The timestamped script is the source of truth. Short syntax is primary; legacy long
+commands remain accepted. The user-facing syntax table is in
+[README.md](../README.md#script-syntax). The one catalogue every surface reads from —
+parser, insert menu, and the Text view's syntax hint — is `src/lib/commands.ts`; adding
+an event kind means adding it there, not in a UI file.
+
+## Parser Rules
+
+- When changing parser behavior, return visible `TimelineEvent` errors rather than silently ignoring malformed script input.
+- The errors band reports in script order, not in the order errors happened to accumulate: `buildWorld` sorts `scriptErrors` by line before returning, because the band is read (and announced by `role="status"`) against the text the author is about to go fix. It shows `ERRORS_COLLAPSED_ROWS` rows and collapses the rest behind a count rather than becoming a fixed-height scroll region inside an already-scrolling panel.
+- When changing chess behavior, add conservative validation rather than accepting ambiguous or typo-like SAN.
+- SAN capture markers must match the resolved move. `Nxe5` should not resolve to quiet `Ne5`, and quiet SAN should not hide a capture.
+- Timestamp parsing must never produce `NaN`; invalid timestamps should become script errors.
+- Highlight and arrow square inputs should be validated before reaching `Board`.
+
+## Command Semantics
+
+- `reset` should restore the configured Start FEN; `start` should restore the standard initial chess position. Both clear transient visuals such as capture flash, arrows, highlights, and last move.
+- Branch/mainline snapshots should restore board state and overlays without mutating prior snapshots.
+- `br`'s timestamp is ordering-only: it renders nothing, so any value between the neighboring events is equivalent. `ml`'s timestamp is meaningful — it is the visible moment the board snaps back to the main line. UI should let users edit `ml` times but not surface `br` times as editable.
+- Mainline replay (`rp`, alias `replay`) is derived from all successfully applied preceding top-level moves and runs at exactly 0.5s per move. Exclude every move at any `br` / `ml` depth and every rejected SAN; honor top-level `rs`, `st`, and valid `fen` setups without allocating them a time slot. Replay clears overlays, preserves the canonical final mainline position, extends playback duration at the tail, and drives Present's current PGN pill through existing source moves without duplicating rows. Disable board gestures while replay is active. Reject replay visibly if it is inside a branch, has no eligible move, occurs during `mind`, exceeds the playback ceiling, or would end after the next authored event; ending exactly on the next timestamp is valid.
+- Mind's-eye mode (`mind` … `reveal`) renders the narrator's mental sketch: the board sinks into a near-black void (grid nearly invisible, coordinates swap to a bright ink and stay fully legible) and only squares the script has named show pieces — a move names its from/to squares, the captured square, the castling rook's path, and the checked king; `hl` and arrows name their squares. Named pieces fade from full strength to nothing on a forgetting curve — what isn't restated is forgotten — except rehearsed squares, which hold at full strength: the move currently on the board (held until the next move takes over, since the gap between moves outlasts the curve and the narration is still on that move) and squares under a currently-visible highlight or live check (arrows name their squares like anything else, but never rehearse them — a named arrow square forgets on the curve from the instant the arrow was drawn). Rehearsal that ends at an event is released — the squares are named again at that instant, so they forget from there rather than popping out: the outgoing move when the next one takes over, a pinned highlight when `cl` clears it, the checked king when a move answers the check. An unpinned highlight expires between events, where the walk has no instant to name, but it only ever holds a piece for its own 2.5s. `rs`/`st`/`fen` empty the sketch while staying dark; `reveal` lifts the mode with a deterministic fade-in. The whole thing is derived state (events + time): the touch map and the held set are computed in the snapshot walk, so br/ml restores them like any other board state, and the void's depth is a clock-derived layer opacity rather than a CSS transition — script + FEN + time fully determine every frame, including mid-sink ones.

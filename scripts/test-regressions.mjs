@@ -1123,7 +1123,7 @@ Look --> there`;
     styles,
     /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
   );
-  // AGENTS.md names this the enforcement of the 720px recording-frame
+  // docs/design.md names this the enforcement of the 720px recording-frame
   // invariant, so it asserts the property rather than one spelling of its
   // violation. Banning the literal `100dvh` let `100vh` through — the reflex
   // spelling of the very thing being banned — along with `90svh`,

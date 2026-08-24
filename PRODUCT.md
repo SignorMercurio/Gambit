@@ -54,8 +54,8 @@ What Gambit must not look like:
 
 ## Accessibility & Inclusion
 
-No formal commitment locked in yet; decisions per surface.
+Two floors are committed and asserted by `scripts/test-regressions.mjs`, not decided per surface: editor controls hold the WCAG 2.5.8 24×24 minimum, and body text holds 4.5:1 — measured on the *worst* backdrop it renders against, not the common one. Everything above those floors is per-surface judgment.
 
 Working baseline: WCAG 2.1 AA contrast where it does not fight the cinematic mood (chrome hits AA against the dark backdrop; the board's own light/dark squares are an artifact of the chess convention, not chrome, and are exempted from the contrast target). All controls keyboard-reachable; space, arrow keys, and click-to-seek are core, not extras. `prefers-reduced-motion` respected for non-essential motion (decorative fades, hover scales) but not for functional motion (a piece reaching its target square).
 
-Open questions for later: localized SAN (figurine notation, non-Latin notation), high-contrast piece set, larger hit targets for touch, dyslexia-friendly mono alternative for the script editor. None blocks the current scope.
+Open questions for later: localized SAN (figurine notation, non-Latin notation), high-contrast piece set, touch targets above the committed 24×24 floor, dyslexia-friendly mono alternative for the script editor. None blocks the current scope.

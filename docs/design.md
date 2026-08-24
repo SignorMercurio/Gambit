@@ -1,0 +1,34 @@
+# Design Rules
+
+The visual vocabulary lives elsewhere and is not restated here: read
+[DESIGN.md](../DESIGN.md) for the palette (including the Five Meanings Rule), typography,
+elevation, component specs, and the contrast and hit-target floors; read
+[PRODUCT.md](../PRODUCT.md) for product intent, anti-references, and the sanctioned
+exceptions to them. Check both before treating a shipped color as a violation — the
+move-quality marks are a deliberate, already-spent carve-out from the chess.com
+anti-reference, and are not a precedent for the next surface.
+
+The governing constraint, from PRODUCT.md principle 1: the board is the visual
+priority, and chrome that competes with it in a recording is a defect. What follows
+are the design constraints that bind *code* rather than color.
+
+- This is a product tool, not a landing page. Do not add marketing sections, hero copy, decorative cards, or generic SaaS dashboard patterns.
+- Kind is never color alone. Where two marks legitimately share a hue they must differ in form: on the board the automatic last move floods its two squares and the authored `hl` rings its one (they were once the same flood 3% of alpha apart, which left the recording unable to distinguish the teacher's mark from the tool's); seek dots square off, point, or hollow by kind; the move-quality badge is a corner-straddling disc, which is not a shape anything else on the board wears. On the ruler the shape is data (`markerForms`, keyed into CSS as `data-form`) rather than a per-kind selector list, so the rule is checkable: `rp` stacks into two segments because it shares move's color exactly, and `cl` hollows because it shares grey with `mind`/`reveal` — both collisions the CSS had and nothing caught. `cl`'s hollow also matches its own seek dot, which had been a ring while its pin was a filled capsule. Tune such a pair against each other, not only against the backdrop. Which mark takes the distinctive form is set by frequency: the rare, deliberate one gets it. The last move marks two squares on every move, one usually empty, so a ring there becomes constant noise and reads as a selection box on the empty origin square. The ring is a circle rather than a rounded-rect outline for the same reason — any outline that restates the square's geometry reads as selection UI, and no amount of thinning or corner-softening fixes it. A mark whose square the author doesn't choose must be tuned against *both* board squares, and evenness beats peak brightness: the ring uses the marker stop (`#f0b429`, the same value as its timeline pin and seek dot) at full opacity, because the board stop is nearly studio-cream's own luminance and measured 1.15:1 there against 2.16:1 on blue — a hue that matches its ground can't be rescued by raising alpha. Full opacity is load-bearing, not incidental: a translucent stroke takes on whatever it covers, so one token becomes two colors and needs a per-square-color alpha pair to compensate. `hl`'s ring lives in one component (`HlRing`) shared by the live overlay and the in-flight gesture preview, so a preview never promises a mark the committed script would not draw. It returns the element, not a props bag: a bag is only a default, and every call site spread it, so `{...ring} r={30}` silently won — the geometry is now unrepresentable at a call site rather than merely discouraged, and `tsc` enforces it instead of a source-text guard. `BadgeDisc` follows the same pattern for the move-quality disc, and for the same reason: the source-text guard that preceded it sliced Board.tsx between `r={BADGE_R}` and `<text`, hit an earlier `<text` inside a comment, and passed on the empty string — green, and blind to a rim, a halo, or a deleted disc alike.
+- Board layers stack in this order; a new layer declares where it belongs rather than landing wherever the DOM puts it. Coordinates must remain readable with enlarged pieces.
+
+  | z | layer |
+  |---|---|
+  | base | squares → void → last-move flood → `hl` rings → check glow (one SVG) |
+  | 1 | pieces (own stacking context; per-piece 1/5 stays contained) |
+  | 2 | coordinates |
+  | 3 | arrows, and the editor-only gesture preview |
+  | 4 | capture flash |
+  | 5 | move-quality badge |
+
+- Test arrows and highlights at the real board size, not in code review. They have to survive the downscale (PRODUCT.md principle 3).
+- Use stable dimensions for board overlays and transport controls so playback does not shift layout. The same applies to conditional chrome: a control that appears on a state change (the gesture `Undo`) must grow into reserved space, never displace its neighbours — anchor the surrounding controls to their edges instead.
+- Panel headings do not repeat the tab that owns them. Keep the `h2` in the DOM as `sr-only` when something references it (`aria-labelledby`); do not spend a visible row restating the tab label.
+- Keep the recording artifact at 720px on ordinary 800–900px-tall laptop viewports; only genuinely short desktop viewports (height ≤760px) may use the 560px working fallback. Prefer page scroll over silently shrinking a normal recording frame into the 500px range. This is an authored invariant guarded by `scripts/test-regressions.mjs` as an allowlist, not a ban: `--artifact-fit-width` may only ever be the authored token or a literal size, in the base rule, every media query, and present mode alike. The 560px fallback is a literal and is fine. Any viewport-derived formula fails — `100dvh`, `100vh`, `90svh`, `clamp(400px, 90dvh, 720px)`, and indirection through a second custom property that holds the formula, all together. New surfaces inherit the fixed authored size.
+- Present mode (`app--present`) is a distraction-free recording/presentation view: it hides the header, side panel, and footer, floats the transport as an auto-hiding bar (fades with the cursor after pointer idle during playback; pointer contact or keyboard focus restores it), and optionally shows the read-only `PresentationMoves` panel. It is purely a view layer — board gestures turn off (`interactive` is false) and the board stays fully determined by script + FEN + time, identical to edit mode at the same timestamp. Present must not become a second state channel.
+- Respect `prefers-reduced-motion`: decorative motion should reduce; functional piece movement can remain.
+- FEN belongs to the authoring surfaces — the Setup page's Start FEN field and the script's `fen` command. Do not surface FEN, or any other internal board metadata, on the board, the transport, or Present mode.

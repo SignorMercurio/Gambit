@@ -1925,8 +1925,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
    the board's first rank and its a-h coordinates by 28px across the full width,
    whenever playback was paused — exactly the frame a creator is looking at
    while framing the shot and arming a screen recorder. The artifact keeps its
-   authored size (AGENTS.md guards that), so the console returns to the flow and
-   the page scrolls instead; scroll over a shrunken frame is the trade this
+   authored size (docs/design.md guards that), so the console returns to the
+   flow and the page scrolls instead; scroll over a shrunken frame is the trade this
    project already prefers.
 
    In the flow the bar is only as wide as the board column, so a single row

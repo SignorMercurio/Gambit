@@ -763,9 +763,9 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
   // offer a resting `grab` cursor. Without it an editable board is visually
   // identical to an inert one and nothing invites the drag at all.
   const [hoverGrab, setHoverGrab] = useState(false);
-  // The square that answer was computed for. `legalTargets` generates the
-  // whole legal move list per call, which is far too heavy to run per
-  // mousemove — only a square change can change the answer.
+  // The square that answer was computed for. `legalMoves` memoizes on the
+  // immutable GameState, so the list itself is cheap; what must not run per
+  // mousemove is the `setState` — only a square change can change the answer.
   const hoverSqRef = useRef<string | null>(null);
   const positionEntries = useMemo(() => Object.entries(positions), [positions]);
   const arrowShapes = useMemo(
