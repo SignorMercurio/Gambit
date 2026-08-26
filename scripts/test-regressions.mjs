@@ -631,6 +631,7 @@ Look --> there`;
   );
   assert.equal(replayAtTail.visualEndTime, 30);
   assert.equal(playbackDuration(replayAtTail.visualEndTime), 33);
+  assert.equal(playbackDuration(6), 30, 'the editor still keeps a scrubbable minimum');
   const runtimeEvents = parseScript(
     '[00:01] e5\n[00:02] e4\n[00:03] fen bad\n[00:04] e5',
   );
