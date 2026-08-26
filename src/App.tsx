@@ -12,6 +12,11 @@ import {
   withTimeout,
 } from './lib/boardExport';
 import type { BoardOrientation } from './lib/boardOrientation';
+import {
+  clearNarration as clearStoredNarration,
+  loadNarration,
+  saveNarration,
+} from './lib/narrationStore';
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
@@ -282,14 +287,18 @@ export default function App() {
     () => buildWorld(events, initialSetup),
     [events, initialSetup],
   );
-  // Narration audio rides the playback clock. Session-only by design: object
-  // URLs die with the page and audio blobs don't fit the localStorage drafts.
+  // Narration audio rides the playback clock. The object URL is session-only —
+  // it dies with the page — but the bytes behind it are a draft like the script
+  // and the subtitles, kept in IndexedDB because they do not fit localStorage.
   const [narration, setNarration] = useState<NarrationTrack | null>(null);
   const [narrationError, setNarrationError] = useState<string | null>(null);
   const pendingNarrationRef = useRef<{
     url: string;
     probe: HTMLAudioElement;
   } | null>(null);
+  // Latched by any deliberate act on the track — importing or removing — and
+  // never unlatched: it exists only to stop the restore from overruling one.
+  const narrationChosenRef = useRef(false);
 
   const duration = useMemo(() => {
     return playbackDuration(
@@ -432,16 +441,23 @@ export default function App() {
     pendingNarrationRef.current = null;
     if (!pending) return;
     // Nulling the ref is the whole cancel: both probe handlers open with an
-    // identity guard against it, so a late fire is already a no-op.
+    // identity guard against it, so a late fire is already a no-op. Detach and
+    // reset the probe too, so superseded large files stop loading metadata.
+    pending.probe.onloadedmetadata = null;
+    pending.probe.onerror = null;
+    pending.probe.removeAttribute('src');
+    pending.probe.load();
     URL.revokeObjectURL(pending.url);
   }, []);
 
-  const onNarrationFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = takeSelectedFile(e);
-      if (!file) return;
+  // Shared by the file picker and by the restore-on-load below, so a track read
+  // back from storage has to clear exactly the bar a freshly picked one does.
+  // A separate restore path would be a second definition of "playable", and the
+  // one that runs on load is the one nobody is watching.
+  const adoptNarration = useCallback(
+    (blob: Blob, name: string, source: 'import' | 'restore') => {
       cancelPendingNarration();
-      const url = URL.createObjectURL(file);
+      const url = URL.createObjectURL(blob);
       // Probe metadata off-DOM so a broken file never becomes the live track.
       // Only the latest selection may commit: a slow earlier probe must not
       // overwrite a newer file or resurrect audio after Remove.
@@ -457,22 +473,61 @@ export default function App() {
           ? Math.min(probe.duration, MAX_SAFE_PLAYBACK_SECONDS)
           : 0;
         setNarrationError(null);
-        setNarration({ url, name: file.name, duration: audioDuration });
+        setNarration({ url, name, duration: audioDuration });
+        // Stored only once the probe has accepted it: the draft is a track the
+        // app knows it can play, not whatever the picker last handed over.
+        if (source === 'import') void saveNarration({ blob, name });
       };
       probe.onerror = () => {
         if (pendingNarrationRef.current !== pending) return;
         pendingNarrationRef.current = null;
         URL.revokeObjectURL(url);
-        setNarrationError(`Could not decode audio file: "${file.name}"`);
+        if (source === 'import') {
+          setNarrationError(`Could not decode audio file: "${name}"`);
+          // No `clearNarration` here on purpose: a rejected import never
+          // reached the store, and the previous track is still the live one.
+          return;
+        }
+        // A stored track that no longer decodes — a codec the browser dropped,
+        // or bytes that did not survive. Drop it rather than failing this load
+        // and every later one, and stay quiet: the author did nothing to be
+        // told about, and the panel already shows no track.
+        void clearStoredNarration();
       };
     },
     [cancelPendingNarration],
   );
 
+  const onNarrationFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = takeSelectedFile(e);
+      if (!file) return;
+      narrationChosenRef.current = true;
+      adoptNarration(file, file.name, 'import');
+    },
+    [adoptNarration],
+  );
+
+  // Restoring is async, and an author who picks a file before it lands must not
+  // have last session's track land on top. The ref, not `narration` state: a
+  // pick is a decision the moment it is made, well before the probe commits it.
+  useEffect(() => {
+    let cancelled = false;
+    void loadNarration().then((stored) => {
+      if (cancelled || !stored || narrationChosenRef.current) return;
+      adoptNarration(stored.blob, stored.name, 'restore');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [adoptNarration]);
+
   const clearNarration = useCallback(() => {
+    narrationChosenRef.current = true;
     cancelPendingNarration();
     setNarrationError(null);
     setNarration(null);
+    void clearStoredNarration();
   }, [cancelPendingNarration]);
 
   // State owns the live URL: replacing or removing a track cleans up the
@@ -1595,7 +1650,7 @@ export default function App() {
                     </div>
                   </div>
                   <p className="panel-hint narration-hint">
-                    Follows the timeline. Session-only; re-import after a reload.
+                    Follows the timeline. Kept with the script across reloads.
                   </p>
                 </section>
                 </>
