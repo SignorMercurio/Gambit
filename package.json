@@ -2,6 +2,27 @@
   "name": "gambit",
   "private": true,
   "version": "0.0.0",
+  "description": "A deterministic, recordable chess board driven by a small timestamped script, for teachers and content creators.",
+  "author": "Mercurio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SignorMercurio/Gambit.git"
+  },
+  "homepage": "https://github.com/SignorMercurio/Gambit#readme",
+  "bugs": {
+    "url": "https://github.com/SignorMercurio/Gambit/issues"
+  },
+  "keywords": [
+    "chess",
+    "chessboard",
+    "teaching",
+    "screen-recording",
+    "timeline",
+    "subtitles",
+    "react",
+    "vite"
+  ],
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

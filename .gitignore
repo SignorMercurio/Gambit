@@ -32,3 +32,6 @@ vite.config.d.ts
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Local skill lockfile
+skills-lock.json

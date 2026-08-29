@@ -1,6 +1,8 @@
 # Gambit
 
-Chess timeline renderer. Replays a game from a timestamped script with annotations (highlights, arrows), synced SRT subtitles, a scrubber, custom FEN starts, and speed controls.
+Chess timeline renderer. Replays a game from a timestamped script with annotations (highlights, arrows), synced SRT subtitles, a scrubber, custom FEN starts, and speed controls. Built for a desktop, mouse-driven screen-recording workflow — scrub the timeline, then screen-record a clip or screenshot a frame for videos, lessons, and articles.
+
+![Gambit rendering an annotated chess position](docs/screenshot.png)
 
 ## Run
 
@@ -55,6 +57,17 @@ Open the **Setup** tab to paste SRT text or import a `.srt` file. Subtitle cues 
 Central control is established.
 ```
 
+## Development
+
+```sh
+npm test          # node scripts/test-regressions.mjs — not a test framework
+npm run typecheck
+npm run build
+```
+
+See [docs/](./docs) for contributor documentation: architecture, the script
+language, editing, playback, design, testing, and asset notes.
+
 ## Credits
 
 Staunty chess piece SVGs by sadsnake1 via Lichess, modified for Gambit
@@ -63,3 +76,11 @@ Staunty chess piece SVGs by sadsnake1 via Lichess, modified for Gambit
 for the exact changes.
 That license includes a NonCommercial restriction; confirm that it covers the
 intended recording/distribution, or replace the piece set before commercial use.
+
+## License
+
+Code is licensed under [MIT](./LICENSE).
+
+Chess piece SVGs remain [CC BY-NC-SA 4.0](./public/licenses/LICENSE-pieces.txt);
+see Credits above for the NonCommercial caveat. Fonts remain
+[OFL-1.1](./public/licenses/LICENSE-fonts.txt).
