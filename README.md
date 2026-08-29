@@ -1,6 +1,6 @@
 # Gambit
 
-Chess timeline renderer. Replays a game from a timestamped script with annotations (highlights, arrows), synced SRT subtitles, a scrubber, custom FEN starts, and speed controls. Built for a desktop, mouse-driven screen-recording workflow — scrub the timeline, then screen-record a clip or screenshot a frame for videos, lessons, and articles.
+Chess timeline renderer. Replays a game from a timestamped script with annotations (highlights, arrows), synced SRT subtitles, a scrubber, custom FEN starts, speed controls, and a short click each time a piece lands (mutable from the transport). Built for a desktop, mouse-driven screen-recording workflow — scrub the timeline, then screen-record a clip or screenshot a frame for videos, lessons, and articles.
 
 ![Gambit rendering an annotated chess position](docs/screenshot.png)
 

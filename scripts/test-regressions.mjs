@@ -22,6 +22,7 @@ try {
       formatScriptTime,
       rewriteScriptLineTime,
       splitSanAnnotation,
+      lastEventIndexAt,
       MAX_SCRIPT_LINES,
     },
     { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
@@ -64,6 +65,7 @@ try {
       playbackDuration,
       timelineTicks,
     },
+    { moveSoundEnabled, moveSoundKey, shouldPlayMoveSound },
     Chess,
     styles,
     boardSource,
@@ -83,6 +85,7 @@ try {
     vite.ssrLoadModule('/src/lib/subtitles.ts'),
     vite.ssrLoadModule('/src/lib/world.ts'),
     vite.ssrLoadModule('/src/lib/playback.ts'),
+    vite.ssrLoadModule('/src/lib/moveSound.ts'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/Board.tsx', import.meta.url), 'utf8'),
@@ -860,6 +863,115 @@ Look --> there`;
     MAX_SAFE_PLAYBACK_SECONDS,
     'the authored ceiling reserves the full three-second script tail',
   );
+
+  // The piece click is derived from the frame the board draws, never fired by
+  // the event that produced it — so the key it watches has to hold three
+  // relations at once, and none of them is visible from the audio side.
+  const soundEvents = parseScript('[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3');
+  const soundWorld = buildWorld(soundEvents, standardSetup);
+  const soundKeyAt = (build, t) =>
+    moveSoundKey(worldFrameAt(build, lastEventIndexAt(soundEvents, t), t).snapshot.lastMove);
+  assert.equal(soundKeyAt(soundWorld, 0), null, 'a board before its first move names no move');
+  assert.equal(
+    shouldPlayMoveSound(null, soundKeyAt(soundWorld, 0)),
+    false,
+    'loading the app is not a move landing',
+  );
+  assert.equal(
+    soundKeyAt(soundWorld, 1.2),
+    soundKeyAt(soundWorld, 1.9),
+    'two frames inside one move are the same move',
+  );
+  assert.equal(
+    soundKeyAt(soundWorld, 2.5),
+    soundKeyAt(soundWorld, 3.5),
+    'an annotation event does not re-land the move under it',
+  );
+  assert.equal(
+    shouldPlayMoveSound(soundKeyAt(soundWorld, 1.5), soundKeyAt(soundWorld, 2.5)),
+    true,
+    'crossing into the next move clicks',
+  );
+  assert.equal(
+    soundKeyAt(soundWorld, 4.5),
+    null,
+    'a reset leaves no move to name, so the rewound board stays silent',
+  );
+  // A scrub is one comparison between where the playhead left and where it
+  // landed, so ten crossed moves are one click rather than ten.
+  const scrubbed = soundKeyAt(soundWorld, 5.5);
+  assert.equal(shouldPlayMoveSound(soundKeyAt(soundWorld, 0), scrubbed), true);
+  assert.equal(
+    shouldPlayMoveSound(scrubbed, soundKeyAt(soundWorld, 5.9)),
+    false,
+    'the frames after a scrub landing must not re-fire it',
+  );
+  // Editing the script rebuilds every snapshot. Comparing object identity here
+  // would click at every keystroke; the key is a value for exactly that reason.
+  assert.equal(
+    soundKeyAt(buildWorld(parseScript('[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3'), standardSetup), 2.5),
+    soundKeyAt(soundWorld, 2.5),
+    'rebuilding the same script re-derives the same move key',
+  );
+  // `rp` re-lands moves the script already played. Keying on squares alone
+  // would make every replayed move after the first one silent.
+  const replaySoundEvents = parseScript('[1] e4\n[2] e5\n[3] rp');
+  const replaySoundWorld = buildWorld(replaySoundEvents, standardSetup);
+  const replaySoundKeyAt = (t) =>
+    moveSoundKey(
+      worldFrameAt(replaySoundWorld, lastEventIndexAt(replaySoundEvents, t), t).snapshot.lastMove,
+    );
+  assert.equal(
+    shouldPlayMoveSound(replaySoundKeyAt(1.5), replaySoundKeyAt(3)),
+    true,
+    'a replayed move is a new landing, not the same one held',
+  );
+  assert.equal(
+    shouldPlayMoveSound(replaySoundKeyAt(3), replaySoundKeyAt(3.5 + 0.1)),
+    true,
+    'each replay step lands its own move — the exact boundary still holds the outgoing one',
+  );
+
+  // Muting gates the speaking, and only the speaking. The hook keeps calling
+  // the same comparison and advancing the same latch while muted, so the flag
+  // belongs inside this predicate rather than around its call: wrapping the
+  // call instead would freeze the latch, and unmuting would then click for the
+  // move the playhead had been parked on for a minute.
+  const mutedLanding = [soundKeyAt(soundWorld, 1.5), soundKeyAt(soundWorld, 2.5)];
+  assert.equal(
+    shouldPlayMoveSound(...mutedLanding, true),
+    true,
+    'the same landing that clicks unmuted...',
+  );
+  assert.equal(
+    shouldPlayMoveSound(...mutedLanding, false),
+    false,
+    '...is silent while muted',
+  );
+  assert.equal(
+    shouldPlayMoveSound(mutedLanding[1], mutedLanding[1], true),
+    false,
+    'and unmuting on a move already latched does not replay it',
+  );
+  assert.equal(
+    shouldPlayMoveSound(...mutedLanding),
+    true,
+    'sound is on when no flag is passed at all',
+  );
+  // The persisted flag rides the same '0'/'1' draft convention as the other
+  // transport preferences. Default ON has to survive a value that is neither:
+  // a truncated or foreign entry that read as muted would hand a creator a
+  // recording with no click in it and nothing on screen to explain why.
+  assert.equal(moveSoundEnabled('1'), true, "'1' is the stored on value");
+  assert.equal(moveSoundEnabled('0'), false, "'0' is the only muting value");
+  for (const junk of ['', 'true', 'false', '00', ' 0']) {
+    assert.equal(
+      moveSoundEnabled(junk),
+      true,
+      `a draft of ${JSON.stringify(junk)} falls back to the sound being on`,
+    );
+  }
+
   assert.equal(
     planLineInsert([], '', MAX_SCRIPT_TIMESTAMP_SECONDS + 1, 'hl e4').kind,
     'conflict',
@@ -1934,6 +2046,65 @@ Look --> there`;
       assert.ok(
         cssNum(x, axis) - 2 * pad >= 24,
         `the row × clears the 24px floor on ${axis}`,
+      );
+    }
+  }
+  {
+    // The move-sound toggle's height is declared, so its vertical target is
+    // arithmetic: 30 + 7 + 7. Its width is font metrics and out of reach here,
+    // which is why the label is the wider axis and the height is the one that
+    // had to be extended.
+    //
+    // Pinned at 44, not `>= 24`: a 30px button already clears the 2.5.8 floor
+    // on its own, so the weaker assertion passes with the extension deleted
+    // outright — verified by rewriting the inset to `0 0` and watching the
+    // suite stay green. 44 is the convention the stylesheet states for every
+    // sub-44px control here (.ctrl-btn, .speed-btn, .present-toggle), so it is
+    // the number that can actually fail.
+    const mute = cssRule('.mute-btn', 'height');
+    const [padBlock, padInline] = cssLengths(cssRule('.mute-btn::before'), 'inset');
+    assert.ok(
+      padBlock < 0 && padInline <= 0,
+      `the move-sound toggle's hit extension grows its target outward (found inset: ${padBlock} ${padInline})`,
+    );
+    assert.equal(
+      cssNum(mute, 'height') - 2 * padBlock,
+      44,
+      'the move-sound toggle reaches the transport\'s 44px hit convention',
+    );
+    // Its two states are the segmented pair the rate selector and the view
+    // toggle already wear — chalk on the 12% stop, foley-slate at rest, both
+    // clear of the 4.5:1 body floor. `.present-toggle`'s steel-blue pressed
+    // fill is 2.85:1 against the same chalk, so a standalone pressed rule here
+    // is how this control would quietly acquire it.
+    assert.equal(
+      cssRules(`.mute-btn[aria-pressed='true']`).length,
+      1,
+      'the move-sound toggle has exactly one pressed rule',
+    );
+    assert.match(
+      bareStyles,
+      /\.speed-btn\[aria-pressed='true'\],[^{]*\.mute-btn\[aria-pressed='true'\]\s*\{[^}]*background:\s*var\(--tonal-white-12\)/,
+      'it shares the segmented pressed treatment rather than declaring its own fill',
+    );
+    // The console grid restates its column list in four tiers and hand-places
+    // every child. Rate and sound therefore ride one wrapper: a tier that
+    // places `.speed-group` directly would leave the sound toggle to
+    // auto-place into whatever cell that tier left free — a control landing on
+    // the timeline at one viewport band only, which is exactly the class of
+    // bug no single-viewport check finds.
+    assert.doesNotMatch(
+      bareStyles,
+      /\.speed-group\s*\{[^}]*grid-(?:row|column|area)/,
+      'no tier places the rate selector itself; the transport-prefs wrapper carries both',
+    );
+    for (const block of mediaBlocks().filter((b) =>
+      /\.controls\s*\{[^}]*grid-template-columns/.test(b),
+    )) {
+      assert.match(
+        block,
+        /\.transport-prefs\s*\{[^}]*grid-row/,
+        `${block.slice(0, block.indexOf('{')).trim()} re-places the console's children, so it must place the prefs wrapper too`,
       );
     }
   }

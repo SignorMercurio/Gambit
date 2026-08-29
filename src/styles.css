@@ -293,8 +293,12 @@ body {
   position: absolute;
   inset: -5px -4px;
 }
+/* The 30px controls — both present toggles and the move-sound toggle — need
+   7px a side rather than 5 to reach the same 44. One statement of the number,
+   so the three cannot drift apart. */
 .present-toggle::before,
-.exit-present-btn::before { inset: -7px -4px; }
+.exit-present-btn::before,
+.mute-btn::before { inset: -7px -4px; }
 /* Top-right of the header, enters present mode. */
 .present-btn {
   flex: 0 0 auto;
@@ -763,6 +767,17 @@ body {
   outline-offset: var(--focus-ring-offset);
 }
 
+/* The transport's two recording preferences — playback rate and whether the
+   piece click sounds — share one grid child. Every tier below that re-places
+   the console's children places this wrapper, never `.speed-group` itself: the
+   grid restates its column list in four places and hand-places every child, so
+   a second bare child would auto-place into whatever cell each tier left
+   free — a control landing on the timeline at one viewport band only. */
+.transport-prefs {
+  display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto;
+}
+
 .speed-group {
   display: flex; gap: 2px;
   background: var(--well-28);
@@ -780,12 +795,39 @@ body {
   font-size: 11.5px; font-weight: 600;
   transition: color var(--duration-state), background var(--duration-state);
 }
-/* Segmented-control states, shared with the script view toggle (.view-btn)
-   so the pressed treatment can't drift between the two controls. */
+/* The move sound's on/off, seated beside the rate selector because both are
+   preferences about the recording rather than about the board, and a video
+   editor keeps both on the transport instead of behind a settings pane.
+   Type is the sans compact Title, not the speed segment's mono: the speed
+   buttons are mono because `0.5×` is a numeric, while `SFX` is a chrome word
+   and the Mono-for-Chess rule sets those in Schibsted. Geometry is the compact
+   toggle's (30px on the sm radius), so no new size enters the system. */
+.mute-btn {
+  position: relative;
+  border: 0; cursor: pointer;
+  background: transparent;
+  color: var(--color-foley-slate);
+  height: 30px; padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: 11px; font-weight: 700; letter-spacing: 0;
+  text-transform: uppercase;
+  transition: color var(--duration-state), background var(--duration-state);
+}
+/* Segmented-control states, shared with the script view toggle (.view-btn) and
+   the move-sound toggle so the pressed treatment can't drift between them.
+   The sound toggle takes this pair rather than `.present-toggle`'s steel-blue
+   pressed fill, which measures 2.85:1 against its own chalk — a cost an 11px
+   label cannot pay. Here the lit state is chalk on the 12% stop (9.6:1) and the
+   resting one is foley-slate on the console (5.3:1), both clear of the 4.5
+   body floor, and "lit means on" is the reading the neighbouring rate segment
+   already teaches. */
 .speed-btn:hover,
-.view-btn:hover { color: var(--color-sodium-chalk); }
+.view-btn:hover,
+.mute-btn:hover { color: var(--color-sodium-chalk); }
 .speed-btn[aria-pressed='true'],
-.view-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
+.view-btn[aria-pressed='true'],
+.mute-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
 /* Hit-area extension: visual ~28×22, hit zone reaches 44 vertically to clear
    WCAG 2.5.5. Inner padding stays tight so the segmented groups read. Shared
    with the view toggle, like the hover/pressed states above. */
@@ -794,6 +836,13 @@ body {
   content: '';
   position: absolute;
   inset: -11px -6px;
+}
+/* Same convention, different numbers: the toggle is already 30px tall, so it
+   takes the 30px controls' inset declared with the present toggles above
+   rather than the 11px this pair needs. */
+.mute-btn::before {
+  content: '';
+  position: absolute;
 }
 
 /* =====================================================================
@@ -1652,6 +1701,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   }
   .app--present .time-readout { min-width: 100px; }
   .app--present .speed-btn { padding-inline: 6px; }
+  .app--present .mute-btn { padding-inline: 6px; }
+  .app--present .transport-prefs { gap: 6px; }
   .app--present .present-controls { gap: 4px; }
   .app--present .present-toggle,
   .app--present .exit-present-btn { padding-inline: 8px; }
@@ -1722,7 +1773,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   .controls .ctrl-btn { grid-row: 1; grid-column: 2; }
   .controls .time-readout { grid-row: 1; grid-column: 3; justify-self: end; }
   .controls .timeline { grid-row: 2; grid-column: 1 / -1; }
-  .controls .speed-group { grid-row: 3; grid-column: 1 / -1; justify-self: center; }
+  .controls .transport-prefs { grid-row: 3; grid-column: 1 / -1; justify-self: center; }
 }
 
 /* =====================================================================
@@ -1894,12 +1945,13 @@ button.insert-item:hover { background: var(--tonal-white-08); }
     grid-column: 1 / -1;
     width: 100%;
   }
-  .app--present .speed-group {
+  .app--present .transport-prefs {
     grid-row: 3;
     grid-column: 1 / -1;
     justify-self: center;
   }
   .app--present .speed-btn { padding-inline: 8px; }
+  .app--present .mute-btn { padding-inline: 8px; }
   .app--present .present-controls {
     grid-row: 4;
     grid-column: 1 / -1;
@@ -1975,7 +2027,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   .app--present .play-btn { grid-row: 1; grid-column: 1; }
   .app--present .ctrl-btn { grid-row: 1; grid-column: 2; }
   .app--present .time-readout { grid-row: 1; grid-column: 3; }
-  .app--present .speed-group { grid-row: 1; grid-column: 4; justify-self: end; }
+  .app--present .transport-prefs { grid-row: 1; grid-column: 4; justify-self: end; }
   .app--present .present-controls { grid-row: 1; grid-column: 5; }
   .app--present .timeline { grid-row: 2; grid-column: 1 / -1; width: 100%; }
 }

@@ -19,6 +19,7 @@ import {
 } from './lib/narrationStore';
 import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
+import { moveSoundEnabled, moveSoundKey, useMoveSound } from './lib/moveSound';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { InsertMenu } from './components/InsertMenu';
 import { MoveList } from './components/MoveList';
@@ -155,6 +156,7 @@ const DRAFT_KEYS = {
   orientation: 'gambit:draft:board-orientation',
   scriptView: 'gambit:draft:script-view',
   presentPgn: 'gambit:draft:present-pgn',
+  moveSound: 'gambit:draft:move-sound',
 } as const;
 
 // Idle timeout before present-mode chrome (floating transport + cursor) fades
@@ -332,6 +334,11 @@ export default function App() {
   const [present, setPresent] = useState(false);
   const [presentPgnRaw, setPresentPgn] = useDraftText(DRAFT_KEYS.presentPgn, '0');
   const presentPgn = presentPgnRaw === '1';
+  // The piece click's on/off, persisted like the other transport preferences.
+  // Default ON, and `moveSoundEnabled` — not `=== '1'` — is what makes the
+  // default survive a junk draft rather than reading as muted.
+  const [moveSoundRaw, setMoveSoundDraft] = useDraftText(DRAFT_KEYS.moveSound, '1');
+  const moveSoundOn = moveSoundEnabled(moveSoundRaw);
   // The insert menu only exists in the Moves view of the Script tab; `/` is
   // inert everywhere else so the key never fires at a surface that can't show
   // the result of pressing it.
@@ -615,6 +622,13 @@ export default function App() {
   const world = worldFrame.snapshot;
   const presentationEventIndex =
     worldFrame.replaySourceEventIndex ?? reachedEventIndex;
+
+  // The piece click reads the frame the board is about to draw rather than any
+  // event that produced it, so playback, an `rp` replay step, a scrub landing
+  // and a gesture's own paused landing all sound through one rule — and present
+  // mode keeps it, because the click belongs to the recording. Muting gates the
+  // call rather than the volume: a muted click makes no `play()` at all.
+  useMoveSound(moveSoundKey(world.lastMove), moveSoundOn);
 
   // Full-script errors are returned once beside the board snapshots. Keeping
   // a growing copy on every snapshot made an all-error script retain O(N²)
@@ -913,6 +927,10 @@ export default function App() {
     () => setPresentPgn((v) => (v === '1' ? '0' : '1')),
     [setPresentPgn],
   );
+  const toggleMoveSound = useCallback(
+    () => setMoveSoundDraft((v) => (moveSoundEnabled(v) ? '0' : '1')),
+    [setMoveSoundDraft],
+  );
 
   // Present-mode chrome auto-hide: fade the floating transport and cursor
   // after the pointer is idle during playback; pointer movement or contact
@@ -1095,6 +1113,30 @@ export default function App() {
       </div>
     ),
     [speed],
+  );
+  // Rate and the piece click's on/off ride one wrapper rather than two grid
+  // children. The transport grid restates its column list in four tiers and
+  // places every child by hand, so a second bare child would auto-place into
+  // whatever cell each tier happened to leave free — a control that lands on
+  // the timeline at one viewport width only. Memoized for the same reason
+  // `speedGroup` is: `App` re-renders on every animation frame of playback and
+  // neither of these depends on the clock.
+  const transportPrefs = useMemo(
+    () => (
+      <div className="transport-prefs">
+        {speedGroup}
+        <button
+          type="button"
+          className="mute-btn"
+          aria-pressed={moveSoundOn}
+          aria-label="Move SFX"
+          onClick={toggleMoveSound}
+        >
+          SFX
+        </button>
+      </div>
+    ),
+    [speedGroup, moveSoundOn, toggleMoveSound],
   );
 
   const playState = playStateAt(playing, time, duration);
@@ -1358,7 +1400,7 @@ export default function App() {
               />
             </div>
 
-            {speedGroup}
+            {transportPrefs}
 
             {/* Present-only controls: they ride the floating transport, so
                they auto-hide with the rest of the chrome during recording. */}

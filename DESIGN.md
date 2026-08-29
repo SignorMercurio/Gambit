@@ -297,6 +297,8 @@ Three surfaces use a real `box-shadow`:
 
 **Speed selector.** A 4-button mono-font segmented group inside a recessed `stagewell-black` 28% track (10px radius, 1px `--line-faint` inset ring, 3px padding). Each segment is `5px 9px` padding, 5px radius (`rounded.xs`), default `foley-slate` text on transparent, active `sodium-chalk` text on `rgba(255,255,255,0.12)` background. Type is Lilex 11.5px / 600. Reads like a video editor's transport-rate selector.
 
+**Move-sound toggle.** A single `SFX` button beside the speed selector, sharing its grid track: both are preferences about the recording rather than about the board, and a video editor keeps both on the transport. It takes the segmented control's states (resting `foley-slate` on transparent, lit `sodium-chalk` on `rgba(255,255,255,0.12)`) so "lit means on" reads the same as the rate selector one control over, and the compact toggle's geometry (30px, `rounded.sm`, `0 10px` padding) so no new size enters the system. Type is the sans compact Title (11px / 700, uppercase), not the speed segment's mono — the speed buttons are mono because `0.5×` is a numeric, while `SFX` is a chrome word. It deliberately does *not* take `.present-toggle`'s steel-blue pressed fill, which measures 2.85:1 against its own chalk; the segmented pair measures 5.3:1 resting and 9.6:1 lit. A transparent `::before` at `inset: -7px -4px` lifts the 30px box to a 44px target. The choice persists with the local draft, defaults to on, and stays visible in Present, because the click is part of the recording.
+
 **Tab toggle (Script / Setup).** A full-width two-segment strip across the top of the side panel: recessed `stagewell-black` 24% track, 5px padding, 4px gap, 1px `--line-faint` bottom hairline. Each tab flexes to half the panel width, 40px min-height, `9px 12px` padding, 7px radius, Schibsted 12.5px / 700, default `#aab3cf` text; active `sodium-chalk` text on `rgba(255,255,255,0.10)` with a 1px `--line-faint` inset ring.
 
 ### Event-kind markers
@@ -321,7 +323,7 @@ Non-move events surface as kind-colored dots and pins rather than filled chips. 
 
 ### Signature Component: the Pro-Grade Timeline Ruler
 
-The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, speed selector. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, stretching across the full workspace width, 6px backdrop-blur, mono numerics that never reflow.
+The full controls row is the project's signature component, carrying "Pro-Grade Transport, not consumer playback" by itself. It is a 5-column grid: Play, Restart, time-readout, **timeline ruler (1fr)**, and a preferences pair (speed selector + move-sound toggle) sharing the last track. The ruler column is the visual centerpiece: a three-row sub-grid inside the same `controls` surface, stretching across the full workspace width, 6px backdrop-blur, mono numerics that never reflow.
 
 The ruler stacks three rows over the rail:
 
