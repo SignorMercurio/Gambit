@@ -12,7 +12,7 @@ dist
 dist-ssr
 .vite
 .agents
-.claude/skills
+.claude/
 
 # Impeccable skill state (critique snapshots, live-mode config)
 .impeccable/
