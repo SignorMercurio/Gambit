@@ -203,7 +203,7 @@ The annotation pens are two-stop families: a light board stop for overlay tints 
 - **Chip-Text Blue** (`#b8d0ec`). Move-number ink inside the current-move pill.
 
 ### Errors
-- **Studio Vermillion** (`#cf5d5d`, `~oklch(58% 0.16 22)`). Reset-event marker, error-row accent, and the check glow under a checked king (a radial fade from 95% to 55% alpha, gone by the square edge; derived from the engine position, never from a `+` in the SAN). Derived light tints (`#ff7b7b`, `#ff9b9b`, `#ffb4b4`) carry line numbers, error text, and reset-row text. The derivatives live in DESIGN.json's `colorMeta.studio-vermillion.tonalRamp`.
+- **Studio Vermillion** (`#cf5d5d`, `~oklch(58% 0.16 22)`). Reset-event marker, error-row accent, and the check glow under a checked king (a radial fade from 95% to 55% alpha, gone by the square edge; derived from the engine position, never from a `+` in the SAN). Derived light tints (`#ff7b7b`, `#ff9b9b`, `#ffb4b4`) carry line numbers, reset-row text, and error text — `--color-error-line`, `--color-reset-text`, and `--color-error-text` in `styles.css`.
 
 ### Named Rules
 
