@@ -165,6 +165,19 @@ try {
   assert.equal(oversizedEvents.length, 1);
   assert.match(oversizedEvents[0].error, /line limit/i);
 
+  // The character limit is checked before the line split, so one enormous
+  // newline-free line must still fail on characters rather than sliding past
+  // both guards. The bound is spelled out because `MAX_SCRIPT_CHARACTERS`
+  // stays private to `timeline.ts`; keep the two in step.
+  const oversizedByCharacters = parseScript('x'.repeat(1_000_001));
+  assert.equal(oversizedByCharacters.length, 1);
+  assert.match(oversizedByCharacters[0].error, /1,000,000-character limit/);
+  assert.match(
+    parseScript('x'.repeat(1_000_000))[0].error,
+    /missing \[mm:ss\]/,
+    'a script exactly at the limit reaches the line grammar',
+  );
+
   assert.equal(
     nextFreeTime(saturated, 0.05, 0.1),
     null,
