@@ -35,7 +35,7 @@ try {
       withTimeout,
     },
     { syncRovingTabStops },
-    { buildMainline, findMainlineCursor },
+    { buildMainline, buildMainlineCursorIndex },
     { BADGE_EDGE_MARGIN, BADGE_R, BOARD_SIZE, BadgeDisc, HlRing, badgeCenter, lastMoveSquares },
     { AUTHORED_ELSEWHERE_COMMANDS, COMMANDS, INSERTABLE_COMMANDS, SYNTAX_GROUPS },
     { SYNTAX_HINT },
@@ -795,16 +795,21 @@ Look --> there`;
     ],
     'a reset must start a new row instead of pairing across it',
   );
-  const presentationResetEvents = parseScript('[1] e4\n[2] rs\n[3] e4');
+  // The cursor index holds, per event, the mainline move the board represents
+  // once the playhead has reached that event.
+  const presentationResetCursors = buildMainlineCursorIndex(
+    parseScript('[1] e4\n[2] rs\n[3] e4'),
+    new Set(),
+  );
   assert.equal(
-    findMainlineCursor(presentationResetEvents, 1),
+    presentationResetCursors[1],
     -1,
     'a setup event clears the current presentation move until the new line advances',
   );
-  assert.equal(findMainlineCursor(presentationResetEvents, 2), 2);
+  assert.equal(presentationResetCursors[2], 2);
   const rejectedPresentationFen = parseScript('[1] e4\n[2] fen bad');
   assert.equal(
-    findMainlineCursor(rejectedPresentationFen, 1, new Set([1])),
+    buildMainlineCursorIndex(rejectedPresentationFen, new Set([1]))[1],
     0,
     'a rejected FEN does not clear the presentation cursor',
   );

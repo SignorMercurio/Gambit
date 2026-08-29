@@ -108,7 +108,7 @@ const SQUARE_RE = new RegExp(`^${SQUARE_PATTERN}$`, 'i');
 const ARROW_PATTERN = `(${SQUARE_PATTERN})\\s*(?:→|->|to)\\s*(${SQUARE_PATTERN})(?:\\s+(pin))?`;
 const DIRECT_ARROW_RE = new RegExp(`^${ARROW_PATTERN}$`, 'i');
 const LEGACY_ARROW_RE = new RegExp(`^arrow\\s+${ARROW_PATTERN}$`, 'i');
-export const MAX_SCRIPT_CHARACTERS = 1_000_000;
+const MAX_SCRIPT_CHARACTERS = 1_000_000;
 export const MAX_SCRIPT_LINES = 5_000;
 
 export type ParsedEvent =
@@ -141,7 +141,6 @@ const SIMPLE_COMMANDS = new Map<string, SimpleEventKind>([
   ['reset', 'reset'],
   ['st', 'start'],
   ['start', 'start'],
-  ['initial', 'start'],
   ['br', 'branch'],
   ['branch', 'branch'],
   ['ml', 'mainline'],

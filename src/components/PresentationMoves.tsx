@@ -105,7 +105,11 @@ export function buildMainline(
   return rows;
 }
 
-function buildMainlineCursorIndex(
+// For every event index, the applied mainline move the board represents once
+// the playhead has reached it. A setup event leaves earlier rows as history but
+// clears the current pill; rejected FENs and setup events inside a variation do
+// neither.
+export function buildMainlineCursorIndex(
   events: TimelineEvent[],
   rejectedEventIndexes: ReadonlySet<number>,
 ): number[] {
@@ -116,22 +120,6 @@ function buildMainlineCursorIndex(
     cursors[index] = cursor;
   });
   return cursors;
-}
-
-// Find the applied mainline move represented by the board at the playhead.
-// A setup event leaves earlier rows as history but clears the current pill;
-// rejected FENs and setup events inside a variation do neither.
-export function findMainlineCursor(
-  events: TimelineEvent[],
-  reachedEventIndex: number,
-  rejectedEventIndexes: ReadonlySet<number> = NO_REJECTED_EVENTS,
-): number {
-  const end = Math.min(reachedEventIndex, events.length - 1);
-  let cursor = -1;
-  walkAppliedMainline(events, rejectedEventIndexes, end, (event, index) => {
-    cursor = advanceMainlineCursor(cursor, event, index);
-  });
-  return cursor;
 }
 
 type PresentationMovesProps = {

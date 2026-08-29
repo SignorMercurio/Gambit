@@ -129,7 +129,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 // The subset the insert menu can write directly. Derived rather than a second
 // hand-maintained list, and typed with a non-null `body` so the menu's click
 // handler needs no cast to hand it to planLineInsert.
-export type InsertableCommand = CommandEntry & { body: string };
+type InsertableCommand = CommandEntry & { body: string };
 
 export const INSERTABLE_COMMANDS: readonly InsertableCommand[] = COMMANDS.filter(
   (c): c is InsertableCommand => c.body != null,

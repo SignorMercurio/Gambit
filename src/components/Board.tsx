@@ -99,7 +99,6 @@ const BOARD_ARROW = {
   shaftHalf: 11,
   headHalf: 26,
   headLen: 36,
-  headBack: 0,
 } as const;
 
 // Trace the arrow outline as a single polygon (tail → left elbows → head
@@ -121,7 +120,7 @@ function elbowJoin(a: Seg, b: Seg, side: number, shaftHalf: number): [number, nu
 }
 
 function buildArrowPath(pts: Array<readonly [number, number]>): string {
-  const { shaftHalf, headHalf, headLen, headBack } = BOARD_ARROW;
+  const { shaftHalf, headHalf, headLen } = BOARD_ARROW;
   if (pts.length < 2) return '';
   const segs: Seg[] = [];
   for (let i = 0; i < pts.length - 1; i++) {
@@ -146,9 +145,9 @@ function buildArrowPath(pts: Array<readonly [number, number]>): string {
   out.push([s0.x1 + s0.uy * shaftHalf, s0.y1 - s0.ux * shaftHalf]);
   for (let i = 0; i < segs.length - 1; i++) out.push(elbowJoin(segs[i], segs[i + 1], 1, shaftHalf));
   out.push([hbX + last.uy * shaftHalf, hbY - last.ux * shaftHalf]);
-  out.push([hbX + last.uy * headHalf - last.ux * headBack, hbY - last.ux * headHalf - last.uy * headBack]);
+  out.push([hbX + last.uy * headHalf, hbY - last.ux * headHalf]);
   out.push([tipX, tipY]);
-  out.push([hbX - last.uy * headHalf - last.ux * headBack, hbY + last.ux * headHalf - last.uy * headBack]);
+  out.push([hbX - last.uy * headHalf, hbY + last.ux * headHalf]);
   out.push([hbX - last.uy * shaftHalf, hbY + last.ux * shaftHalf]);
   for (let i = segs.length - 2; i >= 0; i--) out.push(elbowJoin(segs[i], segs[i + 1], -1, shaftHalf));
   out.push([s0.x1 - s0.uy * shaftHalf, s0.y1 + s0.ux * shaftHalf]);
