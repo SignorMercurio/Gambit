@@ -12,6 +12,7 @@ an event kind means adding it there, not in a UI file.
 - The errors band reports in script order, not in the order errors happened to accumulate: `buildWorld` sorts `scriptErrors` by line before returning, because the band is read (and announced by `role="status"`) against the text the author is about to go fix. It shows `ERRORS_COLLAPSED_ROWS` rows and collapses the rest behind a count rather than becoming a fixed-height scroll region inside an already-scrolling panel.
 - When changing chess behavior, add conservative validation rather than accepting ambiguous or typo-like SAN.
 - SAN capture markers must match the resolved move. `Nxe5` should not resolve to quiet `Ne5`, and quiet SAN should not hide a capture.
+- Standard SAN and FEN resolution follows the pinned `chess.js` version. Gambit strips its four quality marks (`!!`, `!`, `?`, `??`) before strict SAN parsing; chess.js owns check/mate suffix normalization, rejects zero/lowercase castling notation, and fills omitted trailing FEN fields. Semantically invalid positions have no additional Gambit compatibility rules.
 - Timestamp parsing must never produce `NaN`; invalid timestamps should become script errors.
 - Highlight and arrow square inputs should be validated before reaching `Board`.
 

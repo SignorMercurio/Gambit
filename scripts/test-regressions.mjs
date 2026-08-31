@@ -375,8 +375,17 @@ try {
   // A left-press that can't start a move returns silently, which reads as a
   // dead board. The two cases worth naming look identical on screen — a piece
   // sits there and refuses to move — so the reason has to distinguish them.
+  const startingState = Chess.stateFromFEN(Chess.STARTING_FEN);
+  assert.ok(Object.isFrozen(startingState), 'chess snapshots are immutable values');
+  assert.deepEqual(Object.keys(startingState).sort(), ['fen', 'fullmove', 'turn']);
+  const cachedStartingMoves = Chess.legalMoves(startingState);
+  assert.equal(cachedStartingMoves, Chess.legalMoves(startingState));
+  assert.ok(Object.isFrozen(cachedStartingMoves));
+  const startingBoard = Chess.board(startingState);
+  assert.deepEqual(startingBoard[0][0], { type: 'r', side: 'w' });
+  assert.deepEqual(startingBoard[7][0], { type: 'r', side: 'b' });
   {
-    const start = Chess.initialState();
+    const start = startingState;
     assert.equal(
       Chess.explainNoMoves(start, 'e7'),
       "it's White to move",
@@ -408,16 +417,27 @@ try {
   assert.deepEqual(Chess.parseSAN('Nbd2', ambiguous)?.from, [1, 2]);
   for (const longPawnMove of ['e2e4', 'ee4', '2e4', 'e 4']) {
     assert.equal(
-      Chess.parseSAN(longPawnMove, Chess.initialState()),
+      Chess.parseSAN(longPawnMove, startingState),
       null,
       `non-SAN pawn move ${longPawnMove} must be rejected`,
     );
   }
-  assert.deepEqual(Chess.parseSAN('e4', Chess.initialState())?.to, [4, 3]);
-  assert.deepEqual(Chess.parseSAN('e4!', Chess.initialState())?.to, [4, 3]);
-  for (const badSuffix of ['e4+', 'e4#', 'e4!?', 'e4?!', 'e4!+', 'e4++', 'e4?????']) {
+  const e4Move = Chess.parseSAN('e4', startingState);
+  assert.deepEqual(e4Move?.to, [4, 3]);
+  const startingFen = startingState.fen;
+  const afterE4 = Chess.applyMove(startingState, e4Move);
+  assert.equal(startingState.fen, startingFen, 'applying a move does not mutate its input snapshot');
+  assert.ok(Object.isFrozen(afterE4));
+  assert.deepEqual(Chess.board(afterE4)[3][4], { type: 'p', side: 'w' });
+  assert.deepEqual(Chess.parseSAN('e4!', startingState)?.to, [4, 3]);
+  for (const normalizedSuffix of ['e4+', 'e4#']) {
+    const move = Chess.parseSAN(normalizedSuffix, startingState);
+    assert.ok(move, `${normalizedSuffix} follows chess.js suffix normalization`);
+    assert.equal(Chess.sanForMove(startingState, move), 'e4');
+  }
+  for (const badSuffix of ['e4!?', 'e4?!', 'e4!+', 'e4++', 'e4?????']) {
     assert.equal(
-      Chess.parseSAN(badSuffix, Chess.initialState()),
+      Chess.parseSAN(badSuffix, startingState),
       null,
       `${badSuffix} must not bypass the shared SAN suffix grammar`,
     );
@@ -431,10 +451,12 @@ try {
 
   const rookCheck = Chess.stateFromFEN('7k/8/8/8/8/8/8/R3K3 w - - 0 1');
   assert.ok(Chess.parseSAN('Ra8+', rookCheck));
-  assert.equal(Chess.parseSAN('Ra8#', rookCheck), null);
+  const normalizedRookCheck = Chess.parseSAN('Ra8#', rookCheck);
+  assert.ok(normalizedRookCheck);
+  assert.equal(Chess.sanForMove(rookCheck, normalizedRookCheck), 'Ra8+');
   assert.ok(Chess.parseSAN('Ra8', rookCheck), 'omitting a check marker stays compatible');
 
-  let scholarsMate = Chess.initialState();
+  let scholarsMate = startingState;
   for (const san of ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6']) {
     const move = Chess.parseSAN(san, scholarsMate);
     assert.ok(move, `fixture move ${san} must resolve`);
@@ -442,40 +464,60 @@ try {
   }
   assert.ok(Chess.parseSAN('Qxf7#', scholarsMate));
   assert.ok(Chess.parseSAN('Qxf7#!!', scholarsMate));
-  assert.equal(Chess.parseSAN('Qxf7+', scholarsMate), null);
+  const normalizedMate = Chess.parseSAN('Qxf7+', scholarsMate);
+  assert.ok(normalizedMate);
+  assert.equal(Chess.sanForMove(scholarsMate, normalizedMate), 'Qxf7#');
   assert.ok(Chess.parseSAN('Qxf7', scholarsMate));
 
   const quietCastle = Chess.stateFromFEN('4k3/8/8/8/8/8/8/4K2R w K - 0 1');
-  assert.ok(Chess.parseSAN('O-O', quietCastle));
-  assert.equal(Chess.parseSAN('O-O+', quietCastle), null);
+  const quietCastleMove = Chess.parseSAN('O-O', quietCastle);
+  assert.ok(quietCastleMove);
+  assert.ok(Chess.parseSAN('O-O+', quietCastle));
+  assert.equal(Chess.parseSAN('0-0', quietCastle), null, 'strict chess.js SAN rejects zero castling');
+  assert.equal(Chess.parseSAN('o-o', quietCastle), null, 'strict chess.js SAN rejects lowercase castling');
+  const castledBoard = Chess.board(Chess.applyMove(quietCastle, quietCastleMove));
+  assert.deepEqual(castledBoard[0][6], { type: 'k', side: 'w' });
+  assert.deepEqual(castledBoard[0][5], { type: 'r', side: 'w' });
 
   const promotion = Chess.stateFromFEN('7k/P7/8/8/8/8/8/7K w - - 0 1');
   assert.equal(Chess.parseSAN('a8', promotion), null, 'promotion piece must be explicit');
-  assert.equal(Chess.parseSAN('a8=Q', promotion)?.promotion, 'q');
+  const promotionMove = Chess.parseSAN('a8=Q', promotion);
+  assert.equal(promotionMove?.promotion, 'q');
+  assert.deepEqual(
+    Chess.board(Chess.applyMove(promotion, promotionMove))[7][0],
+    { type: 'q', side: 'w' },
+  );
 
-  // FEN en-passant metadata is a trust boundary. A side/rank mismatch used
-  // to let axb3 remove both white pawns; malformed FEN must fail visibly and
-  // forged GameState input must still be rejected by move generation.
+  const capture = Chess.stateFromFEN('7k/8/8/3p4/4P3/8/8/7K w - - 0 1');
+  const captureMove = Chess.parseSAN('exd5', capture);
+  assert.equal(captureMove?.capture, true);
+  const capturedBoard = Chess.board(Chess.applyMove(capture, captureMove));
+  assert.deepEqual(capturedBoard[4][3], { type: 'p', side: 'w' });
+  assert.equal(capturedBoard[3][4], null);
+
+  // FEN validation and default fields follow chess.js. Gambit retains only a
+  // frozen canonical FEN plus the two move-list readouts.
   assert.throws(
     () => Chess.stateFromFEN('7k/8/8/8/8/8/PP6/4K3 w - b3 0 1'),
-    /en passant/i,
+    /en[- ]passant/i,
   );
-  const forgedEp = Chess.stateFromFEN('7k/8/8/8/8/8/PP6/4K3 w - - 0 1');
-  forgedEp.enPassant = 'b3';
-  assert.equal(Chess.parseSAN('axb3', forgedEp), null);
+  const partialFen = Chess.stateFromFEN('4k3/8/8/8/8/8/8/4K3 w');
+  assert.equal(partialFen.fen, '4k3/8/8/8/8/8/8/4K3 w - - 0 1');
   const validEp = Chess.stateFromFEN('7k/8/8/3pP3/8/8/8/7K w - d6 0 1');
   assert.equal(Chess.parseSAN('exd6', validEp)?.enPassant, true);
 
   assert.throws(
     () => Chess.stateFromFEN('8/8/8/8/8/8/8/4K3 w - - 0 1'),
-    /one king per side/i,
+    /king/i,
   );
   assert.throws(
     () => Chess.stateFromFEN('4k3/8/8/8/8/8/4K3/4K3 w - - 0 1'),
-    /one king per side/i,
+    /king/i,
   );
-  const adjacentKings = Chess.stateFromFEN('8/8/8/8/8/8/4k3/4K3 w - - 0 1');
-  assert.equal(Chess.parseSAN('Kxe2', adjacentKings), null, 'a king is never a capture target');
+  assert.throws(
+    () => Chess.stateFromFEN('P3k3/8/8/8/8/8/8/4K3 w - - 0 1'),
+    /pawn/i,
+  );
 
   // Subtitle lookup keeps the latest-started active cue while still falling
   // back to an earlier long cue after a shorter overlap ends.
@@ -583,12 +625,13 @@ Look --> there`;
   );
   assert.deepEqual(afterReplay.scriptErrors, []);
   const settled = worldFrameAt(afterReplay, 2, 4).snapshot;
-  assert.equal(settled.chessState.board[3][4]?.side, 'w', 'the replayed move survives the replay');
-  assert.equal(settled.chessState.board[1][4], null, 'and the pawn is not still on its origin');
+  const settledBoard = Chess.board(settled.chessState);
+  assert.equal(settledBoard[3][4]?.side, 'w', 'the replayed move survives the replay');
+  assert.equal(settledBoard[1][4], null, 'and the pawn is not still on its origin');
   assert.deepEqual(settled.highlights, [], 'replay clears overlays, pinned ones included');
   const nextEvent = worldFrameAt(afterReplay, 3, 8.1).snapshot;
   assert.equal(
-    nextEvent.chessState.board[3][4]?.side,
+    Chess.board(nextEvent.chessState)[3][4]?.side,
     'w',
     'the event after a replay builds on the position the replay ended at',
   );
@@ -604,7 +647,7 @@ Look --> there`;
   const replayAcrossSetups = buildWorld(replayAcrossSetupEvents, standardSetup);
   const setupReplayFrames = replayAcrossSetups.replaySequences.get(3).frames;
   assert.equal(setupReplayFrames.length, 2);
-  const afterResetMove = setupReplayFrames[1].snapshot.chessState.board;
+  const afterResetMove = Chess.board(setupReplayFrames[1].snapshot.chessState);
   assert.equal(afterResetMove[1][4]?.side, 'w', 'st restores the e-pawn before the next replay move');
   assert.equal(afterResetMove[3][3]?.side, 'w', 'the post-setup d4 move is still replayed');
 
@@ -661,8 +704,9 @@ Look --> there`;
     { fullmove: 1, turn: 'b' },
   ]);
   const finalRuntimeState = runtimeWorld.snapshots.at(-1).chessState;
-  assert.equal(finalRuntimeState.board[3][4]?.side, 'w');
-  assert.equal(finalRuntimeState.board[4][4]?.side, 'b');
+  const finalRuntimeBoard = Chess.board(finalRuntimeState);
+  assert.equal(finalRuntimeBoard[3][4]?.side, 'w');
+  assert.equal(finalRuntimeBoard[4][4]?.side, 'b');
   assert.deepEqual(
     buildMainline(
       runtimeEvents,

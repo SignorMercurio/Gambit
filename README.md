@@ -83,4 +83,6 @@ Code is licensed under [MIT](./LICENSE).
 
 Chess piece SVGs remain [CC BY-NC-SA 4.0](./public/licenses/LICENSE-pieces.txt);
 see Credits above for the NonCommercial caveat. Fonts remain
-[OFL-1.1](./public/licenses/LICENSE-fonts.txt).
+[OFL-1.1](./public/licenses/LICENSE-fonts.txt). Chess rules are provided by
+[chess.js](https://github.com/jhlywa/chess.js) under
+[BSD-2-Clause](./public/licenses/LICENSE-chess.js.txt).

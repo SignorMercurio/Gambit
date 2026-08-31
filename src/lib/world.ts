@@ -162,7 +162,7 @@ function positionsFromBoard(board: Chess.Board): Positions {
 
 function setupFromValidFen(fen: string): BoardSetup {
   const chessState = Chess.stateFromFEN(fen);
-  return { chessState, positions: positionsFromBoard(chessState.board) };
+  return { chessState, positions: positionsFromBoard(Chess.board(chessState)) };
 }
 
 const STANDARD_SETUP = setupFromValidFen(Chess.STARTING_FEN);
