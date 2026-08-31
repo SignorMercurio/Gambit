@@ -60,7 +60,7 @@ function playMoveSound(): void {
   }
 }
 
-export type MoveSoundKey = string | null;
+type MoveSoundKey = string | null;
 
 // Identity of the move the board is currently showing. The timestamp is part of
 // it because one script can play the same move twice — an `rp` replay re-lands
@@ -74,7 +74,7 @@ export function moveSoundKey(lastMove: LastMove | null): MoveSoundKey {
 export function shouldPlayMoveSound(
   previous: MoveSoundKey,
   current: MoveSoundKey,
-  enabled: boolean = true,
+  enabled: boolean,
 ): boolean {
   return enabled && current !== null && previous !== current;
 }
@@ -99,7 +99,7 @@ export function moveSoundEnabled(draft: string): boolean {
  * advances while muted, so unmuting speaks the *next* move rather than
  * replaying the one the playhead happens to be sitting on.
  */
-export function useMoveSound(key: MoveSoundKey, enabled: boolean = true): void {
+export function useMoveSound(key: MoveSoundKey, enabled: boolean): void {
   const previous = useRef<MoveSoundKey>(key);
 
   useEffect(() => {

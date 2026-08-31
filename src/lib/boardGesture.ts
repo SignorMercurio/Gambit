@@ -22,14 +22,14 @@ export type BoardGesture = GestureOwner &
         from: string;
         over: string | null;
         targets: ReadonlySet<string>;
-        commit?: (from: string, to: string) => void;
+        commit: (from: string, to: string) => void;
       }
     | {
         kind: 'annotate';
         from: string;
         over: string | null;
-        commitArrow?: (from: string, to: string) => void;
-        commitHighlight?: (sq: string) => void;
+        commitArrow: (from: string, to: string) => void;
+        commitHighlight: (sq: string) => void;
       }
   );
 
@@ -37,7 +37,7 @@ export function beginMoveGesture(
   owner: GestureOwner,
   from: string,
   targets: ReadonlySet<string>,
-  commit?: (from: string, to: string) => void,
+  commit: (from: string, to: string) => void,
 ): BoardGesture {
   return { ...owner, kind: 'move', from, over: from, targets, commit };
 }
@@ -45,8 +45,8 @@ export function beginMoveGesture(
 export function beginAnnotationGesture(
   owner: GestureOwner,
   from: string,
-  commitArrow?: (from: string, to: string) => void,
-  commitHighlight?: (sq: string) => void,
+  commitArrow: (from: string, to: string) => void,
+  commitHighlight: (sq: string) => void,
 ): BoardGesture {
   return { ...owner, kind: 'annotate', from, over: from, commitArrow, commitHighlight };
 }
@@ -60,10 +60,10 @@ export function updateGestureTarget(gesture: BoardGesture, over: string | null):
 export function finishBoardGesture(gesture: BoardGesture, over: string | null): void {
   if (gesture.kind === 'move') {
     if (over && over !== gesture.from && gesture.targets.has(over)) {
-      gesture.commit?.(gesture.from, over);
+      gesture.commit(gesture.from, over);
     }
     return;
   }
-  if (over === gesture.from) gesture.commitHighlight?.(gesture.from);
-  else if (over) gesture.commitArrow?.(gesture.from, over);
+  if (over === gesture.from) gesture.commitHighlight(gesture.from);
+  else if (over) gesture.commitArrow(gesture.from, over);
 }

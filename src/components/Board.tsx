@@ -78,19 +78,19 @@ type BoardProps = {
   // fades in from the ghost floor instead of popping (-Infinity: no fade).
   revealedAt: number;
   time: number;
-  orientation?: BoardOrientation;
+  orientation: BoardOrientation;
   // Interactive editing (Script tab only). Gestures never draw directly —
   // they report intents that App records as script lines, so the script
   // text stays the single source of truth. Mouse-only by design: this is a
   // desktop screen-recording tool and right-button gestures need a mouse.
-  interactive?: boolean;
-  legalTargets?: (from: string) => string[];
-  onMoveGesture?: (from: string, to: string) => void;
-  onArrowGesture?: (from: string, to: string) => void;
-  onHighlightGesture?: (sq: string) => void;
+  interactive: boolean;
+  legalTargets: (from: string) => string[];
+  onMoveGesture: (from: string, to: string) => void;
+  onArrowGesture: (from: string, to: string) => void;
+  onHighlightGesture: (sq: string) => void;
   // A left-press on a square that can't start a move. Reported rather than
   // swallowed so App can say why; Board never decides the wording.
-  onMoveRejected?: (from: string) => void;
+  onMoveRejected: (from: string) => void;
 };
 
 const BOARD_ARROW = {
@@ -747,7 +747,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
   mind,
   revealedAt,
   time,
-  orientation = 'white',
+  orientation,
   interactive,
   legalTargets,
   onMoveGesture,
@@ -837,9 +837,9 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
       setGesture(beginAnnotationGesture(owner, sq, onArrowGesture, onHighlightGesture));
       return;
     }
-    const targets = new Set(legalTargets?.(sq) ?? []);
+    const targets = new Set(legalTargets(sq));
     if (targets.size === 0) {
-      onMoveRejected?.(sq);
+      onMoveRejected(sq);
       return;
     }
     e.preventDefault();
@@ -853,7 +853,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
     const sq = squareAtPointer(e);
     if (sq === hoverSqRef.current) return;
     hoverSqRef.current = sq;
-    setHoverGrab(sq != null && (legalTargets?.(sq)?.length ?? 0) > 0);
+    setHoverGrab(sq != null && legalTargets(sq).length > 0);
   };
 
   const onGesturePointerMove = (e: React.PointerEvent) => {

@@ -11,7 +11,7 @@ import { memo, type CSSProperties } from 'react';
 import type { PieceType, Side } from '../lib/chess';
 import { tokens } from '../lib/tokens';
 
-type PieceProps = { type: PieceType; side: Side; active?: boolean };
+type PieceProps = { type: PieceType; side: Side; active: boolean };
 
 const PIECE_STYLE: CSSProperties = {
   width: '100%',
@@ -28,7 +28,7 @@ const ACTIVE_PIECE_STYLE: CSSProperties = {
 
 // Board repaints on every animation frame; only the moving piece's `active`
 // flag changes, so steady pieces can reuse the same image subtree and style.
-export const Piece = memo(function Piece({ type, side, active = false }: PieceProps) {
+export const Piece = memo(function Piece({ type, side, active }: PieceProps) {
   const code = type + (side === 'w' ? 'l' : 'd');
   return (
     <img

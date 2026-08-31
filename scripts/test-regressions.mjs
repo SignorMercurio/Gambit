@@ -873,7 +873,7 @@ Look --> there`;
     moveSoundKey(worldFrameAt(build, lastEventIndexAt(soundEvents, t), t).snapshot.lastMove);
   assert.equal(soundKeyAt(soundWorld, 0), null, 'a board before its first move names no move');
   assert.equal(
-    shouldPlayMoveSound(null, soundKeyAt(soundWorld, 0)),
+    shouldPlayMoveSound(null, soundKeyAt(soundWorld, 0), true),
     false,
     'loading the app is not a move landing',
   );
@@ -888,7 +888,7 @@ Look --> there`;
     'an annotation event does not re-land the move under it',
   );
   assert.equal(
-    shouldPlayMoveSound(soundKeyAt(soundWorld, 1.5), soundKeyAt(soundWorld, 2.5)),
+    shouldPlayMoveSound(soundKeyAt(soundWorld, 1.5), soundKeyAt(soundWorld, 2.5), true),
     true,
     'crossing into the next move clicks',
   );
@@ -900,9 +900,9 @@ Look --> there`;
   // A scrub is one comparison between where the playhead left and where it
   // landed, so ten crossed moves are one click rather than ten.
   const scrubbed = soundKeyAt(soundWorld, 5.5);
-  assert.equal(shouldPlayMoveSound(soundKeyAt(soundWorld, 0), scrubbed), true);
+  assert.equal(shouldPlayMoveSound(soundKeyAt(soundWorld, 0), scrubbed, true), true);
   assert.equal(
-    shouldPlayMoveSound(scrubbed, soundKeyAt(soundWorld, 5.9)),
+    shouldPlayMoveSound(scrubbed, soundKeyAt(soundWorld, 5.9), true),
     false,
     'the frames after a scrub landing must not re-fire it',
   );
@@ -922,12 +922,12 @@ Look --> there`;
       worldFrameAt(replaySoundWorld, lastEventIndexAt(replaySoundEvents, t), t).snapshot.lastMove,
     );
   assert.equal(
-    shouldPlayMoveSound(replaySoundKeyAt(1.5), replaySoundKeyAt(3)),
+    shouldPlayMoveSound(replaySoundKeyAt(1.5), replaySoundKeyAt(3), true),
     true,
     'a replayed move is a new landing, not the same one held',
   );
   assert.equal(
-    shouldPlayMoveSound(replaySoundKeyAt(3), replaySoundKeyAt(3.5 + 0.1)),
+    shouldPlayMoveSound(replaySoundKeyAt(3), replaySoundKeyAt(3.5 + 0.1), true),
     true,
     'each replay step lands its own move — the exact boundary still holds the outgoing one',
   );
@@ -952,11 +952,6 @@ Look --> there`;
     shouldPlayMoveSound(mutedLanding[1], mutedLanding[1], true),
     false,
     'and unmuting on a move already latched does not replay it',
-  );
-  assert.equal(
-    shouldPlayMoveSound(...mutedLanding),
-    true,
-    'sound is on when no flag is passed at all',
   );
   // The persisted flag rides the same '0'/'1' draft convention as the other
   // transport preferences. Default ON has to survive a value that is neither:
