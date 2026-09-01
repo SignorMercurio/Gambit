@@ -745,6 +745,38 @@ Look --> there`;
     'mainline restore keeps the branch-entry overlay snapshot',
   );
 
+  // Mainline restore glides rather than snapping: a piece the branch moved
+  // carries its branch-final square as moveFrom at the ml timestamp, and a
+  // piece the branch captured fades back in via restoredAt. Pieces the branch
+  // never disturbed keep their original (pre-branch) metadata untouched.
+  const glideRestore = buildWorld(
+    parseScript('[1] e4\n[2] br\n[3] d5\n[4] exd5\n[5] ml'),
+    standardSetup,
+  );
+  const glidePositions = Object.values(glideRestore.snapshots.at(-1).positions);
+  const whitePawn = glidePositions.find((p) => p.side === 'w' && p.f === 4 && p.r === 3);
+  assert.deepEqual(
+    [whitePawn.moveFromF, whitePawn.moveFromR, whitePawn.moveT],
+    [3, 4, 5],
+    'a branch-moved piece must glide home from its branch-final square at the ml timestamp',
+  );
+  const blackPawn = glidePositions.find((p) => p.side === 'b' && p.f === 3 && p.r === 6);
+  assert.equal(blackPawn.captured, undefined);
+  assert.equal(
+    blackPawn.restoredAt,
+    5,
+    'a branch-captured piece must fade back in at the ml timestamp',
+  );
+  const bystander = glidePositions.find((p) => p.side === 'b' && p.f === 0 && p.r === 6);
+  assert.equal(bystander.restoredAt, undefined);
+  assert.equal(bystander.moveT, undefined, 'undisturbed pieces must not gain glide metadata');
+  // The branch-entry snapshot itself must keep pre-branch metadata: the glide
+  // rewrite rebinds, never mutates shared history.
+  const branchEntry = Object.values(glideRestore.snapshots[2].positions).find(
+    (p) => p.side === 'w' && p.f === 4 && p.r === 3,
+  );
+  assert.equal(branchEntry.moveT, 1, 'glide rewrite must not mutate the shared branch-entry snapshot');
+
   const expiredOverlayEvents = parseScript('[0] hl e4\n[3] Nf3');
   const expiredOverlays = buildWorld(expiredOverlayEvents, standardSetup);
   assert.deepEqual(expiredOverlays.snapshots[1].highlights.map((highlight) => highlight.sq), ['e4']);

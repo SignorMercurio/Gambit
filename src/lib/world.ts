@@ -17,6 +17,7 @@ export type PiecePos = {
   moveFromF?: number;
   moveFromR?: number;
   moveT?: number;
+  restoredAt?: number;
 };
 
 export type Positions = Record<string, PiecePos>;
@@ -291,6 +292,30 @@ function movePosition(
   return { positions: next, captureFlash, touched };
 }
 
+// A restored branch-entry snapshot carries pre-branch move metadata, so on its
+// own it hard-cuts: every piece the branch disturbed teleports home. Piece ids
+// are stable across moves, so each id present on both sides of the restore can
+// instead glide from where the branch left it, and a piece the branch captured
+// can fade back in via `restoredAt`. A setup inside the branch mints new ids;
+// unmatched pieces keep the hard cut. New objects only where metadata changes —
+// the branch-entry snapshot is shared with earlier history.
+function glideRestoredPositions(departed: Positions, restored: Positions, t: number): Positions {
+  const next: Positions = {};
+  for (const [id, piece] of Object.entries(restored)) {
+    const final = departed[id];
+    if (!final || piece.captured) {
+      next[id] = piece;
+    } else if (final.captured) {
+      next[id] = { ...piece, restoredAt: t };
+    } else if (final.f !== piece.f || final.r !== piece.r) {
+      next[id] = { ...piece, moveFromF: final.f, moveFromR: final.r, moveT: t };
+    } else {
+      next[id] = piece;
+    }
+  }
+  return next;
+}
+
 export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): WorldBuild {
   type BranchSnapshot = WorldSnapshot & { line: number; t: number; raw: string };
   type MainlineAction =
@@ -556,6 +581,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
               raw: event.raw,
             });
           } else {
+            const departed = positions;
             ({
               positions,
               chessState,
@@ -567,6 +593,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
               mind,
               revealedAt,
             } = branch);
+            positions = glideRestoredPositions(departed, positions, event.t);
             // Restoring an older branch-entry snapshot can reintroduce
             // overlays already expired at this mainline event. Earlier
             // snapshots keep their history for backward scrubbing.

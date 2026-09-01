@@ -65,6 +65,9 @@ const OVERLAY_FADE_OUT = 0.32;
 const ARROW_DRAW_DURATION = 0.34;
 const BADGE_DELAY = 0.08;
 const BADGE_IN_DURATION = 0.18;
+// Mirrors the capture fade-out's 0.82 end scale so a piece the branch captured
+// returns along the same visual path it left by.
+const RESTORE_FADE_IN = 0.3;
 
 type BoardProps = {
   positions: Positions;
@@ -193,6 +196,18 @@ function pieceVisual(p: PiecePos, time: number) {
       r = p.moveFromR + (p.r - p.moveFromR) * eased;
       scale = 1 + Math.sin(eased * Math.PI) * 0.026;
       isMoving = true;
+    }
+  }
+
+  // restoredAt survives later captures (movePosition spreads the old piece),
+  // so the capture guard keeps the capture fade authoritative over a stale
+  // restore fade when both fall in the same window.
+  if (!p.captured && p.restoredAt != null) {
+    const age = time - p.restoredAt;
+    if (age >= 0 && age < RESTORE_FADE_IN) {
+      const eased = timedProgress(age, RESTORE_FADE_IN);
+      opacity = eased;
+      scale *= 0.82 + eased * 0.18;
     }
   }
 
