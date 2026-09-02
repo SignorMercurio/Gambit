@@ -94,9 +94,9 @@ try {
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
   const events = parseScript(saturated);
 
-  const replayAliases = parseScript('[1] rp\n[2] replay');
-  assert.deepEqual(replayAliases.map((event) => event.kind), ['replay', 'replay']);
-  assert.match(parseScript('[1] replay 1')[0].error, /takes no arguments/i);
+  const replayAliases = parseScript('[1] rp\n[2] replay\n[3] replay 1');
+  assert.deepEqual(replayAliases.map((event) => event.kind), ['replay', 'replay', 'replay']);
+  assert.deepEqual(replayAliases.map((event) => event.step), [undefined, undefined, 1]);
 
   // Board orientation is a reversible view transform only. Every canonical
   // square must survive a screen-cell round trip in both perspectives so
@@ -671,6 +671,44 @@ Look --> there`;
 
   const emptyReplay = buildWorld(parseScript('[1] rp'), standardSetup);
   assert.match(emptyReplay.scriptErrors[0].error, /at least one applied mainline move/i);
+
+  // `rp <seconds>` overrides the 0.5s default. The step stays on the
+  // decisecond grid (one decimal place, 0.1–10), and the walk computes frame
+  // times in integer deciseconds: five 0.8s steps must land on exactly 4.0s,
+  // where float arithmetic (0.8 * 5 = 4.000000000000001) would falsely reject
+  // a replay ending exactly on the next event's timestamp.
+  const steppedReplayEvents = parseScript(
+    '[1] e4\n[2] e5\n[3] Nf3\n[4] Nc6\n[5] Bb5\n[10] rp 0.8\n[14] cl',
+  );
+  assert.equal(steppedReplayEvents.find((e) => e.kind === 'replay').step, 0.8);
+  const steppedReplay = buildWorld(steppedReplayEvents, standardSetup);
+  assert.deepEqual(
+    steppedReplay.scriptErrors,
+    [],
+    'a stepped replay ending exactly on the next timestamp is valid',
+  );
+  const steppedSequence = steppedReplay.replaySequences.get(5);
+  assert.equal(steppedSequence.step, 0.8);
+  assert.equal(steppedSequence.end, 14);
+  assert.equal(steppedSequence.frames[1].snapshot.lastMove.t, 10.8);
+  assert.equal(
+    worldFrameAt(steppedReplay, 5, 11.9).snapshot.lastMove.t,
+    11.6,
+    'frame selection honors the directive step, not the 0.5s default',
+  );
+  const bareReplaySequence = buildWorld(
+    parseScript('[1] e4\n[2] e5\n[10] rp'),
+    standardSetup,
+  ).replaySequences.get(2);
+  assert.equal(bareReplaySequence.step, REPLAY_STEP_SECONDS, 'bare rp keeps the 0.5s default');
+  for (const bad of ['rp 0', 'rp 11', 'rp 0.85', 'rp abc', 'replay -1']) {
+    const [event] = parseScript(`[1] ${bad}`);
+    assert.match(
+      event.error ?? '',
+      /replay step/i,
+      `'${bad}' must be rejected as an invalid replay step`,
+    );
+  }
 
   const branchReplay = buildWorld(
     parseScript('[1] e4\n[2] br\n[3] e5\n[4] rp\n[5] ml'),

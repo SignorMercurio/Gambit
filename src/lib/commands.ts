@@ -109,7 +109,8 @@ export const COMMANDS: readonly CommandEntry[] = [
     token: 'rp',
     body: 'rp',
     kind: 'replay',
-    hint: 'Replay the main line from the start at 0.5s per move.',
+    syntax: 'rp · rp 1',
+    hint: 'Replay the main line from the start, 0.5s per move — or give seconds per move (0.1–10).',
   },
   {
     token: 'mind',

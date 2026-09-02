@@ -8,7 +8,8 @@
 //   [mm:ss] fen <FEN>               (or setfen; sets board to that FEN)
 //   [mm:ss] br                      (or branch; enters a variation)
 //   [mm:ss] ml                      (or mainline; exits current variation)
-//   [mm:ss] rp                      (or replay; replays prior mainline moves)
+//   [mm:ss] rp [seconds]            (or replay; replays prior mainline moves,
+//                                    0.5s per move unless a step is given)
 // Branches nest: every `br` must be paired with a later `ml`.
 // `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, `st`, or `fen`;
 // without it they auto-fade after their lifetime window.
@@ -121,7 +122,7 @@ export type ParsedEvent =
   | { t: number; kind: 'fen'; fen: string; line: number; raw: string }
   | { t: number; kind: 'branch'; line: number; raw: string }
   | { t: number; kind: 'mainline'; line: number; raw: string }
-  | { t: number; kind: 'replay'; line: number; raw: string }
+  | { t: number; kind: 'replay'; step?: number; line: number; raw: string }
   | { t: number; kind: 'mind'; line: number; raw: string }
   | { t: number; kind: 'reveal'; line: number; raw: string };
 
@@ -232,7 +233,7 @@ export function eventBody(e: ParsedEvent): string {
     case 'mainline':
       return 'end variation';
     case 'replay':
-      return 'replay mainline';
+      return e.step != null ? `replay mainline · ${e.step}s/move` : 'replay mainline';
     case 'mind':
       return "mind's eye";
     case 'reveal':
@@ -314,15 +315,33 @@ export function parseScript(text: string): TimelineEvent[] {
       events.push({ t, error: `Line ${i + 1}: missing FEN`, line: i + 1, raw });
       continue;
     }
-    // Derived from the table rather than by restating two of its keys. The
-    // alias set lived in two places for one kind, so a new alias — or the
-    // thirteenth argument-free kind the catalogue chain exists to force into
-    // the UI — would have fallen through to SAN and reported an illegal move,
-    // naming the wrong problem. Deriving it also ends an asymmetry: only `rp 1`
-    // got the accurate message, while `cl e4`, `br 1`, and `mind x` were told
-    // they were bad chess.
+    // Derived from the table rather than by restating its keys. The alias set
+    // lived in two places for one kind, so a new alias — or the thirteenth
+    // argument-free kind the catalogue chain exists to force into the UI —
+    // would have fallen through to SAN and reported an illegal move, naming
+    // the wrong problem: `cl e4`, `br 1`, and `mind x` were told they were bad
+    // chess. Replay is the one kind that accepts an argument, and that is keyed
+    // on the kind so the table stays the only place the aliases are spelled.
     const firstWord = body.split(/\s+/)[0].toLowerCase();
-    if (SIMPLE_COMMANDS.has(firstWord)) {
+    const firstWordKind = SIMPLE_COMMANDS.get(firstWord);
+    if (firstWordKind) {
+      const argument = body.slice(firstWord.length).trim();
+      if (firstWordKind === 'replay') {
+        // One decimal place keeps the step on the decisecond grid every other
+        // timestamp lives on, so replay frame times never leave it.
+        const step = /^\d+(?:\.\d)?$/.test(argument) ? Number(argument) : NaN;
+        if (step >= 0.1 && step <= 10) {
+          events.push({ t, kind: 'replay', step, line: i + 1, raw });
+        } else {
+          events.push({
+            t,
+            error: `Line ${i + 1}: replay step must be 0.1–10 seconds in 0.1s increments`,
+            line: i + 1,
+            raw,
+          });
+        }
+        continue;
+      }
       events.push({
         t,
         error: `Line ${i + 1}: ${firstWord} takes no arguments`,

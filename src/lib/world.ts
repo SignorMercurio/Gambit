@@ -92,7 +92,7 @@ export type WorldBuild = {
   visualEndTime: number;
 };
 
-// No `t`: the frame's time is `sequence.start + index * REPLAY_STEP_SECONDS`,
+// No `t`: the frame's time is `sequence.start + index * sequence.step`,
 // which is exactly how `worldFrameAt` selects a frame in the first place.
 // Storing it too made the one function that derives frames from the clock
 // carry a second copy of the timing it derives.
@@ -104,6 +104,8 @@ type ReplayFrame = {
 type ReplaySequence = {
   start: number;
   end: number;
+  // Seconds per frame: the directive's own step, or REPLAY_STEP_SECONDS.
+  step: number;
   frames: ReplayFrame[];
 };
 
@@ -114,8 +116,8 @@ export type WorldFrame = {
 };
 
 // Select the authored snapshot or the clock-derived frame of a successful
-// replay directive. Exact half-second boundaries keep the outgoing move so a
-// paused event seek (+0.5s) shows the first replayed move rather than skipping
+// replay directive. Exact step boundaries keep the outgoing move so a paused
+// event seek (+step) shows the first replayed move rather than skipping
 // straight to the second; normal playback advances on the following frame.
 export function worldFrameAt(
   build: WorldBuild,
@@ -133,7 +135,7 @@ export function worldFrameAt(
   const elapsed = Math.max(0, time - sequence.start);
   const frameIndex = Math.min(
     sequence.frames.length - 1,
-    Math.max(0, Math.ceil(elapsed / REPLAY_STEP_SECONDS) - 1),
+    Math.max(0, Math.ceil(elapsed / sequence.step) - 1),
   );
   const frame = sequence.frames[frameIndex];
   return {
@@ -436,7 +438,12 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
       reject(eventIndex, event, 'Replay requires at least one applied mainline move');
       return;
     }
-    const end = event.t + moveCount * REPLAY_STEP_SECONDS;
+    // Integer decisecond arithmetic: authored timestamps and the step both
+    // live on the 0.1s grid, and float sums like 0.8 * 5 drift enough to
+    // falsely reject a replay ending exactly on the next event's timestamp.
+    const stepDs = Math.round((event.step ?? REPLAY_STEP_SECONDS) * 10);
+    const startDs = Math.round(event.t * 10);
+    const end = (startDs + moveCount * stepDs) / 10;
     if (!isValidScriptTimestamp(end)) {
       reject(eventIndex, event, 'Replay exceeds the maximum playback time');
       return;
@@ -446,7 +453,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
       reject(
         eventIndex,
         event,
-        `Replay needs ${(moveCount * REPLAY_STEP_SECONDS).toFixed(1)}s before the next event`,
+        `Replay needs ${((moveCount * stepDs) / 10).toFixed(1)}s before the next event`,
       );
       return;
     }
@@ -483,7 +490,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
         continue;
       }
 
-      const frameT = event.t + frames.length * REPLAY_STEP_SECONDS;
+      const frameT = (startDs + frames.length * stepDs) / 10;
       const moved = movePosition(positions, action.move, frameT);
       positions = moved.positions;
       chessState = Chess.applyMove(chessState, action.move);
@@ -498,7 +505,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
       frames.push({ sourceEventIndex: action.sourceEventIndex, snapshot: snapshot() });
     }
 
-    replaySequences.set(eventIndex, { start: event.t, end, frames });
+    replaySequences.set(eventIndex, { start: event.t, end, step: stepDs / 10, frames });
     visualEndTime = Math.max(visualEndTime, end);
   };
 
