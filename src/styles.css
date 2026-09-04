@@ -39,10 +39,10 @@
 
    `local()` matches PostScript / full names, never family names — `local('PingFang
    SC')` silently fails and takes the whole @font-face down with it. Hence the
-   PostScript names here, and hence the plain family names still listed behind
-   this face in --font-mono: this tier is the best-effort grid, that tier is the
-   guarantee that CJK reaches a chosen face on platforms whose PostScript names
-   we can't verify from here. */
+   PostScript names here, and hence the plain family names in --font-cjk, which
+   --font-mono lists behind this face: this tier is the best-effort grid, that
+   tier is the guarantee that CJK reaches a chosen face on platforms whose
+   PostScript names we can't verify from here. */
 @font-face {
   font-family: 'Gambit Mono CJK';
   src: local('PingFangSC-Regular'), local('HiraginoSansGB-W3'),
@@ -204,14 +204,18 @@
   /* Chrome UI font stack (mirrored as fontUi in src/lib/tokens.ts for the
      SVG layer, which can't read custom properties). */
   --font-ui: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* The system CJK sans stack, read by two sites for two different reasons: as
+     the miss-fallback behind 'Gambit Mono CJK' in --font-mono (the `local()`
+     PostScript lookups can fail; these keep a chosen face and lose the two-cell
+     grid), and as the CJK-first primary of the subtitle cue. They agree today;
+     a face that suits only one belongs at that site, not here. */
+  --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC',
+    'Source Han Sans SC', 'Microsoft YaHei';
   /* CJK sits between Lilex and the generics, not after them: 'Gambit Mono CJK'
      only ever claims Han/kana (unicode-range), so latin still resolves to
      Lilex, and CJK reaches a chosen face before `ui-monospace` — which carries
-     no Han glyphs — can hand it to an arbitrary system font. The family names
-     after it are the fallback for platforms where the PostScript `local()`
-     lookups miss; they lose the two-cell grid but keep the chosen face. */
-  --font-mono: 'Lilex', 'Gambit Mono CJK', 'PingFang SC', 'Hiragino Sans GB',
-    'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', ui-monospace, monospace;
+     no Han glyphs — can hand it to an arbitrary system font. */
+  --font-mono: 'Lilex', 'Gambit Mono CJK', var(--font-cjk), ui-monospace, monospace;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
@@ -295,10 +299,16 @@ body {
 }
 /* The 30px controls — both present toggles and the move-sound toggle — need
    7px a side rather than 5 to reach the same 44. One statement of the number,
-   so the three cannot drift apart. */
+   so the three cannot drift apart. The sound toggle sits here rather than with
+   `.speed-btn`/`.view-btn`, whose hover and pressed states it does share: it is
+   already 30px tall, so it needs 7 and not their 11. */
 .present-toggle::before,
 .exit-present-btn::before,
-.mute-btn::before { inset: -7px -4px; }
+.mute-btn::before {
+  content: '';
+  position: absolute;
+  inset: -7px -4px;
+}
 /* Top-right of the header, enters present mode. */
 .present-btn {
   flex: 0 0 auto;
@@ -439,8 +449,7 @@ body {
 .subtitle-strip p {
   max-width: 58ch;
   margin: 0;
-  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
-    'Microsoft YaHei', var(--font-ui);
+  font-family: var(--font-cjk), var(--font-ui);
   /* 3.6% of the composed 798px frame (720 board + 64 track + seam). Broadcast
      and streaming captions sit around 4% of picture height — YouTube's default
      is ~4.2%, Netflix's 1080p spec ~3.9% — and 21px was 2.6%, near the ~2%
@@ -837,13 +846,6 @@ body {
   position: absolute;
   inset: -11px -6px;
 }
-/* Same convention, different numbers: the toggle is already 30px tall, so it
-   takes the 30px controls' inset declared with the present toggles above
-   rather than the 11px this pair needs. */
-.mute-btn::before {
-  content: '';
-  position: absolute;
-}
 
 /* =====================================================================
    Side panel
@@ -927,9 +929,6 @@ body {
   justify-content: space-between;
   gap: 12px;
 }
-/* `.panel-title` survives only as an `aria-labelledby` target — both elements
-   also carry `sr-only`, which clips them, so every visual declaration this
-   rule used to hold rendered nothing. */
 .panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin-top: 4px; font-family: var(--font-mono); }
 .nowrap { white-space: nowrap; }
 /* Narration section has no textarea; the hint carries the section body. */
@@ -1755,7 +1754,6 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   }
   .subtitle-strip p {
     max-width: 28ch;
-    font-weight: 600;
     line-height: 1.34;
   }
 
@@ -1940,11 +1938,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
     grid-column: 3;
     justify-self: end;
   }
-  .app--present .timeline {
-    grid-row: 2;
-    grid-column: 1 / -1;
-    width: 100%;
-  }
+  .app--present .timeline { grid-row: 2; grid-column: 1 / -1; }
   .app--present .transport-prefs {
     grid-row: 3;
     grid-column: 1 / -1;
@@ -2029,7 +2023,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   .app--present .time-readout { grid-row: 1; grid-column: 3; }
   .app--present .transport-prefs { grid-row: 1; grid-column: 4; justify-self: end; }
   .app--present .present-controls { grid-row: 1; grid-column: 5; }
-  .app--present .timeline { grid-row: 2; grid-column: 1 / -1; width: 100%; }
+  .app--present .timeline { grid-row: 2; grid-column: 1 / -1; }
 }
 
 /* Reduced motion: cut decorative animation, keep functional motion (piece

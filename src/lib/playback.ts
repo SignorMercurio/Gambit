@@ -80,7 +80,6 @@ export function timelineTicks(duration: number): number[] {
     baseTickInterval(duration),
     niceInterval(minimumInterval),
   );
-  if (!Number.isFinite(interval) || interval <= 0) return [0, duration];
   const ticks: number[] = [];
   const count = Math.min(MAX_TIMELINE_TICKS - 1, Math.floor(duration / interval));
   for (let i = 0; i <= count; i++) {

@@ -64,7 +64,7 @@ export const markerKindFor = (
 // mismatch, since its *seek dot* has always been the hollow ring while its pin
 // was a filled capsule, and DESIGN.md asks that one event read identically on
 // the ruler and in the list.
-export type PinForm = 'bar' | 'capsule' | 'hollow' | 'pennant' | 'stack';
+type PinForm = 'bar' | 'capsule' | 'hollow' | 'pennant' | 'stack';
 
 export const markerForms: Record<MarkerKind, PinForm> = {
   move: 'bar',

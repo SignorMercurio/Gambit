@@ -18,7 +18,6 @@ export type MoveState = Pick<GameState, 'fullmove' | 'turn'>;
 export type Move = {
   from: [number, number];
   to: [number, number];
-  piece: PieceType;
   capture: boolean;
   promotion?: PieceType;
   castle?: 'K' | 'Q';
@@ -93,7 +92,6 @@ function moveFromChessJs(move: ChessJsMove): Move {
   return {
     from: [from.f, from.r],
     to: [to.f, to.r],
-    piece: move.piece,
     capture: move.isCapture() || enPassant,
     ...(move.promotion ? { promotion: move.promotion } : {}),
     ...(castle ? { castle } : {}),
@@ -111,6 +109,42 @@ export function legalMoves(state: GameState): readonly Move[] {
   );
   LEGAL_MOVES_CACHE.set(state, moves);
   return moves;
+}
+
+// The gesture questions, answered here rather than in App: which squares a
+// piece can reach, which legal moves connect two squares, whether two moves
+// name the same squares. Each would otherwise restate that `Move.from` and
+// `Move.to` are [file, rank] tuples in a file that owns no chess.
+function movesFrom(state: GameState, from: string): readonly Move[] {
+  const { f, r } = sqToIdx(from);
+  return legalMoves(state).filter((m) => m.from[0] === f && m.from[1] === r);
+}
+
+export function legalTargets(state: GameState, from: string): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const m of movesFrom(state, from)) out.add(idxToSq(m.to[0], m.to[1]));
+  return out;
+}
+
+export function movesBetween(
+  state: GameState,
+  from: string,
+  to: string,
+): readonly Move[] {
+  const { f, r } = sqToIdx(to);
+  return movesFrom(state, from).filter((m) => m.to[0] === f && m.to[1] === r);
+}
+
+// Coordinate comparison, not SAN string equality: a scripted line may carry
+// check or annotation suffixes the generated SAN never has.
+export function sameMoveSquares(a: Move, b: Move): boolean {
+  return (
+    a.from[0] === b.from[0] &&
+    a.from[1] === b.from[1] &&
+    a.to[0] === b.to[0] &&
+    a.to[1] === b.to[1] &&
+    (a.promotion ?? null) === (b.promotion ?? null)
+  );
 }
 
 export function checkedKingSquare(state: GameState): string | null {
@@ -134,14 +168,12 @@ export function explainNoMoves(state: GameState, from: string): string | null {
   if (piece.color !== state.turn) {
     return `it's ${state.turn === 'w' ? 'White' : 'Black'} to move`;
   }
-  const { f, r } = sqToIdx(from);
-  const stuck = !legalMoves(state).some((move) => move.from[0] === f && move.from[1] === r);
+  const stuck = movesFrom(state, from).length === 0;
   return stuck ? `that ${PIECE_NAMES[piece.type]} has no legal move` : null;
 }
 
 export function parseSAN(san: string, state: GameState): Move | null {
   const trimmed = san.trim();
-  if (/\s/.test(trimmed)) return null;
   const suffix = parseSANSuffix(trimmed);
   if (!suffix) return null;
 

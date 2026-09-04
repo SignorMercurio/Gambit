@@ -19,7 +19,6 @@ import {
   fmtTime,
   parseTime,
   splitSanAnnotation,
-  type MoveAnnotation,
   type TimelineEvent,
 } from '../lib/timeline';
 import {
@@ -28,6 +27,7 @@ import {
   markerKindFor,
   type MarkerKind,
 } from '../lib/tokens';
+import { scrollEviIntoView } from '../lib/scrollEventIntoView';
 import { useRovingTabIndex } from './useRovingTabIndex';
 
 type Mark = { i: number; kind: MarkerKind; t: number; line: number; body: string };
@@ -36,12 +36,9 @@ type Cell = {
   t: number;
   line: number;
   san: string;
-  annotation?: MoveAnnotation;
   marks: Mark[];
 };
-// `gap` marks a row that resumes on Black's move after an interruption — the
-// White cell renders the PGN "…" placeholder.
-type Row = { num: number; white: Cell | null; black: Cell | null; gap: boolean };
+type Row = { num: number; white: Cell | null; black: Cell | null };
 type FocusRequest = { kind: 'line'; line: number } | { kind: 'index'; index: number };
 
 const ROVING_SELECTOR = 'button, .pgn-time-input';
@@ -55,7 +52,6 @@ type FlowNode =
       num: number;
       side: Side;
       san: string;
-      annotation?: MoveAnnotation;
       showNum: boolean;
     }
   | { type: 'mark'; mark: Mark }
@@ -137,7 +133,6 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
             num: st.fullmove,
             side: st.turn,
             san: e.san,
-            annotation: e.annotation,
             showNum: st.turn === 'w' || flowInterrupted,
           });
           flowInterrupted = false;
@@ -148,18 +143,17 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
             t: e.t,
             line: e.line,
             san: e.san,
-            annotation: e.annotation,
             marks: [],
           };
           if (st.turn === 'w') {
-            row = { num: st.fullmove, white: cell, black: null, gap: false };
+            row = { num: st.fullmove, white: cell, black: null };
             rowAcc.push(row);
-          } else if (row && !row.black) {
+          } else if (row) {
             row.black = cell;
+            // The row is complete — a later Black move opens a "…" row instead.
             row = null;
           } else {
-            rowAcc.push({ num: st.fullmove, white: null, black: cell, gap: true });
-            row = null;
+            rowAcc.push({ num: st.fullmove, white: null, black: cell });
           }
           lastCell = cell;
         }
@@ -340,12 +334,10 @@ type MoveListProps = {
   // cells get inline error styling so the errors band isn't the only flag.
   errorLines: ReadonlySet<number>;
   onSeek: (t: number) => void;
-  listRef: React.MutableRefObject<HTMLDivElement | null>;
+  playing: boolean;
   labelId: string;
   onRetime: (line: number, t: number) => number | null;
   onDelete: (lines: number[]) => void;
-  onPointerEnter?: (e: React.PointerEvent) => void;
-  onPointerLeave?: (e: React.PointerEvent) => void;
 };
 
 // memo matters here: the parent re-renders every animation frame during
@@ -358,15 +350,14 @@ export const MoveList = memo(function MoveList({
   reachedEventIndex,
   errorLines,
   onSeek,
-  listRef,
+  playing,
   labelId,
   onRetime,
   onDelete,
-  onPointerEnter,
-  onPointerLeave,
 }: MoveListProps) {
   const blocks = useMemo(() => buildBlocks(events, states), [events, states]);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   // Roving tabindex over every control in the list (same mechanism as the
   // timeline pins): a script's worth of moves, chips, and deletes must cost
@@ -401,7 +392,31 @@ export const MoveList = memo(function MoveList({
     }
     (target ?? container).focus();
     setFocusRequest(null);
-  }, [focusRequest, listRef, roving]);
+  }, [focusRequest, roving]);
+
+  // Moves view follow-scroll: keep the event the playhead has reached
+  // visible, like a video editor's timeline list. Manual reading wins:
+  // following pauses while a mouse pointer is over the list and resumes
+  // when it leaves. Scrolls only the list container, never the page.
+  // The list follows the playhead only while playback runs; while paused it
+  // scrolls independently — editing must not fight the scroll position.
+  // Hovering pauses the follow so a click target stays put.
+  //
+  // Declared after the focus-restore effect above: that effect calls focus(),
+  // which scrolls too, and the follow must land last.
+  const followPausedRef = useRef(false);
+  useEffect(() => {
+    if (!playing || followPausedRef.current) return;
+    const list = listRef.current;
+    if (!list) return;
+    if (reachedEventIndex < 0) {
+      list.scrollTop = 0;
+      return;
+    }
+    // The PGN list nests event elements, so the reached event is located by
+    // its data-evi attribute (shared helper); playback/hover gating is above.
+    scrollEviIntoView(list, reachedEventIndex);
+  }, [reachedEventIndex, playing]);
 
   const stateClass = (i: number) => {
     if (i === reachedEventIndex) return 'past current';
@@ -484,12 +499,12 @@ export const MoveList = memo(function MoveList({
   // inheriting the row's chalk is the same move `.pgn-varnum` already makes.
   // Nothing is lost — the mark's own `!!`/`??` still reads, and the board
   // badge is showing the color full size at that exact moment.
-  const sanLabel = (san: string, annotation?: MoveAnnotation, current = false) => {
-    const { text, mark } = splitSanAnnotation(san);
+  const sanLabel = (san: string, current = false) => {
+    const { text, mark, annotation } = splitSanAnnotation(san);
     return (
       <>
         {text}
-        {mark && annotation && (
+        {annotation && (
           <span
             className="pgn-annot"
             style={current ? undefined : { color: annotationMarkColors[annotation] }}
@@ -497,7 +512,6 @@ export const MoveList = memo(function MoveList({
             {mark}
           </span>
         )}
-        {mark && !annotation && mark}
       </>
     );
   };
@@ -514,19 +528,20 @@ export const MoveList = memo(function MoveList({
         aria-label={`Seek to ${fmtTime(c.t, 'auto')}: ${c.san}${hasError ? ' (script error)' : ''}`}
         onClick={() => onSeek(c.t)}
       >
-        {sanLabel(c.san, c.annotation, c.i === reachedEventIndex)}
+        {sanLabel(c.san, c.i === reachedEventIndex)}
       </button>
     );
   };
 
-  const cell = (c: Cell | null, gap: boolean) =>
+  // A missing White cell is the PGN "…" placeholder; a missing Black cell is blank.
+  const cell = (c: Cell | null, empty: string) =>
     c ? (
       <span className="pgn-cell">
         {tok(`mv${c.i}`, moveBtn(c), c.line, c.t, c.san)}
         {c.marks.map(markDot)}
       </span>
     ) : (
-      <span className="pgn-cell pgn-gap">{gap ? '…' : ''}</span>
+      <span className="pgn-cell pgn-gap">{empty}</span>
     );
 
   const flowNode = (n: FlowNode) => {
@@ -551,7 +566,7 @@ export const MoveList = memo(function MoveList({
                 {n.side === 'b' ? '…' : '.'}
               </span>
             )}
-            {sanLabel(n.san, n.annotation, n.i === reachedEventIndex)}
+            {sanLabel(n.san, n.i === reachedEventIndex)}
           </button>
         );
         return tok(`v${n.i}`, btn, n.line, n.t, n.san);
@@ -600,8 +615,12 @@ export const MoveList = memo(function MoveList({
       role="toolbar"
       tabIndex={-1}
       aria-labelledby={labelId}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse') followPausedRef.current = true;
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === 'mouse') followPausedRef.current = false;
+      }}
       onFocus={roving.onFocus}
       onKeyDown={roving.onKeyDown}
     >
@@ -619,8 +638,8 @@ export const MoveList = memo(function MoveList({
                 {b.rows.map((r, ri) => (
                   <div key={ri} className="pgn-row">
                     <span className="pgn-numcol">{r.num}</span>
-                    {cell(r.white, r.gap)}
-                    {cell(r.black, false)}
+                    {cell(r.white, '…')}
+                    {cell(r.black, '')}
                   </div>
                 ))}
               </div>

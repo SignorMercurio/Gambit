@@ -26,6 +26,10 @@ merely stated:
   event kind cannot reach the parser while staying invisible in the UI.
 - The rendered `SYNTAX_HINT` element names every catalogued command exactly once —
   asserted against the element a reader actually sees, not against `SYNTAX_GROUPS`.
+- The in-flight gesture preview's wrapper still carries `BOARD_GESTURE_CLASS`, asserted
+  by rendering the layer: the PNG export filters that class out, and the export's own
+  guard hands `downloadBoardPng` a stand-in node, so a wrapper that lost the class would
+  bake the editor-only preview into a creator's export with the suite green.
 - `markerColors` and `markerForms`: two kinds sharing a color must not share a form,
   unless they are two halves of one gesture or the reset family.
 - `--artifact-fit-width` is never redefined with a `100dvh` shrink formula, in any tier.

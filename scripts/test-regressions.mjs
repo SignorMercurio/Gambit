@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
 const vite = await createServer({
@@ -22,22 +24,34 @@ try {
       formatScriptTime,
       rewriteScriptLineTime,
       splitSanAnnotation,
+      ANNOTATION_MARKS,
       lastEventIndexAt,
       MAX_SCRIPT_LINES,
     },
-    { nextFreeTime, planLineInsert, planMoveGesture, removeLines, setLineTime },
+    { planLineInsert, planMoveGesture, removeLines, setLineTime },
     { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
     { boardViewPosition, squareFromBoardView },
     {
       BOARD_EXPORT_SIZE,
       BOARD_EXPORT_TIMEOUT_MESSAGE,
+      BOARD_GESTURE_CLASS,
       boardPngFilename,
       downloadBoardPng,
       withTimeout,
     },
     { syncRovingTabStops },
     { buildMainline, buildMainlineCursorIndex },
-    { BADGE_EDGE_MARGIN, BADGE_R, BOARD_SIZE, BadgeDisc, HlRing, badgeCenter, lastMoveSquares },
+    {
+      BADGE_EDGE_MARGIN,
+      BADGE_R,
+      BOARD_SIZE,
+      BadgeDisc,
+      GestureOverlay,
+      HlRing,
+      LastMoveRect,
+      badgeCenter,
+      lastMoveSquares,
+    },
     { AUTHORED_ELSEWHERE_COMMANDS, COMMANDS, INSERTABLE_COMMANDS, SYNTAX_GROUPS },
     { SYNTAX_HINT },
     {
@@ -68,7 +82,6 @@ try {
     { moveSoundEnabled, moveSoundKey, shouldPlayMoveSound },
     Chess,
     styles,
-    boardSource,
   ] = await Promise.all([
     vite.ssrLoadModule('/src/lib/timeline.ts'),
     vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
@@ -88,7 +101,6 @@ try {
     vite.ssrLoadModule('/src/lib/moveSound.ts'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
-    readFile(new URL('../src/components/Board.tsx', import.meta.url), 'utf8'),
   ]);
 
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
@@ -181,30 +193,28 @@ try {
     'a script exactly at the limit reaches the line grammar',
   );
 
-  assert.equal(
-    nextFreeTime(saturated, 0.05, 0.1),
-    null,
-    'a saturated interval must not overflow past the next event',
-  );
-
   const linePlan = planLineInsert(events, saturated, 0.05, 'hl e4');
   assert.equal(linePlan.kind, 'conflict');
   assert.match(linePlan.error, /no free 0\.1s slot/i);
 
-  const movePlan = planMoveGesture(events, saturated, 0.05, 'Nf3', () => false);
+  const movePlan = planMoveGesture(events, saturated, 0.05, 'Nf3', () => false, new Set());
   assert.equal(movePlan.kind, 'conflict');
 
   const roomy = '[00:00.0] e4\n[00:01.0] e5';
   const roomyPlan = planLineInsert(parseScript(roomy), roomy, 0.05, 'hl e4');
   assert.equal(roomyPlan.kind, 'edit');
   assert.equal(roomyPlan.t, 0.1);
+  assert.equal(roomyPlan.nextT, 1, 'the paused landing stops short of the next scripted event');
 
   // The paused playhead parks 0.05s before the next event (the landing
   // convention), and Math.round half-up puts that on the cap's decisecond.
   // The clamp must step back to the free slot below — not report a spurious
   // conflict while room remains.
+  const parked = '[00:00.0] e4\n[00:00.5] e5';
+  const parkedPlan = planLineInsert(parseScript(parked), parked, 0.45, 'hl e4');
+  assert.equal(parkedPlan.kind, 'edit');
   assert.equal(
-    nextFreeTime('[00:00.0] e4\n[00:00.5] e5', 0.45, 0.5),
+    parkedPlan.t,
     0.4,
     'a playhead parked just under the next event must still find the slot below it',
   );
@@ -225,7 +235,7 @@ try {
   // nothing is written.
   const mainline = '[00:01.0] e4\n[00:03.0] Nc6';
   const mainlineEvents = parseScript(mainline);
-  assert.deepEqual(planMoveGesture(mainlineEvents, mainline, 2, 'Nc6', (san) => san === 'Nc6'), {
+  assert.deepEqual(planMoveGesture(mainlineEvents, mainline, 2, 'Nc6', (san) => san === 'Nc6', new Set()), {
     kind: 'seek',
     t: 3,
   });
@@ -233,7 +243,7 @@ try {
   // A different move wraps itself in a br/ml variation: exactly three new
   // lines, the move stamped on the playhead, and the result round-trips
   // through parseScript without errors.
-  const wrapPlan = planMoveGesture(mainlineEvents, mainline, 2, 'c5', () => false);
+  const wrapPlan = planMoveGesture(mainlineEvents, mainline, 2, 'c5', () => false, new Set());
   assert.equal(wrapPlan.kind, 'edit');
   assert.equal(wrapPlan.t, 2);
   assert.equal(wrapPlan.text.split('\n').length, mainline.split('\n').length + 3);
@@ -252,6 +262,7 @@ try {
     2,
     'c5',
     () => false,
+    new Set(),
   );
   assert.equal(pinchedPlan.kind, 'conflict');
 
@@ -306,7 +317,7 @@ try {
   // later when the new move would land on or past it — the one sanctioned
   // rewrite of an existing line.
   const variation = '[00:01.0] e4\n[00:02.0] br\n[00:03.0] Nf6\n[00:04.0] ml\n[00:06.0] Nc6';
-  const extendPlan = planMoveGesture(parseScript(variation), variation, 3.95, 'd4', () => false);
+  const extendPlan = planMoveGesture(parseScript(variation), variation, 3.95, 'd4', () => false, new Set());
   assert.equal(extendPlan.kind, 'edit');
   assert.equal(extendPlan.t, 4.1);
   assert.equal(extendPlan.nextT, 5.1, 'the paused landing must stop short of the pushed ml');
@@ -323,6 +334,7 @@ try {
       1.9,
       'c5',
       () => false,
+      new Set(),
     ).kind,
     'conflict',
     'an open variation must not overflow its mainline restore boundary',
@@ -412,10 +424,48 @@ try {
     );
   }
 
+  // The board gesture's two questions. App asks them by square name only, so
+  // the [file, rank] tuple layout stays inside the adapter.
+  {
+    assert.deepEqual(
+      [...Chess.legalTargets(startingState, 'e2')].sort(),
+      ['e3', 'e4'],
+      'a pawn offers exactly its own destinations',
+    );
+    assert.equal(Chess.legalTargets(startingState, 'e4').size, 0, 'an empty square reaches nothing');
+    assert.equal(
+      Chess.legalTargets(startingState, 'e7').size,
+      0,
+      "the opponent's piece reaches nothing on this turn",
+    );
+    // Four promotions share one destination: the set collapses them, and the
+    // move list must not, or the gesture could not pick the queen.
+    const promoting = Chess.stateFromFEN('7k/4P3/8/8/8/8/8/4K3 w - - 0 1');
+    assert.deepEqual([...Chess.legalTargets(promoting, 'e7')], ['e8']);
+    const promotions = Chess.movesBetween(promoting, 'e7', 'e8');
+    assert.equal(promotions.length, 4, 'every promotion piece is a distinct move');
+    assert.equal(
+      promotions.find((m) => !m.promotion || m.promotion === 'q')?.promotion,
+      'q',
+      'the queen is reachable by the rule the move gesture uses',
+    );
+    assert.deepEqual(Chess.movesBetween(promoting, 'e7', 'd8'), [], 'no move, no candidates');
+    const [queen, rook] = [
+      promotions.find((m) => m.promotion === 'q'),
+      promotions.find((m) => m.promotion === 'r'),
+    ];
+    assert.ok(Chess.sameMoveSquares(queen, queen));
+    assert.equal(
+      Chess.sameMoveSquares(queen, rook),
+      false,
+      'two promotions on the same squares are not the same move',
+    );
+  }
+
   const ambiguous = Chess.stateFromFEN('4k3/8/8/8/8/1N3N2/8/4K3 w - - 0 1');
   assert.equal(Chess.parseSAN('Nd2', ambiguous), null, 'ambiguous SAN must be rejected');
   assert.deepEqual(Chess.parseSAN('Nbd2', ambiguous)?.from, [1, 2]);
-  for (const longPawnMove of ['e2e4', 'ee4', '2e4', 'e 4']) {
+  for (const longPawnMove of ['e2e4', 'ee4', '2e4', 'e 4', 'e4 e5']) {
     assert.equal(
       Chess.parseSAN(longPawnMove, startingState),
       null,
@@ -430,10 +480,31 @@ try {
   assert.ok(Object.isFrozen(afterE4));
   assert.deepEqual(Chess.board(afterE4)[3][4], { type: 'p', side: 'w' });
   assert.deepEqual(Chess.parseSAN('e4!', startingState)?.to, [4, 3]);
-  for (const normalizedSuffix of ['e4+', 'e4#']) {
-    const move = Chess.parseSAN(normalizedSuffix, startingState);
-    assert.ok(move, `${normalizedSuffix} follows chess.js suffix normalization`);
-    assert.equal(Chess.sanForMove(startingState, move), 'e4');
+  const rookCheck = Chess.stateFromFEN('7k/8/8/8/8/8/8/R3K3 w - - 0 1');
+  let scholarsMate = startingState;
+  for (const san of ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6']) {
+    const move = Chess.parseSAN(san, scholarsMate);
+    assert.ok(move, `fixture move ${san} must resolve`);
+    scholarsMate = Chess.applyMove(scholarsMate, move);
+  }
+  // chess.js owns check/mate suffix normalization: any of the three markers parses,
+  // and sanForMove answers with the canonical one. One rule, so one table — a block
+  // per position drifts into checking a different subset of the nine cases in each.
+  for (const [state, base, canonical] of [
+    [startingState, 'e4', 'e4'],
+    [rookCheck, 'Ra8', 'Ra8+'],
+    [scholarsMate, 'Qxf7', 'Qxf7#'],
+  ]) {
+    for (const suffix of ['', '+', '#']) {
+      const written = base + suffix;
+      const move = Chess.parseSAN(written, state);
+      assert.ok(move, `${written} follows chess.js suffix normalization`);
+      assert.equal(
+        Chess.sanForMove(state, move),
+        canonical,
+        `${written} canonicalizes to ${canonical}`,
+      );
+    }
   }
   for (const badSuffix of ['e4!?', 'e4?!', 'e4!+', 'e4++', 'e4?????']) {
     assert.equal(
@@ -442,32 +513,30 @@ try {
       `${badSuffix} must not bypass the shared SAN suffix grammar`,
     );
   }
-  assert.deepEqual(splitSanAnnotation('Qxf7#!!'), { text: 'Qxf7#', mark: '!!' });
+  assert.deepEqual(splitSanAnnotation('Qxf7#!!'), {
+    text: 'Qxf7#',
+    mark: '!!',
+    annotation: 'brilliant',
+  });
   assert.deepEqual(
     splitSanAnnotation('e4!?'),
     { text: 'e4!?', mark: null },
     'unsupported marks stay intact on the visible invalid SAN',
   );
-
-  const rookCheck = Chess.stateFromFEN('7k/8/8/8/8/8/8/R3K3 w - - 0 1');
-  assert.ok(Chess.parseSAN('Ra8+', rookCheck));
-  const normalizedRookCheck = Chess.parseSAN('Ra8#', rookCheck);
-  assert.ok(normalizedRookCheck);
-  assert.equal(Chess.sanForMove(rookCheck, normalizedRookCheck), 'Ra8+');
-  assert.ok(Chess.parseSAN('Ra8', rookCheck), 'omitting a check marker stays compatible');
-
-  let scholarsMate = startingState;
-  for (const san of ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6']) {
-    const move = Chess.parseSAN(san, scholarsMate);
-    assert.ok(move, `fixture move ${san} must resolve`);
-    scholarsMate = Chess.applyMove(scholarsMate, move);
+  for (const [annotation, mark] of Object.entries(ANNOTATION_MARKS)) {
+    assert.equal(
+      parseScript(`[1] e4${mark}`)[0].annotation,
+      annotation,
+      `a parsed ${mark} suffix names the ${annotation} badge`,
+    );
   }
-  assert.ok(Chess.parseSAN('Qxf7#', scholarsMate));
+
+  assert.equal(
+    Chess.parseSAN('Ra8 +', rookCheck),
+    null,
+    'a detached check marker is not SAN',
+  );
   assert.ok(Chess.parseSAN('Qxf7#!!', scholarsMate));
-  const normalizedMate = Chess.parseSAN('Qxf7+', scholarsMate);
-  assert.ok(normalizedMate);
-  assert.equal(Chess.sanForMove(scholarsMate, normalizedMate), 'Qxf7#');
-  assert.ok(Chess.parseSAN('Qxf7', scholarsMate));
 
   const quietCastle = Chess.stateFromFEN('4k3/8/8/8/8/8/8/4K2R w K - 0 1');
   const quietCastleMove = Chess.parseSAN('O-O', quietCastle);
@@ -571,10 +640,23 @@ Look --> there`;
   assert.deepEqual(arrowTextCue.errors, []);
   assert.equal(arrowTextCue.cues[0].text, '2024\nLook --> there');
 
+  // An index line only counts as a cue boundary when the line under it parses
+  // as a time range, so a backwards range leaves the playhead on the index line
+  // and the timestamp error names that line.
+  const backwardsRangeSrt = `1
+00:00:02,000 --> 00:00:01,000
+text`;
+  assert.deepEqual(parseSrt(backwardsRangeSrt).errors, [
+    { line: 1, error: 'invalid SRT timestamp' },
+  ]);
+
   // World replay is the canonical applied/rejected outcome shared by the
   // renderer, presentation PGN, and gesture planner.
   const standardSetup = setupFromFen(Chess.STARTING_FEN);
   assert.equal(standardSetup.error, null);
+  // Never memoize this: assertions below depend on each build being genuinely
+  // independent.
+  const worldFrom = (text) => buildWorld(parseScript(text), standardSetup);
 
   const replayEvents = parseScript(
     '[1] e4\n[2] br\n[3] e5\n[4] ml\n[5] c5\n[10] rp',
@@ -619,10 +701,7 @@ Look --> there`;
   // of the final frame back into the walk's locals — nine fields spelled out a
   // third time, and the one copy TypeScript could not check, since an omitted
   // field there typechecks clean and silently leaves the board stale.
-  const afterReplay = buildWorld(
-    parseScript('[1] e4\n[2] hl e4 pin\n[3] rp\n[8] hl d4'),
-    standardSetup,
-  );
+  const afterReplay = worldFrom('[1] e4\n[2] hl e4 pin\n[3] rp\n[8] hl d4');
   assert.deepEqual(afterReplay.scriptErrors, []);
   const settled = worldFrameAt(afterReplay, 2, 4).snapshot;
   const settledBoard = Chess.board(settled.chessState);
@@ -651,10 +730,7 @@ Look --> there`;
   assert.equal(afterResetMove[1][4]?.side, 'w', 'st restores the e-pawn before the next replay move');
   assert.equal(afterResetMove[3][3]?.side, 'w', 'the post-setup d4 move is still replayed');
 
-  const replayAfterRejectedMove = buildWorld(
-    parseScript('[1] e5\n[2] e4\n[5] rp'),
-    standardSetup,
-  );
+  const replayAfterRejectedMove = worldFrom('[1] e5\n[2] e4\n[5] rp');
   assert.deepEqual([...replayAfterRejectedMove.rejectedEventIndexes], [0]);
   assert.deepEqual(
     replayAfterRejectedMove.replaySequences.get(2).frames.map((frame) => frame.sourceEventIndex),
@@ -662,14 +738,11 @@ Look --> there`;
     'moves rejected by the canonical world walk are not revived by replay',
   );
 
-  const overlappingReplay = buildWorld(
-    parseScript('[1] e4\n[2] e5\n[3] rp\n[3.5] Nf3'),
-    standardSetup,
-  );
+  const overlappingReplay = worldFrom('[1] e4\n[2] e5\n[3] rp\n[3.5] Nf3');
   assert.equal(overlappingReplay.replaySequences.size, 0);
   assert.match(overlappingReplay.scriptErrors.find((error) => error.line === 3).error, /needs 1\.0s/i);
 
-  const emptyReplay = buildWorld(parseScript('[1] rp'), standardSetup);
+  const emptyReplay = worldFrom('[1] rp');
   assert.match(emptyReplay.scriptErrors[0].error, /at least one applied mainline move/i);
 
   // `rp <seconds>` overrides the 0.5s default. The step stays on the
@@ -696,10 +769,7 @@ Look --> there`;
     11.6,
     'frame selection honors the directive step, not the 0.5s default',
   );
-  const bareReplaySequence = buildWorld(
-    parseScript('[1] e4\n[2] e5\n[10] rp'),
-    standardSetup,
-  ).replaySequences.get(2);
+  const bareReplaySequence = worldFrom('[1] e4\n[2] e5\n[10] rp').replaySequences.get(2);
   assert.equal(bareReplaySequence.step, REPLAY_STEP_SECONDS, 'bare rp keeps the 0.5s default');
   for (const bad of ['rp 0', 'rp 11', 'rp 0.85', 'rp abc', 'replay -1']) {
     const [event] = parseScript(`[1] ${bad}`);
@@ -710,22 +780,21 @@ Look --> there`;
     );
   }
 
-  const branchReplay = buildWorld(
-    parseScript('[1] e4\n[2] br\n[3] e5\n[4] rp\n[5] ml'),
-    standardSetup,
-  );
+  // Replay is the only argument-free command that takes an argument. The rest
+  // must name their own problem rather than falling through to SAN and being
+  // reported as bad chess, and the shared dispatch must not swallow `fen`,
+  // whose keyword is not in the command table.
+  assert.match(parseScript('[1] cl e4')[0].error, /cl takes no arguments/i);
+  assert.match(parseScript('[1] mind x')[0].error, /mind takes no arguments/i);
+  assert.equal(parseScript('[1] fen 8/8/8/8/8/8/8/8 w - - 0 1')[0].kind, 'fen');
+
+  const branchReplay = worldFrom('[1] e4\n[2] br\n[3] e5\n[4] rp\n[5] ml');
   assert.match(branchReplay.scriptErrors.find((error) => error.line === 4).error, /main line/i);
 
-  const mindReplay = buildWorld(
-    parseScript('[1] e4\n[2] mind\n[3] rp'),
-    standardSetup,
-  );
+  const mindReplay = worldFrom('[1] e4\n[2] mind\n[3] rp');
   assert.match(mindReplay.scriptErrors.find((error) => error.line === 3).error, /requires reveal/i);
 
-  const replayAtTail = buildWorld(
-    parseScript('[1] e4\n[2] e5\n[29] rp'),
-    standardSetup,
-  );
+  const replayAtTail = worldFrom('[1] e4\n[2] e5\n[29] rp');
   assert.equal(replayAtTail.visualEndTime, 30);
   assert.equal(playbackDuration(replayAtTail.visualEndTime), 33);
   assert.equal(playbackDuration(6), 30, 'the editor still keeps a scrubbable minimum');
@@ -762,6 +831,7 @@ Look --> there`;
   const unclosedBranchEvents = parseScript('[00:01] br\n[00:02] e4');
   const unclosedBranchWorld = buildWorld(unclosedBranchEvents, standardSetup);
   assert.equal(unclosedBranchWorld.scriptErrors[0].line, 1);
+  assert.match(unclosedBranchWorld.scriptErrors[0].error, /without matching 'mainline'/);
   assert.deepEqual([...unclosedBranchWorld.rejectedEventIndexes], []);
   assert.deepEqual(
     buildMainline(
@@ -772,6 +842,17 @@ Look --> there`;
     [],
     'outcome filtering must never flatten variation depth in presentation',
   );
+
+  // The mirror of the unclosed branch: an `ml` that closes nothing. Like it,
+  // the line is reported but the event is not rejected, so presentation still
+  // reads the depth the stream encodes.
+  const strayMainlineWorld = buildWorld(
+    parseScript('[00:01] e4\n[00:02] ml'),
+    standardSetup,
+  );
+  assert.equal(strayMainlineWorld.scriptErrors[0].line, 2);
+  assert.match(strayMainlineWorld.scriptErrors[0].error, /without matching 'branch'/);
+  assert.deepEqual([...strayMainlineWorld.rejectedEventIndexes], []);
 
   const restoredOverlayEvents = parseScript(
     '[0] hl e4 pin\n[1] br\n[2] hl d4 pin\n[3] ml',
@@ -787,10 +868,7 @@ Look --> there`;
   // carries its branch-final square as moveFrom at the ml timestamp, and a
   // piece the branch captured fades back in via restoredAt. Pieces the branch
   // never disturbed keep their original (pre-branch) metadata untouched.
-  const glideRestore = buildWorld(
-    parseScript('[1] e4\n[2] br\n[3] d5\n[4] exd5\n[5] ml'),
-    standardSetup,
-  );
+  const glideRestore = worldFrom('[1] e4\n[2] br\n[3] d5\n[4] exd5\n[5] ml');
   const glidePositions = Object.values(glideRestore.snapshots.at(-1).positions);
   const whitePawn = glidePositions.find((p) => p.side === 'w' && p.f === 4 && p.r === 3);
   assert.deepEqual(
@@ -828,7 +906,7 @@ Look --> there`;
     { length: 500 },
     (_, index) => `[${(index / 10).toFixed(1)}] hl ${boardSquares[index % boardSquares.length]}`,
   ).join('\n');
-  const boundedOverlays = buildWorld(parseScript(longOverlayScript), standardSetup);
+  const boundedOverlays = worldFrom(longOverlayScript);
   const overlayWindowBound = Math.ceil(BOARD_OVERLAY_LIFETIME.highlight / 0.1) + 1;
   assert.ok(
     Math.max(...boundedOverlays.snapshots.map((snapshot) => snapshot.highlights.length)) <=
@@ -842,7 +920,7 @@ Look --> there`;
     const to = boardSquares[index % boardSquares.length];
     return `[0] ${from}->${to} pin`;
   }).join('\n');
-  const boundedArrows = buildWorld(parseScript(uniqueArrowScript), standardSetup);
+  const boundedArrows = worldFrom(uniqueArrowScript);
   assert.ok(
     Math.max(...boundedArrows.snapshots.map((snapshot) => snapshot.arrows.length)) <=
       MAX_LIVE_ARROWS,
@@ -857,7 +935,7 @@ Look --> there`;
       .map((line) => line.replace(/ pin$/, '')),
     '[3] h8->a1',
   ].join('\n');
-  const reusedArrowBudget = buildWorld(parseScript(expiredArrowBudgetScript), standardSetup);
+  const reusedArrowBudget = worldFrom(expiredArrowBudgetScript);
   assert.deepEqual(reusedArrowBudget.scriptErrors, []);
   assert.deepEqual(
     reusedArrowBudget.snapshots.at(-1).arrows.map((arrow) => `${arrow.from}-${arrow.to}`),
@@ -869,16 +947,13 @@ Look --> there`;
     { length: 500 },
     () => '[1] hl e4',
   ).join('\n');
-  const restatedOverlays = buildWorld(parseScript(restatedOverlayScript), standardSetup);
+  const restatedOverlays = worldFrom(restatedOverlayScript);
   assert.equal(
     restatedOverlays.snapshots.at(-1).highlights.length,
     1,
     'restating one visual key does not stack identical SVG geometry',
   );
-  const pinnedRestatement = buildWorld(
-    parseScript('[1] hl e4 pin\n[2] hl e4\n[99] Nf3'),
-    standardSetup,
-  );
+  const pinnedRestatement = worldFrom('[1] hl e4 pin\n[2] hl e4\n[99] Nf3');
   assert.equal(pinnedRestatement.snapshots.at(-1).highlights[0]?.pinned, true);
 
   // Defensive line deletion treats its input as a set. Duplicate line ids
@@ -916,6 +991,7 @@ Look --> there`;
       { turn: 'w', fullmove: 1 },
       { turn: 'b', fullmove: 1 },
     ],
+    new Set(),
   );
   assert.deepEqual(
     presRows.map((r) => [r.num, r.white?.text ?? null, r.black?.text ?? null]),
@@ -1022,6 +1098,8 @@ Look --> there`;
   );
   // Editing the script rebuilds every snapshot. Comparing object identity here
   // would click at every keystroke; the key is a value for exactly that reason.
+  // Spelled out rather than routed through worldFrom on purpose: this assertion
+  // is about the rebuild itself, so the pipeline has to be visible.
   assert.equal(
     soundKeyAt(buildWorld(parseScript('[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3'), standardSetup), 2.5),
     soundKeyAt(soundWorld, 2.5),
@@ -1155,6 +1233,34 @@ Look --> there`;
       /empty PNG/,
       'an empty rasterize is an error, not a silent no-op',
     );
+  }
+
+  // The export's one hook on the in-flight preview is a class on its wrapper,
+  // and the block above hands `downloadBoardPng` a stand-in node, so nothing
+  // there ever runs the filter over real markup: a wrapper that lost
+  // `BOARD_GESTURE_CLASS` — a branch growing its own `<svg>`, a shared layer
+  // component dropping the prop — would bake the editor-only preview into a
+  // creator's 1440×1440 PNG with every assertion above still green. So render
+  // the layer and read the element the filter would see. Both gesture kinds go
+  // through it, and neither may be the one that escapes.
+  {
+    const previewOwner = { pointerId: 1, buttonBit: 2 };
+    const previews = [
+      beginAnnotationGesture(previewOwner, 'e4', () => {}, () => {}),
+      beginMoveGesture(previewOwner, 'g1', new Set(['f3']), () => {}),
+    ].map((gesture) =>
+      renderToStaticMarkup(
+        createElement(GestureOverlay, { gesture, positions: {}, orientation: 'white' }),
+      ),
+    );
+    for (const preview of previews) {
+      const wrapper = preview.slice(0, preview.indexOf('>') + 1);
+      assert.match(wrapper, /^<svg /, 'the gesture preview renders as one wrapper element');
+      assert.ok(
+        wrapper.includes(`class="${BOARD_GESTURE_CLASS}"`),
+        'and that wrapper carries the class the PNG export filters it out by',
+      );
+    }
   }
 
   // Errors accumulate in two passes, so their natural order is by stage, not by
@@ -1307,14 +1413,13 @@ Look --> there`;
     'the two paired kinds group, and nothing else does',
   );
 
-  // Comments are stripped before any CSS/TS reader below pulls a value: these
+  // Comments are stripped before any CSS reader below pulls a value: these
   // rules carry long prose that mentions the very properties being read
   // ('.playhead-thumb' explains its own `top:` in words), and a bare regex
   // happily matches the explanation instead of the declaration. It also keeps
   // `[^}]*` rule scans honest, since prose is the only place a stray brace
   // would come from.
-  const bare = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '');
-  const bareStyles = bare(styles);
+  const bareStyles = styles.replace(/\/\*[\s\S]*?\*\//g, '');
 
   // Every rule for a selector, across all tiers. Escapes the selector itself,
   // so callers write plain CSS: an earlier form took a regex fragment, and
@@ -1347,20 +1452,20 @@ Look --> there`;
   // the 720px artifact, while only genuinely short desktop viewports use the
   // 560px fallback. Guard the real CSS surface so the old dvh formulas cannot
   // quietly return.
-  assert.match(styles, /--artifact-fit-width:\s*var\(--artifact-width\)/);
-  assert.match(styles, /@media \(max-width:\s*1240px\)/);
+  assert.match(bareStyles, /--artifact-fit-width:\s*var\(--artifact-width\)/);
+  assert.match(bareStyles, /@media \(max-width:\s*1240px\)/);
   // Between the stack point and the old 1380px one the side panel flexes into
   // whatever the board leaves, so 1280x800 gets a two-column layout instead of
   // stacking the panel under the board and pushing the transport 889px down the
   // page. The band must keep the board on its authored track: the panel is what
   // yields, never the recording artifact.
   assert.match(
-    styles,
+    bareStyles,
     /@media \(min-width:\s*1241px\) and \(max-width:\s*1380px\)[\s\S]*?grid-template-columns:\s*var\(--artifact-fit-width\) minmax\(0,\s*1fr\)/,
     'the intermediate two-column band flexes the panel, never the artifact',
   );
   assert.match(
-    styles,
+    bareStyles,
     /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
   );
   // docs/design.md names this the enforcement of the 720px recording-frame
@@ -1377,7 +1482,7 @@ Look --> there`;
   // `--artifact-width: min(720px, calc(100dvh - 220px))` in a media query
   // passed, and shrank the recording frame on every ordinary laptop.
   const fitValues = [
-    ...bare(styles).matchAll(/--artifact-(?:fit-)?width:\s*([^;]+);/g),
+    ...bareStyles.matchAll(/--artifact-(?:fit-)?width:\s*([^;]+);/g),
   ].map((m) => m[1].trim());
   assert.ok(fitValues.length >= 3, 'the artifact size is declared for the base and the 560px band');
   for (const value of fitValues) {
@@ -1388,18 +1493,18 @@ Look --> there`;
     );
   }
   assert.match(
-    styles,
+    bareStyles,
     /@media \(max-width:\s*760px\)[\s\S]*?\.app--present \.controls\s*\{[\s\S]*?display:\s*grid/,
     'present mode restores the mobile transport grid after its desktop flex override',
   );
   assert.match(
-    styles,
+    bareStyles,
     /@media \(max-width:\s*760px\)[\s\S]*?\.app--present-pgn \.main\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*var\(--artifact-fit-width\)\)/,
     'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
   );
 
   const cssNum = (source, prop, label = prop) => {
-    const m = bare(source).match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
+    const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
     assert.ok(m, `${label} is declared as a number so the geometry stays derivable`);
     return Number(m[1]);
   };
@@ -1408,7 +1513,7 @@ Look --> there`;
   // edit, and it turned this helper into a TypeError — a stack trace where the
   // suite's job is to name what broke.
   const cssLengths = (source, prop) => {
-    const m = bare(source).match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+)[;}]`));
+    const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+)[;}]`));
     assert.ok(m, `${prop} is declared as a length shorthand`);
     return m[1].trim().split(/\s+/).map((v) => Number.parseFloat(v));
   };
@@ -1416,8 +1521,8 @@ Look --> there`;
   // shorter and wrong: the text after a query's closing brace belongs to no
   // query, and the reserve guard below asks whether one *specific* block holds
   // both halves of a pair.
-  const styleRegions = () => {
-    const src = bare(styles);
+  const styleRegions = (() => {
+    const src = bareStyles;
     const regions = [];
     let cursor = 0;
     for (let at = src.indexOf('\n@media'); at !== -1; at = src.indexOf('\n@media', at + 1)) {
@@ -1438,8 +1543,8 @@ Look --> there`;
     }
     if (cursor < src.length) regions.push({ query: null, css: src.slice(cursor) });
     return regions;
-  };
-  const mediaBlocks = () => styleRegions().flatMap((r) => (r.query === null ? [] : [r.css]));
+  })();
+  const mediaBlocks = styleRegions.flatMap((r) => (r.query === null ? [] : [r.css]));
 
   // Media-query modelling, shared by the cascade guards below. `conditions`
   // returns null for a query it cannot express, so each caller decides what
@@ -1526,7 +1631,7 @@ Look --> there`;
     const READS =
       /(--subtitle-track-height|--subtitle-cue-size)\s*:|\.subtitle-strip[^{}]*\{[^}]*(padding[\w-]*|border-block|line-height)\s*:/;
     const tiers = [];
-    for (const region of styleRegions()) {
+    for (const region of styleRegions) {
       if (!READS.test(region.css)) continue;
       const conds = region.query === null ? [] : conditions(region.query);
       assert.ok(
@@ -1663,7 +1768,7 @@ Look --> there`;
     // guard silently), and it said nothing about tiers not yet written — a new
     // `max-height: 800px` block appended after the 560 band passed it while
     // handing the 560px board a 27px cue.
-    const regions = styleRegions().filter((r) => r.query !== null);
+    const regions = styleRegions.filter((r) => r.query !== null);
     const bandAt = regions.findIndex((r) => /--artifact-fit-width:\s*560px/.test(r.css));
     assert.notEqual(bandAt, -1, 'the 560px band is a top-level media block');
     const bandConds = conditions(regions[bandAt].query);
@@ -1724,7 +1829,7 @@ Look --> there`;
     // un-floats the bar and a *different* tier drops the reserve, which is the
     // pairing this is for. The earlier form also matched one exact single-line
     // string, so reformatting the rule would have silently disarmed it.
-    const unfloated = mediaBlocks().filter((b) =>
+    const unfloated = mediaBlocks.filter((b) =>
       /\.app--present \.controls \{[^}]*position:\s*static/.test(b),
     );
     assert.ok(unfloated.length >= 2, 'the bar goes in flow on narrow and on short viewports');
@@ -1838,21 +1943,39 @@ Look --> there`;
       undefined,
       'the old flood token is gone, so nothing can quietly re-flood `hl`',
     );
-    const lastMoveRect = boardSource.slice(
-      boardSource.indexOf('{lastMove &&'),
-      boardSource.indexOf('litHighlights.map'),
-    );
-    assert.ok(lastMoveRect.length > 0, 'the last-move overlay slice found its bounds');
-    assert.match(
-      lastMoveRect,
-      /fill={fill}/,
+    // That the mark stays a flood is asserted by calling `LastMoveRect` and
+    // reading the element it returns, the way `HlRing` and `BadgeDisc` are
+    // checked below. The guard before it sliced Board.tsx between
+    // `{lastMove &&` and `litHighlights.map`, so renaming `litHighlights` — a
+    // purely local variable — put the end before the start, and the slice then
+    // ran to the end of the file and failed on some other layer's `stroke=`,
+    // in the name of last-move color.
+    const lastMoveRect = LastMoveRect({
+      view: { x: 3, y: 2 },
+      fill: '#abcdef',
+      opacity: 0.5,
+    }).props;
+    assert.equal(lastMoveRect.stroke, undefined, 'the last move never takes a stroke');
+    assert.equal(lastMoveRect.strokeWidth, undefined, 'nor a ring by another name');
+    assert.equal(
+      lastMoveRect.fill,
+      '#abcdef',
       'the last move stays a flood — a ring on every move is visual noise',
     );
-    assert.doesNotMatch(lastMoveRect, /stroke=/, 'the last move never takes a stroke');
-    // …and which fill each square gets is asserted by calling the rule, not by
-    // quoting it. `lastMoveSquares` returns the pair, so the guard can state
-    // the thing that actually matters — an annotated move repaints only where
-    // it *landed* — instead of matching a ternary that any rename breaks.
+    assert.deepEqual(
+      [lastMoveRect.x, lastMoveRect.y, lastMoveRect.width, lastMoveRect.height],
+      [300, 200, 100, 100],
+      'and it floods the square it was handed, edge to edge',
+    );
+    assert.equal(
+      lastMoveRect.opacity,
+      0.5,
+      'and it carries the opacity it was handed — the mark ages out by fading',
+    );
+    // Which fill each square gets is asserted by calling the rule as well:
+    // `lastMoveSquares` returns the pair, so the guard can state the thing
+    // that actually matters — an annotated move repaints only where it
+    // *landed* — instead of matching a ternary that any rename breaks.
     // e2 (light) → e5 (dark), so the pair also pins the per-square amber stops
     // in place; a single flood value for both would pass a same-color move.
     const plain = { fromF: 4, fromR: 1, toF: 4, toR: 4, t: 0 };
@@ -2112,7 +2235,7 @@ Look --> there`;
   // restraint but spends contrast to get it, and the 10.5px mono already
   // carries the quiet.
   assert.doesNotMatch(
-    styles,
+    bareStyles,
     /\.pgn-time-edit\s*\{[^}]*opacity:/,
     'the time chip earns its quiet from its token and size, never a contrast-eating fade',
   );
@@ -2207,7 +2330,7 @@ Look --> there`;
       /\.speed-group\s*\{[^}]*grid-(?:row|column|area)/,
       'no tier places the rate selector itself; the transport-prefs wrapper carries both',
     );
-    for (const block of mediaBlocks().filter((b) =>
+    for (const block of mediaBlocks.filter((b) =>
       /\.controls\s*\{[^}]*grid-template-columns/.test(b),
     )) {
       assert.match(
@@ -2222,7 +2345,7 @@ Look --> there`;
   // out from under the cursor right after an edit is the one the author is
   // most likely to reach for next.
   assert.match(
-    styles,
+    bareStyles,
     /\.panel-title-row \.import-btn\s*\{[^}]*margin-left:\s*auto/,
     'Import stays pinned right so a transient Undo cannot shove the row',
   );
@@ -2262,9 +2385,11 @@ Look --> there`;
   assert.equal(mindPieceStrength(stale, 'e4', 19), 0, 'and is gone once nothing restates it');
   assert.equal(mindPieceStrength(stale, 'd4', 10), 0, 'squares the script never named stay dark');
 
-  // One cheap smoke check that the CSS shortcut has not come back.
+  // One cheap smoke check that the CSS shortcut has not come back. Read from
+  // the stripped text like every other reader here, so it covers declarations
+  // and not prose: a comment may name the class this bans.
   assert.doesNotMatch(
-    styles,
+    bareStyles,
     /\.board--mind/,
     'mind mode must not re-grow a CSS fill swap — the void is derived from the clock',
   );

@@ -121,8 +121,7 @@ export function parseSrt(text: string): SubtitleParseResult {
     const blockLine = i + 1;
     if (isIndexedCueBoundary(i)) i++;
 
-    const timeLine = lines[i]?.trim() ?? '';
-    const timeMatch = matchTimeRangeLine(timeLine);
+    const timeMatch = matchTimeRangeLine(lines[i] ?? '');
     if (!timeMatch) {
       errors.push({ line: blockLine, error: 'invalid SRT timestamp' });
       skipBlock();

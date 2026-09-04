@@ -21,12 +21,12 @@ import { isValidScriptTimestamp, MAX_SCRIPT_TIMESTAMP_SECONDS } from './playback
 // converts an exclusive upper bound to grid units, `firstDeciAbove` yields
 // the first grid slot strictly above a (possibly off-grid, possibly
 // infinite) time — grid rounding must never slip a stamp back across the
-// previous event.
+// previous event. A finite `limit` is always an event timestamp, and every
+// parsed timestamp cleared `isValidScriptTimestamp`, so the finite branch
+// cannot exceed the authored ceiling and needs no clamp of its own.
 const MAX_SCRIPT_DECI = Math.round(MAX_SCRIPT_TIMESTAMP_SECONDS * 10);
-const capDeci = (limit: number): number => Math.min(
-  MAX_SCRIPT_DECI + 1,
-  Number.isFinite(limit) ? Math.round(limit * 10) : MAX_SCRIPT_DECI + 1,
-);
+const capDeci = (limit: number): number =>
+  Number.isFinite(limit) ? Math.round(limit * 10) : MAX_SCRIPT_DECI + 1;
 
 function firstDeciAbove(t: number): number {
   if (!Number.isFinite(t)) return 0;
@@ -54,11 +54,11 @@ function takenDeciseconds(text: string): Set<number> {
 // slip an off-grid timestamp's decisecond back across it, re-ordering the
 // gesture onto a position it never previewed. A pinched or saturated
 // interval returns null rather than crossing either boundary.
-export function nextFreeTime(
+function nextFreeTime(
   text: string,
   t: number,
-  limit = Infinity,
-  floor = -Infinity,
+  limit: number,
+  floor: number,
 ): number | null {
   if (!isValidScriptTimestamp(t)) return null;
   const taken = takenDeciseconds(text);
@@ -88,8 +88,8 @@ function findSlots(
   text: string,
   from: number,
   gaps: number[],
-  limit = Infinity,
-  floor = -Infinity,
+  limit: number,
+  floor: number,
 ): number[] | null {
   if (!isValidScriptTimestamp(from)) return null;
   const taken = takenDeciseconds(text);
@@ -127,11 +127,16 @@ function nearestFreeTimeBelow(text: string, t: number, floor: number): number | 
   return null;
 }
 
-function retimeLine(text: string, line: number, t: number): string {
+// Null rather than the untouched text: a line that cannot be retimed must
+// surface as the caller's explicit conflict, never as a silent no-op that
+// leaves a colliding timestamp behind.
+function retimeLine(text: string, line: number, t: number): string | null {
   const lines = text.split('\n');
   const idx = line - 1;
-  if (idx < 0 || idx >= lines.length) return text;
-  lines[idx] = rewriteScriptLineTime(lines[idx], t) ?? lines[idx];
+  if (idx < 0 || idx >= lines.length) return null;
+  const retimed = rewriteScriptLineTime(lines[idx], t);
+  if (retimed == null) return null;
+  lines[idx] = retimed;
   return lines.join('\n');
 }
 
@@ -223,7 +228,6 @@ const NO_FREE_SLOT_ERROR =
   'Cannot record this gesture: no free 0.1s slot before the next scripted event. Move the playhead or retime the neighboring event.';
 const NO_VARIATION_ROOM_ERROR =
   'Cannot record this move: not enough free 0.1s slots to preserve the scripted main line. Move the playhead or retime the neighboring event.';
-const NO_REJECTED_EVENT_INDEXES: ReadonlySet<number> = new Set();
 
 // Plain insert: stamp `body` at the playhead, stepping +0.5s past taken
 // stamps so successive paused gestures never stack on one instant, capped
@@ -243,7 +247,10 @@ export function planLineInsert(
     kind: 'edit',
     text: insertScriptLine(scriptText, t, body),
     t,
-    nextT: events[lastEventIndexAt(events, t) + 1]?.t,
+    // `nextFreeTime` returns a stamp strictly inside (events[idx].t, bound.t)
+    // or null, so the event after the playhead is also the event after the
+    // written line — no need to locate it a second time.
+    nextT: bound?.t,
   };
 }
 
@@ -266,7 +273,7 @@ export function planMoveGesture(
   time: number,
   san: string,
   matchesScripted: (scriptedSan: string) => boolean,
-  rejectedEventIndexes: ReadonlySet<number> = NO_REJECTED_EVENT_INDEXES,
+  rejectedEventIndexes: ReadonlySet<number>,
 ): MoveGesturePlan {
   const prevIdx = lastEventIndexAt(events, time);
   // Every stamp this planner lays out is floored strictly after the event
@@ -326,7 +333,9 @@ export function planMoveGesture(
       const free = nearestFreeTimeBelow(text, pushed + 0.1, mvT);
       if (free == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
       mlT = free;
-      text = retimeLine(text, stateEv.line, mlT);
+      const retimed = retimeLine(text, stateEv.line, mlT);
+      if (retimed == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
+      text = retimed;
     }
     // The paused landing must stop short of the first event after the move
     // of ANY kind: an annotation inside the variation can sit between the

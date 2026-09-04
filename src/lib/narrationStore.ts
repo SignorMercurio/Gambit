@@ -16,7 +16,7 @@ const DB_VERSION = 1;
 const STORE = 'drafts';
 const KEY = 'narration';
 
-export type StoredNarration = { blob: Blob; name: string };
+type StoredNarration = { blob: Blob; name: string };
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

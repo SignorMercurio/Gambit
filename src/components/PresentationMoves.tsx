@@ -22,7 +22,6 @@ import { scrollEviIntoView } from '../lib/scrollEventIntoView';
 type PresMove = { i: number; text: string };
 // A missing white cell is the PGN "…" placeholder — no separate flag needed.
 type PresRow = { num: number; white: PresMove | null; black: PresMove | null };
-const NO_REJECTED_EVENTS: ReadonlySet<number> = new Set();
 
 // Interpret variation structure and runtime outcomes once for every
 // presentation projection. The callback runs for every visited index; null
@@ -30,12 +29,10 @@ const NO_REJECTED_EVENTS: ReadonlySet<number> = new Set();
 function walkAppliedMainline(
   events: TimelineEvent[],
   rejectedEventIndexes: ReadonlySet<number>,
-  end: number,
   visit: (event: ParsedEvent | null, index: number) => void,
 ) {
   let depth = 0;
-  const last = Math.min(end, events.length - 1);
-  for (let i = 0; i <= last; i++) {
+  for (let i = 0; i < events.length; i++) {
     const event = events[i];
     let applied: ParsedEvent | null = null;
     if (!('error' in event)) {
@@ -53,28 +50,17 @@ function walkAppliedMainline(
   }
 }
 
-function advanceMainlineCursor(
-  cursor: number,
-  event: ParsedEvent | null,
-  index: number,
-): number {
-  if (event?.kind === 'reset' || event?.kind === 'start' || event?.kind === 'fen') {
-    return -1;
-  }
-  return event?.kind === 'move' ? index : cursor;
-}
-
 // Walk events into numbered mainline rows, skipping anything inside a
 // variation (br raises depth, ml lowers it) and every non-move event. The
 // numbering comes from moveStates, which already accounts for resets/FENs.
 export function buildMainline(
   events: TimelineEvent[],
   states: MoveState[],
-  rejectedEventIndexes: ReadonlySet<number> = NO_REJECTED_EVENTS,
+  rejectedEventIndexes: ReadonlySet<number>,
 ): PresRow[] {
   const rows: PresRow[] = [];
   let row: PresRow | null = null;
-  walkAppliedMainline(events, rejectedEventIndexes, events.length - 1, (e, i) => {
+  walkAppliedMainline(events, rejectedEventIndexes, (e, i) => {
     if (!e) return;
     // A reset/start/fen restarts the numbering, so it has to close the pending
     // row: otherwise a post-reset Black move pairs into the pre-reset White
@@ -115,8 +101,12 @@ export function buildMainlineCursorIndex(
 ): number[] {
   const cursors = Array<number>(events.length).fill(-1);
   let cursor = -1;
-  walkAppliedMainline(events, rejectedEventIndexes, events.length - 1, (event, index) => {
-    cursor = advanceMainlineCursor(cursor, event, index);
+  walkAppliedMainline(events, rejectedEventIndexes, (event, index) => {
+    if (event?.kind === 'reset' || event?.kind === 'start' || event?.kind === 'fen') {
+      cursor = -1;
+    } else if (event?.kind === 'move') {
+      cursor = index;
+    }
     cursors[index] = cursor;
   });
   return cursors;

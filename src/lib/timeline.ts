@@ -92,15 +92,20 @@ export function rewriteScriptLineTime(line: string, t: number): string | null {
   return `${match.indent}${formatScriptTime(t)}${match.gap}${match.body}${match.trailing}`;
 }
 
-// SAN with its trailing quality marks split off. Shared by the parser (badge
-// derivation) and the move list (mark coloring) so the mark vocabulary can't
-// drift between the two.
-export function splitSanAnnotation(san: string): { text: string; mark: string | null } {
+// SAN with its trailing quality marks split off, plus the badge that mark
+// names. Shared by the parser (badge derivation) and the move list (mark
+// coloring) so the mark vocabulary can't drift between the two — and so a
+// caller holding a mark never has to cross back to the badge itself.
+export function splitSanAnnotation(san: string): { text: string } & (
+  | { mark: string; annotation: MoveAnnotation }
+  | { mark: null; annotation?: undefined }
+) {
   const suffix = parseSANSuffix(san);
   if (!suffix?.annotation) return { text: san, mark: null };
   return {
     text: suffix.text + (suffix.check ?? ''),
     mark: suffix.annotation,
+    annotation: ANNOTATION_BY_MARK[suffix.annotation],
   };
 }
 
@@ -301,32 +306,22 @@ export function parseScript(text: string): TimelineEvent[] {
       events.push({ t, error: `Line ${i + 1}: invalid arrow`, line: i + 1, raw });
       continue;
     }
-    const simpleKind = SIMPLE_COMMANDS.get(body.toLowerCase());
-    if (simpleKind) {
-      events.push({ t, kind: simpleKind, line: i + 1, raw });
-      continue;
-    }
-    const fenMatch = body.match(/^(?:fen|setfen)\s+(.+)$/i);
-    if (fenMatch) {
-      events.push({ t, kind: 'fen', fen: fenMatch[1].trim(), line: i + 1, raw });
-      continue;
-    }
-    if (/^(?:fen|setfen)$/i.test(body)) {
-      events.push({ t, error: `Line ${i + 1}: missing FEN`, line: i + 1, raw });
-      continue;
-    }
     // Derived from the table rather than by restating its keys. The alias set
-    // lived in two places for one kind, so a new alias — or the thirteenth
-    // argument-free kind the catalogue chain exists to force into the UI —
-    // would have fallen through to SAN and reported an illegal move, naming
-    // the wrong problem: `cl e4`, `br 1`, and `mind x` were told they were bad
-    // chess. Replay is the one kind that accepts an argument, and that is keyed
-    // on the kind so the table stays the only place the aliases are spelled.
+    // is spelled only in SIMPLE_COMMANDS, so a body that names a command but
+    // carries something after it — `cl e4`, `br 1`, `mind x` — reports that
+    // instead of falling through to SAN and being told it is bad chess.
+    // Carrying no argument is these kinds' normal form, so it is decided once
+    // for all eight; replay is the one kind that accepts an argument, and that
+    // is keyed on the kind so the table stays the only place aliases are spelled.
     const firstWord = body.split(/\s+/)[0].toLowerCase();
-    const firstWordKind = SIMPLE_COMMANDS.get(firstWord);
-    if (firstWordKind) {
+    const simpleKind = SIMPLE_COMMANDS.get(firstWord);
+    if (simpleKind) {
       const argument = body.slice(firstWord.length).trim();
-      if (firstWordKind === 'replay') {
+      if (!argument) {
+        events.push({ t, kind: simpleKind, line: i + 1, raw });
+        continue;
+      }
+      if (simpleKind === 'replay') {
         // One decimal place keeps the step on the decisecond grid every other
         // timestamp lives on, so replay frame times never leave it.
         const step = /^\d+(?:\.\d)?$/.test(argument) ? Number(argument) : NaN;
@@ -350,10 +345,18 @@ export function parseScript(text: string): TimelineEvent[] {
       });
       continue;
     }
+    const fenMatch = body.match(/^(?:fen|setfen)\s+(.+)$/i);
+    if (fenMatch) {
+      events.push({ t, kind: 'fen', fen: fenMatch[1].trim(), line: i + 1, raw });
+      continue;
+    }
+    if (/^(?:fen|setfen)$/i.test(body)) {
+      events.push({ t, error: `Line ${i + 1}: missing FEN`, line: i + 1, raw });
+      continue;
+    }
     // The chess parser owns the strict SAN suffix grammar; the timeline only
     // derives a badge when that shared parser recognizes a supported mark.
-    const { mark } = splitSanAnnotation(body);
-    const annotation = mark ? ANNOTATION_BY_MARK[mark] : undefined;
+    const { annotation } = splitSanAnnotation(body);
     events.push({ t, kind: 'move', san: body, annotation, line: i + 1, raw });
   }
   events.sort((a, b) => a.t - b.t);

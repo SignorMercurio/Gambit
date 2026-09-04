@@ -7,21 +7,22 @@ import type { MindWorld } from './mind';
 import type { ErrorEvent, MoveAnnotation, ParsedEvent, TimelineEvent } from './timeline';
 import { isValidScriptTimestamp } from './playback';
 
+// `captured` is the discriminant, not a second copy of `capturedAt != null`:
+// the pair is written at one site, so the type says so and the renderer never
+// has to invent a fallback timestamp for a capture that cannot exist.
 export type PiecePos = {
   f: number;
   r: number;
   type: Chess.PieceType;
   side: Chess.Side;
-  captured?: boolean;
-  capturedAt?: number;
   moveFromF?: number;
   moveFromR?: number;
   moveT?: number;
   restoredAt?: number;
-};
+} & ({ captured: true; capturedAt: number } | { captured?: false; capturedAt?: undefined });
 
 export type Positions = Record<string, PiecePos>;
-export type BoardSetup = { positions: Positions; chessState: Chess.GameState };
+type BoardSetup = { positions: Positions; chessState: Chess.GameState };
 export type LastMove = {
   fromF: number;
   fromR: number;
@@ -63,7 +64,7 @@ export const BOARD_OVERLAY_LIFETIME = {
 export const MAX_LIVE_ARROWS = 128;
 export const REPLAY_STEP_SECONDS = 0.5;
 
-export type WorldSnapshot = {
+type WorldSnapshot = {
   positions: Positions;
   chessState: Chess.GameState;
   lastMove: LastMove | null;
@@ -78,7 +79,7 @@ export type WorldSnapshot = {
   revealedAt: number;
 };
 
-export type WorldBuild = {
+type WorldBuild = {
   snapshots: WorldSnapshot[];
   scriptErrors: ErrorEvent[];
   // Position context before each event, aligned one-for-one with events.
@@ -109,7 +110,7 @@ type ReplaySequence = {
   frames: ReplayFrame[];
 };
 
-export type WorldFrame = {
+type WorldFrame = {
   snapshot: WorldSnapshot;
   replaySourceEventIndex: number | null;
   replayActive: boolean;
@@ -355,14 +356,17 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   const mainlineActions: MainlineAction[] = [{ kind: 'setup', setup: initialSetup }];
   let visualEndTime = events[events.length - 1]?.t ?? 0;
 
+  // Takes the source record rather than its fields so a `br` snapshot and a
+  // parsed event report the same way and no pair of arguments can be swapped.
+  // A caller that also invalidates the event uses `reject`; the structural
+  // br/ml mismatches deliberately do not — see `WorldBuild.rejectedEventIndexes`.
+  const noteError = (source: { t: number; line: number; raw: string }, error: string) => {
+    scriptErrors.push({ t: source.t, error, line: source.line, raw: source.raw });
+  };
+
   const reject = (eventIndex: number, event: ParsedEvent, error: string) => {
     rejectedEventIndexes.add(eventIndex);
-    scriptErrors.push({
-      t: event.t,
-      error,
-      line: event.line,
-      raw: event.raw,
-    });
+    noteError(event, error);
   };
 
   // Naming also releases a rehearsal: restamp held squares at the event that
@@ -396,6 +400,14 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     check = checkAt(chessState, t);
     // Reset the sketch, not the mind phase clock.
     if (mind) mind = { since: mind.since, touches: new Map(), held: new Set() };
+  };
+
+  // The two array-backed overlay kinds, each with its own lifetime.
+  // BOARD_OVERLAY_LIFETIME.captureFlash is deliberately absent: `lastCapture`
+  // is a scalar renderer-only fade window, not a pinnable overlay list.
+  const pruneOverlays = (t: number) => {
+    highlights = pruneExpired(highlights, t, BOARD_OVERLAY_LIFETIME.highlight);
+    arrows = pruneExpired(arrows, t, BOARD_OVERLAY_LIFETIME.arrow);
   };
 
   const applySetup = (setup: BoardSetup, t: number) => {
@@ -516,12 +528,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     // Capacity describes visuals that are live at this event, not historical
     // entries whose fade window already ended. Prune before applying the event
     // so an expired full arrow budget cannot reject the first fresh arrow.
-    highlights = pruneExpired(
-      highlights,
-      event.t,
-      BOARD_OVERLAY_LIFETIME.highlight,
-    );
-    arrows = pruneExpired(arrows, event.t, BOARD_OVERLAY_LIFETIME.arrow);
+    pruneOverlays(event.t);
     moveStates.push({ fullmove: chessState.fullmove, turn: chessState.turn });
     if ('error' in event) {
       scriptErrors.push(event);
@@ -581,12 +588,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
         case 'mainline': {
           const branch = branchStack.pop();
           if (!branch) {
-            scriptErrors.push({
-              t: event.t,
-              error: `'mainline' without matching 'branch'`,
-              line: event.line,
-              raw: event.raw,
-            });
+            noteError(event, `'mainline' without matching 'branch'`);
           } else {
             const departed = positions;
             ({
@@ -604,12 +606,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
             // Restoring an older branch-entry snapshot can reintroduce
             // overlays already expired at this mainline event. Earlier
             // snapshots keep their history for backward scrubbing.
-            highlights = pruneExpired(
-              highlights,
-              event.t,
-              BOARD_OVERLAY_LIFETIME.highlight,
-            );
-            arrows = pruneExpired(arrows, event.t, BOARD_OVERLAY_LIFETIME.arrow);
+            pruneOverlays(event.t);
           }
           break;
         }
@@ -664,12 +661,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   }
 
   for (const branch of branchStack) {
-    scriptErrors.push({
-      t: branch.t,
-      error: `'branch' without matching 'mainline'`,
-      line: branch.line,
-      raw: branch.raw,
-    });
+    noteError(branch, `'branch' without matching 'mainline'`);
   }
 
   return {

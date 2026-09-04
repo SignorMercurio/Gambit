@@ -25,7 +25,6 @@ import { InsertMenu } from './components/InsertMenu';
 import { MoveList } from './components/MoveList';
 import { SYNTAX_HINT } from './components/SyntaxHint';
 import { PresentationMoves } from './components/PresentationMoves';
-import { scrollEviIntoView } from './lib/scrollEventIntoView';
 import {
   planLineInsert,
   planMoveGesture,
@@ -168,7 +167,6 @@ const SCRIPT_CHANGED_DURING_GESTURE_ERROR =
 const MAX_TEXT_IMPORT_BYTES = 1_000_000;
 
 function loadDraft(key: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback;
   try {
     return window.localStorage.getItem(key) ?? fallback;
   } catch {
@@ -177,7 +175,6 @@ function loadDraft(key: string, fallback: string): string {
 }
 
 function saveDraft(key: string, value: string): void {
-  if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(key, value);
   } catch {
@@ -235,7 +232,9 @@ function readSelectedTextFile(
 
 // Import affordance: a labelled button driving a hidden file input. The
 // three import surfaces (script, subtitles, narration) share the wiring so
-// accept types and the button/input pairing stay in one place.
+// accept types and the button/input pairing stay in one place. `id` is only
+// for an importer whose visible text is a `<label htmlFor>` (narration); the
+// other two inputs are opened by the button's ref and need no identity.
 function ImportButton({
   id,
   accept,
@@ -243,7 +242,7 @@ function ImportButton({
   onChange,
   describedBy,
 }: {
-  id: string;
+  id?: string;
   accept: string;
   label: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -381,8 +380,6 @@ export default function App() {
 
   const editorLabelId = useId();
   const subtitleLabelId = useId();
-  const scriptFileInputId = useId();
-  const subtitleFileInputId = useId();
   const narrationLabelId = useId();
   const narrationFileInputId = useId();
   const narrationErrorId = useId();
@@ -415,20 +412,35 @@ export default function App() {
     [tab],
   );
 
-  const onScriptFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setScriptImportError(null);
-    readSelectedTextFile(
-      e,
-      latestScriptReadRef,
-      (text, fileName) => {
-        setScriptText(text);
-        setScriptFileName(fileName);
-        setGestureUndo(null);
-        setScriptEditError(null);
-      },
-      setScriptImportError,
-    );
-  }, []);
+  // The one way the script text is replaced: four pieces move with it, or the
+  // next surface to replace it gets the subset wrong — the text, the
+  // imported-file name it no longer comes from, the one-step gesture-undo
+  // snapshot, and any edit error raised against the text now gone. The import
+  // error is not among them: it names a file that never loaded.
+  const applyScript = useCallback(
+    (text: string, opts?: { fileName?: string | null; undo?: string | null }) => {
+      setScriptText(text);
+      setScriptFileName(opts?.fileName ?? null);
+      // Callers that pass no snapshot drop the old one: undoing past a hand
+      // edit or a fresh import would silently revert the user's own text.
+      setGestureUndo(opts?.undo ?? null);
+      setScriptEditError(null);
+    },
+    [setScriptText],
+  );
+
+  const onScriptFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setScriptImportError(null);
+      readSelectedTextFile(
+        e,
+        latestScriptReadRef,
+        (text, fileName) => applyScript(text, { fileName }),
+        setScriptImportError,
+      );
+    },
+    [applyScript],
+  );
 
   const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSubtitleImportError(null);
@@ -657,19 +669,16 @@ export default function App() {
   );
 
   // One commit contract for every programmatic script edit (gestures and
-  // structured edits): snapshot the prior text for one-step undo, apply,
-  // drop the imported-file name. While paused, `landT` moves the playhead
-  // just past what the edit wrote so the board shows its settled result,
-  // and nothing more.
+  // structured edits): apply, keeping the prior text as the one-step undo.
+  // All it adds to `applyScript` is the landing — while paused, `landT` moves
+  // the playhead just past what the edit wrote so the board shows its settled
+  // result, and nothing more.
   const commitScriptEdit = useCallback(
     (next: string, landT?: number) => {
-      setGestureUndo(scriptText);
-      setScriptEditError(null);
-      setScriptText(next);
-      setScriptFileName(null);
+      applyScript(next, { undo: scriptText });
       if (landT != null && !playingRef.current) setTime(landT);
     },
-    [scriptText, setScriptText],
+    [scriptText, applyScript],
   );
 
   // Both gestures reject the same way: the script text changed between
@@ -704,20 +713,11 @@ export default function App() {
 
   const undoGestureLine = useCallback(() => {
     if (gestureUndo == null) return;
-    setScriptText(gestureUndo);
-    setGestureUndo(null);
-    setScriptEditError(null);
-  }, [gestureUndo, setScriptText]);
+    applyScript(gestureUndo);
+  }, [gestureUndo, applyScript]);
 
   const legalTargets = useCallback(
-    (from: string): string[] => {
-      const { f, r } = Chess.sqToIdx(from);
-      const out = new Set<string>();
-      for (const m of Chess.legalMoves(world.chessState)) {
-        if (m.from[0] === f && m.from[1] === r) out.add(Chess.idxToSq(m.to[0], m.to[1]));
-      }
-      return [...out];
-    },
+    (from: string) => Chess.legalTargets(world.chessState, from),
     [world.chessState],
   );
 
@@ -743,27 +743,14 @@ export default function App() {
   const onMoveGesture = useCallback(
     (from: string, to: string) => {
       if (gestureIsStale()) return;
-      const f = Chess.sqToIdx(from);
-      const t = Chess.sqToIdx(to);
-      const candidates = Chess.legalMoves(world.chessState).filter(
-        (m) => m.from[0] === f.f && m.from[1] === f.r && m.to[0] === t.f && m.to[1] === t.r,
-      );
+      const candidates = Chess.movesBetween(world.chessState, from, to);
       // Promotion records a queen; underpromotion stays a hand edit.
       const mv = candidates.find((m) => !m.promotion || m.promotion === 'q');
       if (!mv) return;
       const san = Chess.sanForMove(world.chessState, mv);
-      // Coordinate comparison, not SAN string equality: the scripted line
-      // may carry check/annotation suffixes the generated SAN never has.
       const matchesScripted = (scriptedSan: string) => {
         const scripted = Chess.parseSAN(scriptedSan, world.chessState);
-        return (
-          !!scripted &&
-          scripted.from[0] === mv.from[0] &&
-          scripted.from[1] === mv.from[1] &&
-          scripted.to[0] === mv.to[0] &&
-          scripted.to[1] === mv.to[1] &&
-          (scripted.promotion ?? null) === (mv.promotion ?? null)
-        );
+        return !!scripted && Chess.sameMoveSquares(scripted, mv);
       };
       const plan = planMoveGesture(
         events,
@@ -1027,41 +1014,6 @@ export default function App() {
     [activeSubtitle],
   );
 
-  // Replay panel follow-scroll: keep the event the playhead has reached
-  // visible, like a video editor's timeline list. Manual reading wins:
-  // following pauses while a mouse pointer is over the list and resumes
-  // when it leaves. Scrolls only the list container, never the page.
-  // The Moves list follows the playhead only while playback runs; while
-  // paused it scrolls independently — editing must not fight the scroll
-  // position. Hovering pauses the follow so a click target stays put.
-  const editListRef = useRef<HTMLDivElement | null>(null);
-  const followPausedRef = useRef(false);
-  const pauseFollowOnHover = useCallback((e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse') followPausedRef.current = true;
-  }, []);
-  const resumeFollowOnLeave = useCallback((e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse') followPausedRef.current = false;
-  }, []);
-  // React fires no pointerleave when the hovered list unmounts (keyboard
-  // tab/view switch), so the pause must reset when the list goes away.
-  useEffect(() => {
-    if (tab !== 'script' || scriptView !== 'moves') followPausedRef.current = false;
-  }, [tab, scriptView]);
-
-  useEffect(() => {
-    if (!playing || followPausedRef.current) return;
-    // Null in present mode, where the panel is unmounted — no mode flag needed.
-    const list = editListRef.current;
-    if (!list) return;
-    if (reachedEventIndex < 0) {
-      list.scrollTop = 0;
-      return;
-    }
-    // The PGN list nests event elements, so the reached event is located by
-    // its data-evi attribute (shared helper); playback/hover gating is above.
-    scrollEviIntoView(list, reachedEventIndex);
-  }, [reachedEventIndex, playing, tab, scriptView]);
-
   // Three booleans, rebuilt as an array + filter + join on every frame of
   // playback. None of them is a clock input.
   const appClass = useMemo(
@@ -1077,12 +1029,12 @@ export default function App() {
     [present, presentPgn, chromeHidden],
   );
 
-  // The ruler's fixed furniture. Both sit inside `.controls`, which re-renders
-  // on every animation frame of playback, and both depend only on the script:
-  // the ticks on the duration they divide, the speed buttons on the selected
-  // rate. Unmemoized they rebuilt ~28 elements and as many style objects and
-  // closures per frame for a row whose content had not changed since the last
-  // edit — next to `timelinePins`, which is memoized for exactly this reason.
+  // The ruler's fixed furniture. It sits inside `.controls`, which re-renders
+  // on every animation frame of playback, and depends only on the script: the
+  // ticks on the duration they divide. Unmemoized it rebuilt a tick element
+  // and a style object per division, every frame, for a row whose content had
+  // not changed since the last edit — next to `timelinePins`, which is
+  // memoized for exactly this reason.
   const tickRow = useMemo(
     () => (
       <div className="timeline-ticks" aria-hidden="true">
@@ -1095,36 +1047,30 @@ export default function App() {
     ),
     [duration],
   );
-  const speedGroup = useMemo(
-    () => (
-      <div className="speed-group" role="group" aria-label="Playback speed">
-        {SPEEDS.map((s) => (
-          <button
-            type="button"
-            key={s}
-            className="speed-btn"
-            aria-pressed={speed === s}
-            aria-label={`${s} times speed`}
-            onClick={() => setSpeed(s)}
-          >
-            {s}×
-          </button>
-        ))}
-      </div>
-    ),
-    [speed],
-  );
   // Rate and the piece click's on/off ride one wrapper rather than two grid
   // children. The transport grid restates its column list in four tiers and
   // places every child by hand, so a second bare child would auto-place into
   // whatever cell each tier happened to leave free — a control that lands on
-  // the timeline at one viewport width only. Memoized for the same reason
-  // `speedGroup` is: `App` re-renders on every animation frame of playback and
-  // neither of these depends on the clock.
+  // the timeline at one viewport width only. Memoized because `App` re-renders
+  // on every animation frame of playback and neither the rate selector nor the
+  // SFX toggle depends on the clock.
   const transportPrefs = useMemo(
     () => (
       <div className="transport-prefs">
-        {speedGroup}
+        <div className="speed-group" role="group" aria-label="Playback speed">
+          {SPEEDS.map((s) => (
+            <button
+              type="button"
+              key={s}
+              className="speed-btn"
+              aria-pressed={speed === s}
+              aria-label={`${s} times speed`}
+              onClick={() => setSpeed(s)}
+            >
+              {s}×
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className="mute-btn"
@@ -1136,7 +1082,7 @@ export default function App() {
         </button>
       </div>
     ),
-    [speedGroup, moveSoundOn, toggleMoveSound],
+    [speed, moveSoundOn, toggleMoveSound],
   );
 
   const playState = playStateAt(playing, time, duration);
@@ -1176,7 +1122,6 @@ export default function App() {
               type="button"
               key={i}
               className="marker"
-              data-kind={kind}
               data-form={markerForms[kind]}
               title={isErr ? `L${e.line} ${e.raw} — script error` : e.raw}
               aria-label={
@@ -1500,7 +1445,7 @@ export default function App() {
                         the DOM because it names the editor for assistive tech
                         (aria-labelledby), hidden because repeating the tab
                         label spent a row of a panel that is always short. */}
-                    <h2 className="panel-title sr-only" id={editorLabelId}>Script</h2>
+                    <h2 className="sr-only" id={editorLabelId}>Script</h2>
                     <div className="subtitle-actions">
                       <div className="view-toggle" role="group" aria-label="Script view mode">
                         <button
@@ -1532,7 +1477,6 @@ export default function App() {
                         </button>
                       )}
                       <ImportButton
-                        id={scriptFileInputId}
                         accept=".gambit,.txt,text/plain"
                         label="Import script file"
                         describedBy={scriptImportError ? scriptImportErrorId : undefined}
@@ -1557,12 +1501,10 @@ export default function App() {
                     reachedEventIndex={reachedEventIndex}
                     errorLines={errorLines}
                     onSeek={seekEvent}
-                    listRef={editListRef}
+                    playing={playing}
                     labelId={editorLabelId}
                     onRetime={onRetimeEvent}
                     onDelete={onDeleteEvents}
-                    onPointerEnter={pauseFollowOnHover}
-                    onPointerLeave={resumeFollowOnLeave}
                   />
                   {/* The structured editor could retime and delete but never
                       create, so nine of twelve event kinds had no way in.
@@ -1583,12 +1525,9 @@ export default function App() {
                     value={scriptText}
                     aria-labelledby={editorLabelId}
                     onChange={(e) => {
-                      setScriptText(e.target.value);
-                      setScriptFileName(null);
-                      // A hand edit invalidates the gesture-undo snapshot: undoing
-                      // past it would silently revert the user's typing too.
-                      setGestureUndo(null);
-                      setScriptEditError(null);
+                      applyScript(e.target.value);
+                      // Typing here is what dismisses the script import error,
+                      // mirroring the subtitle textarea below.
                       setScriptImportError(null);
                     }}
                   />
@@ -1598,7 +1537,7 @@ export default function App() {
                 <>
                 {/* No header band: with the title hidden this one held nothing
                     but padding and a rule above the first field. */}
-                <h2 className="panel-title sr-only">Setup</h2>
+                <h2 className="sr-only">Setup</h2>
                 <div className="fen-field">
                   <label htmlFor="start-fen">Start FEN</label>
                   <input
@@ -1639,7 +1578,6 @@ export default function App() {
                     <div className="subtitle-actions">
                       {subtitleFileName && <span className="subtitle-file">{subtitleFileName}</span>}
                       <ImportButton
-                        id={subtitleFileInputId}
                         accept=".srt,text/plain"
                         label="Import subtitle file"
                         describedBy={subtitleImportError ? subtitleImportErrorId : undefined}

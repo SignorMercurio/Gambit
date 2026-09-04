@@ -87,7 +87,7 @@ type BoardProps = {
   // text stays the single source of truth. Mouse-only by design: this is a
   // desktop screen-recording tool and right-button gestures need a mouse.
   interactive: boolean;
-  legalTargets: (from: string) => string[];
+  legalTargets: (from: string) => ReadonlySet<string>;
   onMoveGesture: (from: string, to: string) => void;
   onArrowGesture: (from: string, to: string) => void;
   onHighlightGesture: (sq: string) => void;
@@ -173,9 +173,8 @@ function overlayOpacity(age: number, lifetime: number, pinned?: boolean): number
   return 1;
 }
 
-function moveDuration(p: PiecePos): number {
-  if (p.moveFromF == null || p.moveFromR == null) return 0;
-  const distance = Math.hypot(p.f - p.moveFromF, p.r - p.moveFromR);
+function moveDuration(f: number, r: number, fromF: number, fromR: number): number {
+  const distance = Math.hypot(f - fromF, r - fromR);
   return Math.min(0.44, Math.max(0.22, 0.2 + distance * 0.045));
 }
 
@@ -189,7 +188,7 @@ function pieceVisual(p: PiecePos, time: number) {
 
   if (p.moveT != null && p.moveFromF != null && p.moveFromR != null) {
     const age = time - p.moveT;
-    const duration = moveDuration(p);
+    const duration = moveDuration(p.f, p.r, p.moveFromF, p.moveFromR);
     if (age >= 0 && age < duration) {
       const eased = timedProgress(age, duration);
       f = p.moveFromF + (p.f - p.moveFromF) * eased;
@@ -212,7 +211,7 @@ function pieceVisual(p: PiecePos, time: number) {
   }
 
   if (p.captured) {
-    const age = p.capturedAt == null ? Number.POSITIVE_INFINITY : time - p.capturedAt;
+    const age = time - p.capturedAt;
     if (age >= 0 && age < BOARD_OVERLAY_LIFETIME.captureFlash) {
       const eased = timedProgress(age, BOARD_OVERLAY_LIFETIME.captureFlash);
       opacity = 1 - eased;
@@ -306,6 +305,9 @@ const isLightSquare = (f: number, r: number) => (f + r) % 2 === 1;
 // Last-move amber needs a higher alpha on blue squares; see tokens.ts.
 const lastMoveFill = (f: number, r: number) =>
   isLightSquare(f, r) ? tokens.boardLastMoveOnLight : tokens.boardLastMoveOnDark;
+// Ink that stays readable on either square color — the coordinate-label
+// pairing, which the gesture marks share (DESIGN.md, Move gestures).
+const coordInk = (isLight: boolean) => (isLight ? tokens.coordOnLight : tokens.coordOnDark);
 
 // The two squares a last move paints, origin first. One function rather than a
 // conditional at each rect, because the rule is about the *pair*: an annotated
@@ -331,6 +333,28 @@ export function lastMoveSquares(move: LastMove): [PaintedSquare, PaintedSquare] 
         : { fill: lastMoveFill(toF, toR), alpha: 1 }),
     },
   ];
+}
+
+// One of the two squares that pair paints, returning the element for the
+// reason `BadgeDisc` and `HlRing` do: the last move is a flood, and a stroke
+// added at a call site would put a hard box on every move of the recording —
+// the drift the flood exists to avoid. Owning the element makes that
+// unrepresentable there, and lets the suite assert its absence by calling this
+// function rather than slicing Board.tsx between `{lastMove &&` and
+// `litHighlights.map`, a guard a rename of either local could fail in the name
+// of last-move color.
+export function LastMoveRect({
+  view,
+  fill,
+  opacity,
+}: {
+  view: BoardViewPosition;
+  fill: string;
+  opacity: number;
+}) {
+  return (
+    <rect x={view.x * SQ} y={view.y * SQ} width={SQ} height={SQ} fill={fill} opacity={opacity} />
+  );
 }
 
 // The move-quality badge, in board units (SQ = 100). Exported because the
@@ -565,7 +589,7 @@ const coordTexts = (ink: string | null, orientation: BoardOrientation) =>
       fontSize="14"
       fontWeight="700"
       textAnchor={c.anchor}
-      fill={ink ?? (c.isLight ? tokens.coordOnLight : tokens.coordOnDark)}
+      fill={ink ?? coordInk(c.isLight)}
       opacity="0.95"
     >
       {c.text}
@@ -580,28 +604,70 @@ const COORD_TEXTS_MIND = {
   black: coordTexts(tokens.mindCoordInk, 'black'),
 };
 
-// Full-size SVG planes share one positioning contract; each layer only adds
-// its own pointer and stacking behavior.
-const SVG_LAYER_STYLE: CSSProperties = {
+// The board's stack, in one place: the code half of the layer table in
+// docs/design.md. A new layer names itself here rather than landing wherever
+// the DOM puts it, and the squares plane takes no entry — it is the base.
+// The per-piece 1/4/5 (`pieceZIndex`) is deliberately not sourced from this
+// map: those numbers live inside the pieces layer's own stacking context and
+// mean nothing to the outer stack.
+const BOARD_LAYER_Z = {
+  pieces: 1,
+  coords: 2,
+  // Arrows and the editor-only gesture preview share a plane so an annotate
+  // preview reads exactly like the artifact it is about to record.
+  overlay: 3,
+  captureFlash: 4,
+  badge: 5,
+} as const;
+
+// Full-size SVG planes share one positioning contract; a layer only adds its
+// own z (or none, to sit at the base). One frozen style object per plane,
+// derived from the map above so the numbers stay in one place: Board re-renders
+// every animation frame during playback, and a style object built per call
+// would hand every layer a new prop reference each of those frames.
+const BOARD_LAYER_BASE_STYLE: CSSProperties = {
   position: 'absolute',
   inset: 0,
   width: '100%',
   height: '100%',
-};
-const COORD_LAYER_STYLE: CSSProperties = {
-  ...SVG_LAYER_STYLE,
   pointerEvents: 'none',
-  zIndex: 2,
 };
+const BOARD_LAYER_STYLE: Record<number, CSSProperties> = Object.fromEntries(
+  Object.values(BOARD_LAYER_Z).map((z) => [z, { ...BOARD_LAYER_BASE_STYLE, zIndex: z }]),
+);
 
+// A layer adds its own z (or none, to sit at the base) and, for the gesture
+// preview, the class the PNG export filters on. A hoisted `function` on
+// purpose: the coordinate layers below build their elements at module scope.
+function BoardLayer({
+  z,
+  className,
+  children,
+}: {
+  z?: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <svg
+      className={className}
+      viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+      aria-hidden="true"
+      style={z === undefined ? BOARD_LAYER_BASE_STYLE : BOARD_LAYER_STYLE[z]}
+    >
+      {children}
+    </svg>
+  );
+}
+
+// The coordinate plane's box, stacking and aria state in one place: a steady
+// frame and a mid-ramp frame cannot render at a different z or coordinate box.
+const coordSvg = (texts: ReactNode) => (
+  <BoardLayer z={BOARD_LAYER_Z.coords}>{texts}</BoardLayer>
+);
 // Both steady states are whole hoisted layers, so every frame outside the
 // 0.6s ramp — which is every frame of an ordinary script — bails out on
 // element identity instead of reconciling 16 labels.
-const coordSvg = (texts: ReactNode) => (
-  <svg className="board-coords" viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`} aria-hidden="true" style={COORD_LAYER_STYLE}>
-    {texts}
-  </svg>
-);
 const COORD_LAYER = {
   white: coordSvg(COORD_TEXTS.white),
   black: coordSvg(COORD_TEXTS.black),
@@ -614,16 +680,11 @@ const COORD_LAYER_MIND = {
 function coordLayer(sink: number, orientation: BoardOrientation) {
   if (sink <= 0) return COORD_LAYER[orientation];
   if (sink >= 1) return COORD_LAYER_MIND[orientation];
-  return (
-    <svg
-      className="board-coords"
-      viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-      aria-hidden="true"
-      style={COORD_LAYER_STYLE}
-    >
+  return coordSvg(
+    <>
       {COORD_TEXTS[orientation]}
       <g opacity={sink}>{COORD_TEXTS_MIND[orientation]}</g>
-    </svg>
+    </>,
   );
 }
 
@@ -638,11 +699,9 @@ function capturePointer(e: React.PointerEvent) {
   }
 }
 
-// Per-square ink that stays readable on both square colors — the same
-// pairing the coordinate labels use.
 function squareInk(sq: string): string {
   const { f, r } = sqToIdx(sq);
-  return isLightSquare(f, r) ? tokens.coordOnLight : tokens.coordOnDark;
+  return coordInk(isLightSquare(f, r));
 }
 
 function insetSquareMarker(sq: string, key: string, orientation: BoardOrientation) {
@@ -663,28 +722,22 @@ function insetSquareMarker(sq: string, key: string, orientation: BoardOrientatio
   );
 }
 
-// Same plane as the arrows overlay so annotate previews read exactly like
-// the artifact they are about to record.
+// Not a `BoardLayer`: the pieces ride HTML divs so their transforms stay on
+// the compositor.
 const PIECE_LAYER_STYLE: CSSProperties = {
   position: 'absolute',
   inset: 0,
-  zIndex: 1,
-};
-const OVERLAY_LAYER_STYLE: CSSProperties = {
-  ...SVG_LAYER_STYLE,
-  pointerEvents: 'none',
-  zIndex: 3,
-};
-const BADGE_LAYER_STYLE: CSSProperties = {
-  ...OVERLAY_LAYER_STYLE,
-  zIndex: 5,
+  zIndex: BOARD_LAYER_Z.pieces,
 };
 
 // Live preview of the gesture in progress. Move gestures mark the origin and
 // the legal destinations (dot on empty squares, ring on occupied ones);
 // annotate gestures preview the exact highlight or arrow a release would
 // record, at reduced opacity so preview reads as not-yet-committed.
-function GestureOverlay({
+// Exported so the suite can render it and read the class the PNG export
+// filters on: the export guard stubs the board node, so losing the class here
+// is the one board regression `npm test` would otherwise pass green.
+export function GestureOverlay({
   gesture,
   positions,
   orientation,
@@ -741,14 +794,9 @@ function GestureOverlay({
     );
 
   return (
-    <svg
-      className={BOARD_GESTURE_CLASS}
-      viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-      aria-hidden="true"
-      style={OVERLAY_LAYER_STYLE}
-    >
+    <BoardLayer z={BOARD_LAYER_Z.overlay} className={BOARD_GESTURE_CLASS}>
       {body}
-    </svg>
+    </BoardLayer>
   );
 }
 
@@ -852,7 +900,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
       setGesture(beginAnnotationGesture(owner, sq, onArrowGesture, onHighlightGesture));
       return;
     }
-    const targets = new Set(legalTargets(sq));
+    const targets = legalTargets(sq);
     if (targets.size === 0) {
       onMoveRejected(sq);
       return;
@@ -868,7 +916,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
     const sq = squareAtPointer(e);
     if (sq === hoverSqRef.current) return;
     hoverSqRef.current = sq;
-    setHoverGrab(sq != null && legalTargets(sq).length > 0);
+    setHoverGrab(sq != null && legalTargets(sq).size > 0);
   };
 
   const onGesturePointerMove = (e: React.PointerEvent) => {
@@ -962,7 +1010,6 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
     <div className="board-wrap">
       <div
         ref={boardRef}
-        className="board"
         role="img"
         aria-label={`Chess board, ${orientation} perspective`}
         onPointerDown={onGesturePointerDown}
@@ -993,11 +1040,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
         }}
       >
         {/* squares */}
-        <svg
-          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-          aria-hidden="true"
-          style={SVG_LAYER_STYLE}
-        >
+        <BoardLayer>
           {CHECK_GLOW_DEFS}
           {/* Once the void is fully sunk it is opaque, so the lit squares
              underneath are pure cost — drop them for the rest of the phase. */}
@@ -1008,20 +1051,14 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
           {boardVoid}
 
           {lastMove &&
-            lastMoveSquares(lastMove).map(({ f, r, fill, alpha }, i) => {
-              const view = boardViewPosition(f, r, orientation);
-              return (
-                <rect
-                  key={`lm-${i}`}
-                  x={view.x * SQ}
-                  y={view.y * SQ}
-                  width={SQ}
-                  height={SQ}
-                  fill={fill}
-                  opacity={lastMoveOpacity * alpha}
-                />
-              );
-            })}
+            lastMoveSquares(lastMove).map(({ f, r, fill, alpha }, i) => (
+              <LastMoveRect
+                key={`lm-${i}`}
+                view={boardViewPosition(f, r, orientation)}
+                fill={fill}
+                opacity={lastMoveOpacity * alpha}
+              />
+            ))}
 
           {litHighlights.map(({ h, age, opacity }, i) => {
             return (
@@ -1047,9 +1084,9 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
               opacity={checkOpacity}
             />
           )}
-        </svg>
+        </BoardLayer>
 
-        {/* zIndex here creates a stacking context so per-piece zIndex (1/5)
+        {/* zIndex here creates a stacking context so per-piece zIndex (1/4/5)
            stays contained and doesn't outrank the arrows overlay. */}
         <div
           aria-hidden="true"
@@ -1067,7 +1104,6 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
             return (
               <div
                 key={id}
-                className="piece"
                 style={{
                   position: 'absolute',
                   left: 0,
@@ -1095,11 +1131,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
         {coordinates}
 
         {/* arrows overlay — sits above pieces so annotations land on top */}
-        <svg
-          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-          aria-hidden="true"
-          style={OVERLAY_LAYER_STYLE}
-        >
+        <BoardLayer z={BOARD_LAYER_Z.overlay}>
           {ARROW_SHADOW_DEFS}
           <g filter="url(#arrow-shadow)">
             {arrowShapes.map(({ arrow: a, d, guideD, maskId }, i) => {
@@ -1135,7 +1167,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
               );
             })}
           </g>
-        </svg>
+        </BoardLayer>
 
         {gesture && (
           <GestureOverlay gesture={gesture} positions={positions} orientation={orientation} />
@@ -1155,7 +1187,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
               borderRadius: '50%',
               background: tokens.captureFlash,
               pointerEvents: 'none',
-              zIndex: 4,
+              zIndex: BOARD_LAYER_Z.captureFlash,
               '--capture-opacity': flash.opacity.toFixed(3),
               '--capture-scale': flash.scale.toFixed(3),
             } as CSSProperties}
@@ -1166,11 +1198,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
            occludes the move-quality mark. SVG-based so the disc and text
            scale with the board's viewBox without container queries. */}
         {lastMove?.annotation && (
-          <svg
-            viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-            aria-hidden="true"
-            style={BADGE_LAYER_STYLE}
-          >
+          <BoardLayer z={BOARD_LAYER_Z.badge}>
             {ANNOTATION_BADGE_SHADOW_DEFS}
             {(() => {
               const annotation = lastMove.annotation;
@@ -1205,7 +1233,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
                 </g>
               );
             })()}
-          </svg>
+          </BoardLayer>
         )}
       </div>
     </div>
