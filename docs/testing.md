@@ -8,6 +8,9 @@ npm run typecheck
 npm run build
 ```
 
+`npm run typecheck` is the fast local subset of `npm run build`'s `tsc -b`, which also
+typechecks `vite.config.ts` — so CI runs `npm test` and `npm run build` only.
+
 `npm test` is `node scripts/test-regressions.mjs` — one hand-written assert script, not
 a test framework. It spins up an in-process Vite server and imports the real modules, so
 it tests source rather than a build, and it additionally asserts against `src/styles.css`
