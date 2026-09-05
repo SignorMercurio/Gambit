@@ -14,7 +14,6 @@ import { memo, useEffect, useMemo, useRef } from 'react';
 import type { MoveState } from '../lib/chess';
 import {
   splitSanAnnotation,
-  type ParsedEvent,
   type TimelineEvent,
 } from '../lib/timeline';
 import { scrollEviIntoView } from '../lib/scrollEventIntoView';
@@ -23,93 +22,52 @@ type PresMove = { i: number; text: string };
 // A missing white cell is the PGN "…" placeholder — no separate flag needed.
 type PresRow = { num: number; white: PresMove | null; black: PresMove | null };
 
-// Interpret variation structure and runtime outcomes once for every
-// presentation projection. The callback runs for every visited index; null
-// means the event was structural, erroneous, rejected, or inside a variation.
-function walkAppliedMainline(
+// Derive the visible rows and their per-event cursor together. A setup keeps
+// earlier rows as history but closes the pending row and clears the cursor;
+// rejected events and events inside variations change neither.
+export function buildMainline(
   events: TimelineEvent[],
+  states: MoveState[],
   rejectedEventIndexes: ReadonlySet<number>,
-  visit: (event: ParsedEvent | null, index: number) => void,
-) {
+): { rows: PresRow[]; cursorByEvent: number[] } {
+  const rows: PresRow[] = [];
+  const cursorByEvent: number[] = [];
+  let row: PresRow | null = null;
+  let cursor = -1;
   let depth = 0;
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
-    let applied: ParsedEvent | null = null;
     if (!('error' in event)) {
-      // Structure stays authoritative even if a caller accidentally includes
-      // its index in the rejected set: filtering must never flatten a branch.
+      // Read structure before outcomes: a rejected index must not flatten a branch.
       if (event.kind === 'branch') {
         depth++;
       } else if (event.kind === 'mainline') {
         if (depth > 0) depth--;
       } else if (depth === 0 && !rejectedEventIndexes.has(i)) {
-        applied = event;
+        if (event.kind === 'reset' || event.kind === 'start' || event.kind === 'fen') {
+          row = null;
+          cursor = -1;
+        } else if (event.kind === 'move') {
+          const st = states[i];
+          const { text } = splitSanAnnotation(event.san);
+          const mv: PresMove = { i, text };
+          if (st.turn === 'w') {
+            row = { num: st.fullmove, white: mv, black: null };
+            rows.push(row);
+          } else if (row) {
+            row.black = mv;
+            row = null;
+          } else {
+            // Black to move after an initial FEN or reset has no White partner.
+            rows.push({ num: st.fullmove, white: null, black: mv });
+          }
+          cursor = i;
+        }
       }
     }
-    visit(applied, i);
+    cursorByEvent.push(cursor);
   }
-}
-
-// Walk events into numbered mainline rows, skipping anything inside a
-// variation (br raises depth, ml lowers it) and every non-move event. The
-// numbering comes from moveStates, which already accounts for resets/FENs.
-export function buildMainline(
-  events: TimelineEvent[],
-  states: MoveState[],
-  rejectedEventIndexes: ReadonlySet<number>,
-): PresRow[] {
-  const rows: PresRow[] = [];
-  let row: PresRow | null = null;
-  walkAppliedMainline(events, rejectedEventIndexes, (e, i) => {
-    if (!e) return;
-    // A reset/start/fen restarts the numbering, so it has to close the pending
-    // row: otherwise a post-reset Black move pairs into the pre-reset White
-    // move's row whenever the two fullmove counters coincide — which they
-    // routinely do, most FENs being fullmove 1.
-    if (e.kind === 'reset' || e.kind === 'start' || e.kind === 'fen') {
-      row = null;
-      return;
-    }
-    if (e.kind !== 'move') return;
-    const st = states[i];
-    const { text } = splitSanAnnotation(e.san);
-    const mv: PresMove = { i, text };
-    if (st.turn === 'w') {
-      row = { num: st.fullmove, white: mv, black: null };
-      rows.push(row);
-    } else if (row) {
-      // Pairs with the White move above it: an open row always has an empty
-      // black cell, and a reset has already cleared `row`.
-      row.black = mv;
-      row = null;
-    } else {
-      // Black to move with no matching white (script opened on Black, or a
-      // reset landed here): render the PGN "…" placeholder in the white cell.
-      rows.push({ num: st.fullmove, white: null, black: mv });
-    }
-  });
-  return rows;
-}
-
-// For every event index, the applied mainline move the board represents once
-// the playhead has reached it. A setup event leaves earlier rows as history but
-// clears the current pill; rejected FENs and setup events inside a variation do
-// neither.
-export function buildMainlineCursorIndex(
-  events: TimelineEvent[],
-  rejectedEventIndexes: ReadonlySet<number>,
-): number[] {
-  const cursors = Array<number>(events.length).fill(-1);
-  let cursor = -1;
-  walkAppliedMainline(events, rejectedEventIndexes, (event, index) => {
-    if (event?.kind === 'reset' || event?.kind === 'start' || event?.kind === 'fen') {
-      cursor = -1;
-    } else if (event?.kind === 'move') {
-      cursor = index;
-    }
-    cursors[index] = cursor;
-  });
-  return cursors;
+  return { rows, cursorByEvent };
 }
 
 type PresentationMovesProps = {
@@ -129,10 +87,7 @@ export const PresentationMoves = memo(function PresentationMoves({
   // Depends only on the script, not the playhead: without this the whole list
   // is rebuilt on every move as `reachedEventIndex` advances.
   const { rows, cursorByEvent } = useMemo(
-    () => ({
-      rows: buildMainline(events, states, rejectedEventIndexes),
-      cursorByEvent: buildMainlineCursorIndex(events, rejectedEventIndexes),
-    }),
+    () => buildMainline(events, states, rejectedEventIndexes),
     [events, states, rejectedEventIndexes],
   );
 

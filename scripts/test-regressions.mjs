@@ -40,7 +40,7 @@ try {
       withTimeout,
     },
     { syncRovingTabStops },
-    { buildMainline, buildMainlineCursorIndex },
+    { buildMainline },
     {
       BADGE_EDGE_MARGIN,
       BADGE_R,
@@ -690,7 +690,7 @@ text`;
       replayEvents,
       replayWorld.moveStates,
       replayWorld.rejectedEventIndexes,
-    ).map((row) => [row.white?.text ?? null, row.black?.text ?? null]),
+    ).rows.map((row) => [row.white?.text ?? null, row.black?.text ?? null]),
     [['e4', 'c5']],
     'the replay directive never duplicates moves in the presentation PGN',
   );
@@ -819,7 +819,7 @@ text`;
       runtimeEvents,
       runtimeWorld.moveStates,
       runtimeWorld.rejectedEventIndexes,
-    ).map((row) => [row.num, row.white?.text ?? null, row.black?.text ?? null]),
+    ).rows.map((row) => [row.num, row.white?.text ?? null, row.black?.text ?? null]),
     [[1, 'e4', 'e5']],
     'presentation follows the moves that actually changed the board',
   );
@@ -838,7 +838,7 @@ text`;
       unclosedBranchEvents,
       unclosedBranchWorld.moveStates,
       new Set([0]),
-    ),
+    ).rows,
     [],
     'outcome filtering must never flatten variation depth in presentation',
   );
@@ -980,7 +980,7 @@ text`;
   // fullmove counters on either side of one routinely coincide (most FENs are
   // fullmove 1), so pairing on the number alone glued a post-reset Black move
   // into the pre-reset White move's row.
-  const presRows = buildMainline(
+  const { rows: presRows } = buildMainline(
     [
       { kind: 'move', san: 'e4', t: 1, line: 1 },
       { kind: 'reset', t: 2, line: 2 },
@@ -1003,9 +1003,12 @@ text`;
   );
   // The cursor index holds, per event, the mainline move the board represents
   // once the playhead has reached that event.
-  const presentationResetCursors = buildMainlineCursorIndex(
-    parseScript('[1] e4\n[2] rs\n[3] e4'),
-    new Set(),
+  const presentationResetEvents = parseScript('[1] e4\n[2] rs\n[3] e4');
+  const presentationResetWorld = buildWorld(presentationResetEvents, standardSetup);
+  const { cursorByEvent: presentationResetCursors } = buildMainline(
+    presentationResetEvents,
+    presentationResetWorld.moveStates,
+    presentationResetWorld.rejectedEventIndexes,
   );
   assert.equal(
     presentationResetCursors[1],
@@ -1014,8 +1017,13 @@ text`;
   );
   assert.equal(presentationResetCursors[2], 2);
   const rejectedPresentationFen = parseScript('[1] e4\n[2] fen bad');
+  const rejectedPresentationWorld = buildWorld(rejectedPresentationFen, standardSetup);
   assert.equal(
-    buildMainlineCursorIndex(rejectedPresentationFen, new Set([1]))[1],
+    buildMainline(
+      rejectedPresentationFen,
+      rejectedPresentationWorld.moveStates,
+      rejectedPresentationWorld.rejectedEventIndexes,
+    ).cursorByEvent[1],
     0,
     'a rejected FEN does not clear the presentation cursor',
   );
