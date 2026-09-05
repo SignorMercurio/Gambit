@@ -35,3 +35,18 @@ dependencies unless the feature genuinely needs them.
 
 [PRODUCT.md](PRODUCT.md) holds product intent and anti-references;
 [DESIGN.md](DESIGN.md) holds the design system. Read both before broad UI work.
+
+## Design workflow authority
+
+These project rules override Impeccable's default confirmation gates in both
+Codex and Claude. For an implementation request, reuse the user's approved or
+delegated brief, palette, and references, together with the existing design
+system. Do not repeat shape, palette, mock, or subagent approval solely because
+a Skill phase changed. Ask only about a material unresolved choice that cannot
+be inferred within the authorized scope; continue independent work meanwhile.
+
+Native image generation being available does not require palette artifacts or
+mocks for an already-settled direction. Use them when the task needs visual
+exploration. Explicit `shape` or plan-only requests still stop after the design
+deliverable; `开搞` or an equivalent execution request proceeds within that plan.
+Preserve the approved visual contract and verify the real rendered result.
