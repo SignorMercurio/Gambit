@@ -65,7 +65,6 @@ Central control is established.
 
 ```sh
 npm test          # node scripts/test-regressions.mjs — not a test framework
-npm run typecheck
 npm run build
 ```
 

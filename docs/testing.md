@@ -4,12 +4,11 @@
 
 ```sh
 npm test
-npm run typecheck
 npm run build
 ```
 
-`npm run typecheck` is the fast local subset of `npm run build`'s `tsc -b`, which also
-typechecks `vite.config.ts` — so CI runs `npm test` and `npm run build` only.
+`npm run build` typechecks (`tsc -b`, including `vite.config.ts`) before bundling, so
+there is no separate typecheck gate.
 
 `npm test` is `node scripts/test-regressions.mjs` — one hand-written assert script, not
 a test framework. It spins up an in-process Vite server and imports the real modules, so
@@ -41,6 +40,8 @@ When a change breaks one of these, fix the relation — do not relax the asserti
 
 ## Before Handing Off
 
-1. Run the three gates above.
+1. For code changes, run the gates above. Documentation-only changes need
+   `git diff --check` and a check that the paths and commands they name still
+   exist, not a build.
 2. For visual changes, refresh the local app and inspect the board at normal viewport size.
 3. For parser or chess changes, test at least one valid input and one malformed input path.
