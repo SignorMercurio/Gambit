@@ -2244,9 +2244,7 @@ text`;
     // at 4.69 while the variation inset — lighter, and the surface half the
     // annotated moves in a script sit on — had it at 4.16.
     //
-    // The current row is not in this set: its pill is studio-steel-blue, where
-    // every mark measures under 2:1, so `sanLabel` drops the color there and
-    // inherits the row's chalk rather than pretending a lighter teal fixes it.
+    // Current marks inherit the row ink; verify that pair separately below.
     const CHROME_BACKDROPS = {
       'panel well': '#283045',
       'variation inset': '#31384c',
@@ -2259,6 +2257,18 @@ text`;
           `${quality}'s mark is 13px/700 body text and holds AA on the ${where} (${ratio.toFixed(2)}:1)`,
         );
       }
+    }
+
+    const cssColor = (rule, property) => {
+      const token = rule.match(new RegExp(`${property}:\\s*var\\((--[\\w-]+)\\)`))?.[1];
+      const hex = bareStyles.match(new RegExp(`${token}:\\s*(#[a-fA-F0-9]{6})`))?.[1];
+      assert.ok(hex, `${property} resolves to a palette color`);
+      return hex;
+    };
+    for (const selector of ['.present-mv.current', ".present-toggle[aria-pressed='true']"]) {
+      const rule = cssRule(selector);
+      assert.ok(contrast(cssColor(rule, 'background'), cssColor(rule, 'color')) >= 4.5,
+        `${selector} holds body-text contrast while active`);
     }
 
     // The board badge is the same set on a different ground, and there it
@@ -2358,8 +2368,12 @@ text`;
     // color because it shares a meaning. `rp` and `move` are neither, which is
     // why they are the pair this rule exists for.
     const paired = (a, b) =>
-      COMMANDS.some((c) => (c.kind === a && c.closes) || (c.kind === b && c.closes)) ||
+      COMMANDS.some((c) => c.closes && COMMANDS.some((other) =>
+        other.token === c.closes &&
+        ((c.kind === a && other.kind === b) || (c.kind === b && other.kind === a)))) ||
       (RESET_FAMILY.has(a) && RESET_FAMILY.has(b));
+    assert.equal(paired('clear', 'reveal'), false, 'a closer does not pair with unrelated commands');
+    assert.equal(paired('mind', 'reveal'), true);
     for (let i = 0; i < peers.length; i += 1) {
       for (let j = i + 1; j < peers.length; j += 1) {
         if (paired(peers[i], peers[j])) continue;

@@ -17,7 +17,7 @@
 // must still leave exactly one tabbable control. Attribute churn (class,
 // aria-current) during playback doesn't wake a childList observer.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 export function syncRovingTabStops<T extends { tabIndex: number }>(
   controls: T[],
@@ -87,8 +87,6 @@ export function useRovingTabIndex<T extends HTMLElement>(
     },
     [containerRef, controls],
   );
-
-  useEffect(() => () => observerRef.current?.disconnect(), []);
 
   // The handlers sit on the container, so a target matching the selector is
   // by construction one of the container's own controls: indexOf always hits
