@@ -52,6 +52,10 @@ capture effects, annotation badges, and mind's-eye frame. Subtitles, controls,
 PGN, and in-progress editing gestures are excluded. Browser zoom and the board's
 onscreen size do not change the output dimensions.
 
+Playback and editing pause during export, then the prior play state resumes.
+Imports already in progress wait until export finishes. If rendering takes
+longer than 15 seconds, an error appears and the controls unlock for a retry.
+
 ## Subtitles
 
 Open the **Setup** tab to paste SRT text or import a `.srt` file. Subtitle cues use standard SRT time ranges and must be separated by a blank line:

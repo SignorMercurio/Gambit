@@ -52,6 +52,11 @@ import {
 
 type NarrationTrack = { url: string; name: string; duration: number };
 type BoardExportState = 'idle' | 'exporting' | 'success' | 'error';
+type BoardExportOperation = {
+  controller: AbortController;
+  done: Promise<void>;
+  release: () => void;
+};
 // Just the surfaces where a printable character means "type this character".
 // Narrower than isInteractiveShortcutTarget on purpose: see the `/` branch in
 // the window keydown listener.
@@ -207,11 +212,30 @@ function takeSelectedFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
   return file ?? null;
 }
 
+// A hidden tab may never paint. Whichever boundary wins must cancel both
+// the queued frame and the fallback timer, including when App unmounts.
+function waitForBoardPaint(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    let frame = 0;
+    const finish = () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, 200);
+    signal.addEventListener('abort', finish, { once: true });
+    if (signal.aborted) finish();
+    else frame = requestAnimationFrame(() => { frame = requestAnimationFrame(finish); });
+  });
+}
+
 function readSelectedTextFile(
   e: React.ChangeEvent<HTMLInputElement>,
   latestRead: { current: number },
   onRead: (text: string, fileName: string) => void,
   onError: (message: string) => void,
+  beforeCommit: () => Promise<void>,
 ): void {
   const file = takeSelectedFile(e);
   if (!file) return;
@@ -221,7 +245,8 @@ function readSelectedTextFile(
     return;
   }
   file.text().then(
-    (text) => {
+    async (text) => {
+      await beforeCommit();
       if (latestRead.current === request) onRead(text, file.name);
     },
     () => {
@@ -367,10 +392,19 @@ export default function App() {
   const [subtitleImportError, setSubtitleImportError] = useState<string | null>(null);
   const [boardExportState, setBoardExportState] = useState<BoardExportState>('idle');
   const [boardExportError, setBoardExportError] = useState<string | null>(null);
+  const boardExportRef = useRef<BoardExportOperation | null>(null);
+  const exporting = boardExportState === 'exporting';
+
+  // Imports may finish during a PNG capture. Wait for that single operation,
+  // then let the import's own identity check decide whether it is still current.
+  const waitForBoardExport = useCallback(async () => {
+    while (boardExportRef.current) await boardExportRef.current.done;
+  }, []);
 
   useEffect(() => {
+    if (boardExportRef.current) return;
     setTime((t) => Math.min(t, duration));
-  }, [duration]);
+  }, [duration, exporting]);
 
   // Leaving the Moves view unmounts the menu's trigger; drop the open flag with
   // it so returning doesn't land on a panel the user never reopened.
@@ -393,7 +427,6 @@ export default function App() {
   const scriptTabRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
-  const boardExportInFlightRef = useRef(false);
   const boardExportResetRef = useRef<number | null>(null);
   const latestScriptReadRef = useRef(0);
   const latestSubtitleReadRef = useRef(0);
@@ -419,6 +452,8 @@ export default function App() {
   // error is not among them: it names a file that never loaded.
   const applyScript = useCallback(
     (text: string, opts?: { fileName?: string | null; undo?: string | null }) => {
+      if (boardExportRef.current) return;
+      latestScriptReadRef.current++;
       setScriptText(text);
       setScriptFileName(opts?.fileName ?? null);
       // Callers that pass no snapshot drop the old one: undoing past a hand
@@ -429,31 +464,40 @@ export default function App() {
     [setScriptText],
   );
 
+  const applySubtitles = useCallback((text: string, fileName: string | null = null) => {
+    if (boardExportRef.current) return;
+    latestSubtitleReadRef.current++;
+    setSubtitleText(text);
+    setSubtitleFileName(fileName);
+    setSubtitleImportError(null);
+  }, [setSubtitleText]);
+
   const onScriptFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (boardExportRef.current) return;
       setScriptImportError(null);
       readSelectedTextFile(
         e,
         latestScriptReadRef,
         (text, fileName) => applyScript(text, { fileName }),
         setScriptImportError,
+        waitForBoardExport,
       );
     },
-    [applyScript],
+    [applyScript, waitForBoardExport],
   );
 
   const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (boardExportRef.current) return;
     setSubtitleImportError(null);
     readSelectedTextFile(
       e,
       latestSubtitleReadRef,
-      (text, fileName) => {
-        setSubtitleText(text);
-        setSubtitleFileName(fileName);
-      },
+      applySubtitles,
       setSubtitleImportError,
+      waitForBoardExport,
     );
-  }, []);
+  }, [applySubtitles, waitForBoardExport]);
 
   const cancelPendingNarration = useCallback(() => {
     const pending = pendingNarrationRef.current;
@@ -485,7 +529,8 @@ export default function App() {
       pendingNarrationRef.current = pending;
       probe.preload = 'metadata';
       probe.src = url;
-      probe.onloadedmetadata = () => {
+      probe.onloadedmetadata = async () => {
+        await waitForBoardExport();
         if (pendingNarrationRef.current !== pending) return;
         pendingNarrationRef.current = null;
         const audioDuration = Number.isFinite(probe.duration)
@@ -514,11 +559,12 @@ export default function App() {
         void clearStoredNarration();
       };
     },
-    [cancelPendingNarration],
+    [cancelPendingNarration, waitForBoardExport],
   );
 
   const onNarrationFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (boardExportRef.current) return;
       const file = takeSelectedFile(e);
       if (!file) return;
       narrationChosenRef.current = true;
@@ -542,6 +588,7 @@ export default function App() {
   }, [adoptNarration]);
 
   const clearNarration = useCallback(() => {
+    if (boardExportRef.current) return;
     narrationChosenRef.current = true;
     cancelPendingNarration();
     setNarrationError(null);
@@ -565,6 +612,7 @@ export default function App() {
       return;
     }
     function tick(now: number) {
+      if (boardExportRef.current) return;
       if (lastTickRef.current == null) lastTickRef.current = now;
       const dt = (now - lastTickRef.current) / 1000;
       lastTickRef.current = now;
@@ -663,6 +711,7 @@ export default function App() {
   // shows more (the landing stays clamped before the next event).
   const seekEvent = useCallback(
     (t: number) => {
+      if (boardExportRef.current) return;
       setTime(playingRef.current ? t : landAfter(t));
     },
     [landAfter],
@@ -675,6 +724,7 @@ export default function App() {
   // result, and nothing more.
   const commitScriptEdit = useCallback(
     (next: string, landT?: number) => {
+      if (boardExportRef.current) return;
       applyScript(next, { undo: scriptText });
       if (landT != null && !playingRef.current) setTime(landT);
     },
@@ -685,6 +735,7 @@ export default function App() {
   // pointer-down and pointer-up (hand edit, undo), so any plan would be built
   // against text the gesture never previewed. Leaves the script untouched.
   const gestureIsStale = useCallback((): boolean => {
+    if (boardExportRef.current) return true;
     if (scriptTextRef.current === scriptText) return false;
     setScriptEditError(SCRIPT_CHANGED_DURING_GESTURE_ERROR);
     return true;
@@ -795,6 +846,7 @@ export default function App() {
   // snapshot-undo safety net as the gestures.
   const onRetimeEvent = useCallback(
     (line: number, t: number) => {
+      if (boardExportRef.current) return null;
       const edit = setLineTime(scriptText, line, t);
       commitScriptEdit(edit.text);
       return edit.line;
@@ -812,9 +864,11 @@ export default function App() {
   // gradient play button owns "replay from the end", so the two transport
   // buttons never duplicate.
   const restart = useCallback(() => {
+    if (boardExportRef.current) return;
     setTime(0);
   }, []);
   const pauseToggle = useCallback(() => {
+    if (boardExportRef.current) return;
     if (timeRef.current >= duration) {
       setTime(0);
       setPlaying(true);
@@ -824,9 +878,15 @@ export default function App() {
   }, [duration]);
 
   const exportBoard = useCallback(async () => {
-    if (boardExportInFlightRef.current) return;
+    if (boardExportRef.current) return;
     const resumePlayback = playingRef.current;
-    boardExportInFlightRef.current = true;
+    let release!: () => void;
+    const operation: BoardExportOperation = {
+      controller: new AbortController(),
+      done: new Promise<void>((resolve) => { release = resolve; }),
+      release: () => release(),
+    };
+    boardExportRef.current = operation;
     if (boardExportResetRef.current != null) {
       window.clearTimeout(boardExportResetRef.current);
       boardExportResetRef.current = null;
@@ -834,7 +894,6 @@ export default function App() {
     setBoardExportError(null);
     setBoardExportState('exporting');
     setPlaying(false);
-    const abandoned = new AbortController();
     try {
       // One ceiling over the whole operation, not just the rasterize: the frame
       // wait, the exporter's dynamic import, and the rasterize can each stall,
@@ -843,32 +902,24 @@ export default function App() {
       // rest of the session.
       await withTimeout(
         (async () => {
-          // Start the exporter chunk now: it needs nothing the frame wait
-          // produces, so awaiting it afterwards only added a cold fetch to the
-          // pause. Both are inside the one ceiling.
-          const exporter = loadExporter();
-          // Let React commit the paused clock before cloning the board. Two
-          // frames also let SVG/image layout settle without advancing the
-          // authored time.
-          //
-          // Raced against a timer, because requestAnimationFrame does not fire
-          // in a hidden or throttled tab and this wait would otherwise never
-          // resolve — the actual cause of the export hang seen here. Nothing is
-          // painting in that state, so the frames have nothing to settle and
-          // skipping them costs the export nothing.
-          await Promise.race([
-            new Promise<void>((resolve) => {
-              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-            }),
-            new Promise<void>((resolve) => window.setTimeout(resolve, 200)),
+          // Load and settle concurrently, with both rejections observed from
+          // the start. The lock keeps the committed board fixed while cloning.
+          const [exporter] = await Promise.all([
+            loadExporter(),
+            waitForBoardPaint(operation.controller.signal),
           ]);
           const board = boardRef.current;
           if (!board) throw new Error('The board is not available.');
-          await downloadBoardPng(board, timeRef.current, { signal: abandoned.signal, exporter });
+          await downloadBoardPng(board, timeRef.current, {
+            signal: operation.controller.signal,
+            exporter: Promise.resolve(exporter),
+          });
         })(),
         BOARD_EXPORT_TIMEOUT_MS,
         BOARD_EXPORT_TIMEOUT_MESSAGE,
+        operation.controller.signal,
       );
+      if (boardExportRef.current !== operation) return;
       setBoardExportState('success');
       boardExportResetRef.current = window.setTimeout(() => {
         setBoardExportState('idle');
@@ -877,13 +928,17 @@ export default function App() {
     } catch (error) {
       // The rasterize we gave up on can still be running. Tell it not to
       // deliver a file the user has already been told they aren't getting.
-      abandoned.abort();
+      operation.controller.abort();
+      if (boardExportRef.current !== operation) return;
       const detail = error instanceof Error ? error.message : 'Unknown browser error.';
       setBoardExportError(`Could not export board PNG: ${detail}`);
       setBoardExportState('error');
     } finally {
-      boardExportInFlightRef.current = false;
-      setPlaying(resumePlayback);
+      if (boardExportRef.current === operation) {
+        boardExportRef.current = null;
+        setPlaying(resumePlayback);
+      }
+      operation.release();
     }
   }, [playingRef, timeRef]);
 
@@ -903,6 +958,12 @@ export default function App() {
   };
 
   useEffect(() => () => {
+    latestScriptReadRef.current++;
+    latestSubtitleReadRef.current++;
+    const operation = boardExportRef.current;
+    boardExportRef.current = null;
+    operation?.controller.abort();
+    operation?.release();
     if (boardExportResetRef.current != null) {
       window.clearTimeout(boardExportResetRef.current);
     }
@@ -958,6 +1019,7 @@ export default function App() {
   // key was a transport key; preventDefault policy stays with each caller.
   const handleTransportKey = useCallback(
     (e: { code: string; repeat: boolean }): boolean => {
+      if (boardExportRef.current) return false;
       if (e.code === 'Space') {
         if (!e.repeat) pauseToggle();
         return true;
@@ -977,6 +1039,7 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (boardExportRef.current) return;
       // Escape leaves present mode from anywhere — the chrome that would host
       // an Exit button may be faded out, so the key must always work. Not
       // guarded on `present`: leaving it out of the deps keeps this listener
@@ -1217,6 +1280,7 @@ export default function App() {
   return (
     <div
       className={appClass}
+      aria-busy={exporting || undefined}
     >
       {/* Narration track: invisible, driven entirely by the playback clock. */}
       {narration && <audio ref={audioRef} src={narration.url} preload="auto" />}
@@ -1225,7 +1289,7 @@ export default function App() {
         {boardExportState === 'success' && 'Board PNG downloaded.'}
         {boardExportState === 'error' && boardExportError}
       </div>
-      <header className="header">
+      <header className="header" {...(exporting ? { inert: '' } : {})}>
         <div className="title-block">
           <div className="logo" aria-hidden="true">
             <img src="/gambit-mark.svg" alt="" />
@@ -1258,7 +1322,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="main">
+      <main className="main" {...(exporting ? { inert: '' } : {})}>
         <div className="board-col">
           <Board
             ref={boardRef}
@@ -1272,7 +1336,7 @@ export default function App() {
             revealedAt={world.revealedAt}
             time={time}
             orientation={orientation}
-            interactive={tab === 'script' && !present && !worldFrame.replayActive}
+            interactive={tab === 'script' && !present && !worldFrame.replayActive && !exporting}
             legalTargets={legalTargets}
             onMoveRejected={onMoveRejected}
             onMoveGesture={onMoveGesture}
@@ -1331,7 +1395,9 @@ export default function App() {
                 max={duration}
                 step={0.01}
                 value={time}
-                onChange={(e) => setTime(parseFloat(e.target.value))}
+                onChange={(e) => {
+                  if (!boardExportRef.current) setTime(parseFloat(e.target.value));
+                }}
                 onKeyDown={(e) => {
                   // Every mouse scrub parks focus here, and the global
                   // shortcuts ignore focused inputs — so the transport keymap
@@ -1548,7 +1614,9 @@ export default function App() {
                     aria-invalid={initialSetup.error ? true : undefined}
                     aria-describedby={initialSetup.error ? fenErrorId : undefined}
                     aria-errormessage={initialSetup.error ? fenErrorId : undefined}
-                    onChange={(e) => setFenText(e.target.value)}
+                    onChange={(e) => {
+                      if (!boardExportRef.current) setFenText(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="orientation-field">
@@ -1558,7 +1626,7 @@ export default function App() {
                       type="button"
                       className="view-btn"
                       aria-pressed={orientation === 'white'}
-                      onClick={() => setOrientation('white')}
+                      onClick={() => { if (!boardExportRef.current) setOrientation('white'); }}
                     >
                       White
                     </button>
@@ -1566,7 +1634,7 @@ export default function App() {
                       type="button"
                       className="view-btn"
                       aria-pressed={orientation === 'black'}
-                      onClick={() => setOrientation('black')}
+                      onClick={() => { if (!boardExportRef.current) setOrientation('black'); }}
                     >
                       Black
                     </button>
@@ -1590,11 +1658,7 @@ export default function App() {
                     className="subtitle-textarea"
                     spellCheck={false}
                     value={subtitleText}
-                    onChange={(e) => {
-                      setSubtitleText(e.target.value);
-                      setSubtitleFileName(null);
-                      setSubtitleImportError(null);
-                    }}
+                    onChange={(e) => applySubtitles(e.target.value)}
                     placeholder={'1\n00:00:01,000 --> 00:00:04,000\nCentral control is established.'}
                   />
                 </section>

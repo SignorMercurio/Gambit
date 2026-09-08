@@ -29,13 +29,18 @@ export const BOARD_EXPORT_TIMEOUT_MESSAGE = `The browser did not finish renderin
 // Rejects with `message` if `work` has not settled inside `ms`. The abandoned
 // work may still be running — nothing here can cancel a rasterize already in
 // flight — but the UI stops waiting on it, which is the part that matters.
-export function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+export function withTimeout<T>(work: Promise<T>, ms: number, message: string, signal?: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
   const ceiling = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), ms);
+    abort = () => reject(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
   });
   return Promise.race([work, ceiling]).finally(() => {
     if (timer !== undefined) clearTimeout(timer);
+    if (abort) signal?.removeEventListener('abort', abort);
   });
 }
 
@@ -85,7 +90,9 @@ export async function downloadBoardPng(
     deliver?: (blob: Blob, filename: string) => void;
   },
 ): Promise<void> {
+  if (signal?.aborted) return;
   const { toBlob } = await exporter;
+  if (signal?.aborted) return;
   const blob = await toBlob(board, {
     cacheBust: true,
     canvasWidth: BOARD_EXPORT_SIZE,

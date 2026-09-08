@@ -1317,6 +1317,34 @@ text`;
     'the timeout handle is cleared when the work wins the race',
   );
 
+  {
+    const controller = new AbortController();
+    const pending = withTimeout(new Promise(() => {}), 60_000, 'unused', controller.signal);
+    controller.abort(new Error('unmounted'));
+    await assert.rejects(pending, /unmounted/);
+    assert.equal(process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length, beforeTimers);
+
+    for (const phase of ['load', 'rasterize']) {
+      const abort = new AbortController();
+      let finish;
+      const delayed = new Promise((resolve) => { finish = resolve; });
+      let rasterizes = 0;
+      const exporter = { toBlob: () => { rasterizes++; return phase === 'rasterize' ? delayed : Promise.resolve({}); } };
+      const delivered = [];
+      const work = downloadBoardPng({}, 0, {
+        signal: abort.signal,
+        exporter: phase === 'load' ? delayed : Promise.resolve(exporter),
+        deliver: (blob) => delivered.push(blob),
+      });
+      await Promise.resolve();
+      abort.abort();
+      finish(phase === 'load' ? exporter : {});
+      await work;
+      assert.deepEqual(delivered, [], `abort during ${phase} prevents late delivery`);
+      assert.equal(rasterizes, phase === 'load' ? 0 : 1);
+    }
+  }
+
   // Timing out abandons the rasterize but cannot cancel it. If it settles later
   // it must stay silent: a PNG landing in Downloads after the band said the
   // export failed is stamped with a time the board has long since left. Both
