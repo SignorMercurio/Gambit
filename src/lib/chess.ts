@@ -175,7 +175,9 @@ export function explainNoMoves(state: GameState, from: string): string | null {
 export function parseSAN(san: string, state: GameState): Move | null {
   const trimmed = san.trim();
   const suffix = parseSANSuffix(trimmed);
-  if (!suffix) return null;
+  // chess.js accepts null moves in strict mode too; Gambit records only
+  // actual board moves, which can be reapplied by their from/to squares.
+  if (!suffix || suffix.text === '--') return null;
 
   try {
     const move = new ChessJs(state.fen).move(
