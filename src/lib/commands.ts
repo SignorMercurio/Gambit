@@ -1,12 +1,12 @@
 // The script language's one catalogue: every event kind the parser accepts,
-// with the body text that writes it and a line of prose explaining it.
+// with the token that writes it and a line of prose explaining it.
 //
 // This exists because the language outgrew its interface. `src/lib/timeline.ts`
 // parses twelve kinds; the Text view's hint line named ten and the default
 // script demonstrates a handful, so `mind`, `reveal`, and the `pin` modifier
 // shipped with no surface at all — a feature nobody can find has not really
 // shipped. Both syntax surfaces now read this list — the insert menu's rows and
-// that same hint line — and the regression suite parses every `body` below, so
+// that same hint line — and the regression suite inserts every one-click token, so
 // a thirteenth kind cannot be added to the parser while quietly staying
 // invisible in the UI.
 //
@@ -19,19 +19,17 @@
 import type { MarkerKind } from './tokens';
 
 export type CommandEntry = {
-  // The canonical short token, shown as the row's monospaced name.
+  // The canonical short token, also inserted for commands with no `via` route.
   token: string;
-  // Full script body to insert, or null when this kind is authored elsewhere.
-  body: string | null;
   // What it does, in one line. Written for someone who has never read
   // DESIGN.md — this doubles as the app's only syntax reference.
   hint: string;
-  // Where it comes from instead, when `body` is null.
+  // Where it is authored instead of being inserted from the menu.
   via?: string;
   // Shares the pins' and seek dots' color vocabulary, so a kind reads the
   // same in the menu, the ruler, and the move list.
   kind: MarkerKind;
-  // Written form, when the body alone doesn't show the shape of the syntax.
+  // Written form, when the token alone doesn't show the shape of the syntax.
   syntax?: string;
   // The token this one closes, when it is the back half of a pair. Declared
   // here rather than inferred from adjacency in the array below: the syntax
@@ -44,7 +42,6 @@ export type CommandEntry = {
 export const COMMANDS: readonly CommandEntry[] = [
   {
     token: 'SAN',
-    body: null,
     kind: 'move',
     syntax: 'e4 · Nf3',
     hint: 'A move in standard notation, castling as O-O. Suffix ! ? !! ?? to mark its quality.',
@@ -52,7 +49,6 @@ export const COMMANDS: readonly CommandEntry[] = [
   },
   {
     token: 'hl',
-    body: null,
     kind: 'highlight',
     syntax: 'hl e4 f6',
     hint: 'Highlight one or more squares. They fade on their own; add pin to hold until cl.',
@@ -60,7 +56,6 @@ export const COMMANDS: readonly CommandEntry[] = [
   },
   {
     token: '->',
-    body: null,
     kind: 'arrow',
     syntax: 'f3->e5',
     hint: 'Draw an arrow between two squares.',
@@ -68,25 +63,21 @@ export const COMMANDS: readonly CommandEntry[] = [
   },
   {
     token: 'cl',
-    body: 'cl',
     kind: 'clear',
     hint: 'Clear every highlight and arrow currently on the board.',
   },
   {
     token: 'rs',
-    body: 'rs',
     kind: 'reset',
     hint: 'Reset to the Start FEN set in Setup.',
   },
   {
     token: 'st',
-    body: 'st',
     kind: 'start',
     hint: 'Reset to the standard opening position.',
   },
   {
     token: 'fen',
-    body: null,
     kind: 'fen',
     syntax: 'fen …',
     hint: 'Jump to an arbitrary position mid-script, given as a full FEN string.',
@@ -94,46 +85,38 @@ export const COMMANDS: readonly CommandEntry[] = [
   },
   {
     token: 'br',
-    body: 'br',
     kind: 'branch',
     hint: 'Open a variation. Renders nothing — its timestamp only sets order.',
   },
   {
     token: 'ml',
-    body: 'ml',
     kind: 'mainline',
     closes: 'br',
     hint: 'Close the variation. This timestamp is the visible snap back.',
   },
   {
     token: 'rp',
-    body: 'rp',
     kind: 'replay',
     syntax: 'rp · rp 1',
     hint: 'Replay the main line from the start, 0.5s per move — or give seconds per move (0.1–10).',
   },
   {
     token: 'mind',
-    body: 'mind',
     kind: 'mind',
     hint: "Mind's eye: the board goes dark and only squares the script names keep their pieces.",
   },
   {
     token: 'reveal',
-    body: 'reveal',
     kind: 'reveal',
     closes: 'mind',
     hint: "End mind's eye and fade the full position back in.",
   },
 ];
 
-// The subset the insert menu can write directly. Derived rather than a second
-// hand-maintained list, and typed with a non-null `body` so the menu's click
-// handler needs no cast to hand it to planLineInsert.
-type InsertableCommand = CommandEntry & { body: string };
-
-export const INSERTABLE_COMMANDS: readonly InsertableCommand[] = COMMANDS.filter(
-  (c): c is InsertableCommand => c.body != null,
+// Commands with another authoring route are reference rows; the rest insert
+// their token verbatim. No separate body or insertability flag to keep in sync.
+export const INSERTABLE_COMMANDS: readonly CommandEntry[] = COMMANDS.filter(
+  (c) => c.via == null,
 );
 
 // The complement: the kinds that need an argument and so are authored on
@@ -141,7 +124,7 @@ export const INSERTABLE_COMMANDS: readonly InsertableCommand[] = COMMANDS.filter
 // per render — the menu sits in the default view, which re-renders on every
 // animation frame during playback.
 export const AUTHORED_ELSEWHERE_COMMANDS: readonly CommandEntry[] = COMMANDS.filter(
-  (c) => c.body == null,
+  (c) => c.via != null,
 );
 
 // The Text view's one-line syntax reference, grouped. Derived here rather than

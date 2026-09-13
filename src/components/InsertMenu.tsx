@@ -109,7 +109,7 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
             role="menuitem"
             className="insert-item"
             aria-label={`Insert ${c.syntax ?? c.token}. ${c.hint}`}
-            onClick={() => handleInsert(c.body)}
+            onClick={() => handleInsert(c.token)}
           >
             <CommandFace command={c} />
           </button>

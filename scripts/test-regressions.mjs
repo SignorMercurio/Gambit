@@ -1456,18 +1456,11 @@ text`;
   );
 
   // Each one-click command must write a line the parser accepts as its own
-  // kind, through the real insert path rather than a hand-built line. A body
+  // kind, through the real insert path rather than a hand-built line. A token
   // that parses to an error would put a red line in the script the moment the
   // user clicked a menu row.
-  //
-  // One loop, not two. A hand-built `parseScript(\`[00:01.0] ${c.body}\`)` pass
-  // used to run first, and it could not fail on its own: `planLineInsert`
-  // writes the body verbatim after a formatted timestamp, and an ErrorEvent
-  // carries no `kind`, so the kind assertion below already fails on anything
-  // that parses to an error. The planner form is strictly stronger — it also
-  // catches a body that plans a conflict instead of an edit.
   for (const c of INSERTABLE_COMMANDS) {
-    const plan = planLineInsert([], '', 1, c.body);
+    const plan = planLineInsert([], '', 1, c.token);
     assert.equal(plan.kind, 'edit', `${c.token} plans an edit into an empty script`);
     const events = parseScript(plan.text);
     assert.equal(events.length, 1, `${c.token} inserts exactly one event`);
@@ -1478,7 +1471,7 @@ text`;
   // the ones needing a square or a position route to the board and to Setup.
   assert.equal(INSERTABLE_COMMANDS.length, 8);
   // Asserted through AUTHORED_ELSEWHERE_COMMANDS rather than by re-deriving
-  // `c.body == null` here: that array is what the menu's second section
+  // `c.via != null` here: that array is what the menu's second section
   // renders, and re-spelling its definition in the test left the export
   // itself — the last link in the catalogue-to-UI chain — untouched by the
   // suite.
