@@ -40,8 +40,9 @@ When a change breaks one of these, fix the relation — do not relax the asserti
 
 ## Before Handing Off
 
-1. For code changes, run the gates above. Documentation-only changes need
-   `git diff --check` and a check that the paths and commands they name still
-   exist, not a build.
+1. Select gates by the change: behavior changes use `npm test`; type or bundle
+   changes use `npm run build`; broad changes and release readiness use both.
+   Documentation-only changes need `git diff --check` and affected references.
+   Do not repeat passing gates unless their inputs change or a concern remains.
 2. For visual changes, refresh the local app and inspect the board at normal viewport size.
 3. For parser or chess changes, test at least one valid input and one malformed input path.

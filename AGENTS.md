@@ -18,9 +18,6 @@ derives from those three; nothing caches a second copy of board state, and no su
 writes board state directly. If a change makes the same three inputs render two
 different frames, the change is wrong.
 
-Corollary: avoid introducing state managers, chess libraries, router layers, or new
-dependencies unless the feature genuinely needs them.
-
 ## Docs
 
 | Read this | When you are |
@@ -38,15 +35,8 @@ dependencies unless the feature genuinely needs them.
 
 ## Design workflow authority
 
-These project rules override Impeccable's default confirmation gates in both
-Codex and Claude. For an implementation request, reuse the user's approved or
-delegated brief, palette, and references, together with the existing design
-system. Do not repeat shape, palette, mock, or subagent approval solely because
-a Skill phase changed. Ask only about a material unresolved choice that cannot
-be inferred within the authorized scope; continue independent work meanwhile.
-
-Native image generation being available does not require palette artifacts or
-mocks for an already-settled direction. Use them when the task needs visual
-exploration. Explicit `shape` or plan-only requests still stop after the design
-deliverable; `开搞` or an equivalent execution request proceeds within that plan.
-Preserve the approved visual contract and verify the real rendered result.
+An implementation request reuses the approved brief and design system; a Skill
+phase change does not require renewed palette, mock, or subagent approval.
+Use visual exploration when the direction is unresolved. Explicit `shape` or
+plan-only requests stop after the design deliverable; an execution request
+continues through the real rendered result.
