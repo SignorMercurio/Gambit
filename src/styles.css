@@ -82,7 +82,6 @@
   --color-foley-slate: #8d97b3;
   --color-stage-mist: #6b7596;
   --color-stage-mauve: #5d6892;
-  --color-chip-text-blue: #b8d0ec;
 
   /* Errors */
   --color-studio-vermillion: #cf5d5d;
@@ -1781,9 +1780,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
    and the pointer is idle. Purely a view layer — the board is still fully
    determined by script + FEN + time.
    ===================================================================== */
-.app--present .header,
-.app--present .side-col,
-.app--present .footer {
+.app--present .header {
   display: none;
 }
 /* With those three gone and the transport fixed (below), `.app`'s only
