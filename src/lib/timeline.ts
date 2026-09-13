@@ -55,8 +55,7 @@ type ScriptLineMatch = ScriptLine & {
   trailing: string;
 };
 
-function matchScriptLine(line: string, normalized = false): ScriptLineMatch | null {
-  if (!normalized && isSkippedLine(line.trim())) return null;
+function matchScriptLine(line: string): ScriptLineMatch | null {
   const match = line.match(SCRIPT_LINE_RE);
   if (!match) return null;
   return {
@@ -112,8 +111,7 @@ export function splitSanAnnotation(san: string): { text: string } & (
 const SQUARE_PATTERN = '[a-h][1-8]';
 const SQUARE_RE = new RegExp(`^${SQUARE_PATTERN}$`, 'i');
 const ARROW_PATTERN = `(${SQUARE_PATTERN})\\s*(?:→|->|to)\\s*(${SQUARE_PATTERN})(?:\\s+(pin))?`;
-const DIRECT_ARROW_RE = new RegExp(`^${ARROW_PATTERN}$`, 'i');
-const LEGACY_ARROW_RE = new RegExp(`^arrow\\s+${ARROW_PATTERN}$`, 'i');
+const ARROW_RE = new RegExp(`^(?:arrow\\s+)?${ARROW_PATTERN}$`, 'i');
 const MAX_SCRIPT_CHARACTERS = 1_000_000;
 export const MAX_SCRIPT_LINES = 5_000;
 
@@ -268,7 +266,7 @@ export function parseScript(text: string): TimelineEvent[] {
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i].trim();
     if (isSkippedLine(raw)) continue;
-    const matched = matchScriptLine(raw, true);
+    const matched = matchScriptLine(raw);
     if (!matched) {
       events.push({ t: 0, error: `Line ${i + 1}: missing [mm:ss]`, line: i + 1, raw });
       continue;
@@ -297,7 +295,7 @@ export function parseScript(text: string): TimelineEvent[] {
       events.push({ t, kind: 'highlight', squares, pinned, line: i + 1, raw });
       continue;
     }
-    const arrowMatch = body.match(DIRECT_ARROW_RE) ?? body.match(LEGACY_ARROW_RE);
+    const arrowMatch = body.match(ARROW_RE);
     if (arrowMatch) {
       events.push(toArrowEvent(t, i + 1, raw, arrowMatch));
       continue;
