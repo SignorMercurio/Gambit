@@ -667,18 +667,33 @@ text`;
     assert.equal(Chess.board(build.snapshots.at(-1).chessState)[3][4]?.type, 'p');
   }
 
-  for (const setup of ['st', 'rs', `fen ${Chess.STARTING_FEN}`]) {
-    const build = worldFrom(`[1] e4\n[2] ${setup}\n[3] rp\n[5] hl d4`);
+  for (const setup of ['st', 'rs', 'reset', `fen ${Chess.STARTING_FEN}`]) {
+    const build = worldFrom(`[1] e4\n[2] ${setup}\n[10] rp\n[12] hl d4\n[13] e5\n[15] rp`);
     assert.deepEqual(build.scriptErrors, []);
-    assert.notEqual(worldFrameAt(build, 2, 3.25).snapshot.chessState.fen, Chess.STARTING_FEN);
-    for (const time of [3.5, 4]) {
+    const finalMove = build.snapshots[1].chessState;
+    for (const time of [2, 5, 9.99]) {
+      assert.equal(worldFrameAt(build, 1, time).snapshot.chessState.fen, Chess.STARTING_FEN,
+        'reset holds the initial position throughout the explanation pause');
+    }
+    assert.equal(worldFrameAt(build, 2, 10.25).snapshot.chessState, finalMove);
+    for (const time of [10.5, 11]) {
       const frame = worldFrameAt(build, 2, time);
-      assert.equal(frame.snapshot.chessState.fen, Chess.STARTING_FEN);
+      assert.equal(frame.snapshot.chessState, finalMove, 'replay settles on its last move, not a trailing reset');
       assert.equal(frame.replaySourceEventIndex, null);
       assert.equal(frame.replayActive, false);
-      assert.equal(moveSoundKey(frame.snapshot.lastMove), null);
+      assert.equal(moveSoundKey(frame.snapshot.lastMove),
+        moveSoundKey(worldFrameAt(build, 2, 10.25).snapshot.lastMove));
     }
-    assert.equal(worldFrameAt(build, 3, 5.1).snapshot.chessState.fen, Chess.STARTING_FEN);
+    assert.equal(worldFrameAt(build, 3, 12.1).snapshot.chessState, finalMove);
+    const repeated = worldFrameAt(build, 5, 16).snapshot;
+    assert.equal(repeated.chessState, build.snapshots[5].chessState);
+    assert.equal(Chess.board(repeated.chessState)[3][4]?.side, 'w');
+    for (const [id, piece] of Object.entries(build.snapshots[5].positions)) {
+      assert.equal(repeated.positions[id].f, piece.f);
+      assert.equal(repeated.positions[id].r, piece.r);
+      assert.equal(repeated.positions[id].captured, piece.captured,
+        'moves after replay and later replays share the same restored board');
+    }
   }
 
   const preciseReplay = worldFrom('[1] e4\n[3.06] rp\n[3.56] cl');

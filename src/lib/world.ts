@@ -452,8 +452,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     // Reset the sketch, not the mind phase clock.
     if (mind) mind = { since: mind.since, touches: new Map(), held: new Set() };
     if (hasReplay && branchStack.length === 0) {
-      // A setup keeps earlier replay moves but changes its terminal position.
-      // At the tail this instant is the replay end, not another move slot.
+      // A setup changes the origin of subsequent moves, but adds no replay
+      // frame: a trailing reset is an explanation pause, not the replay end.
       replayState = {
         positions, chessState, lastMove, lastCapture,
         check: check && { sq: check.sq, t: replayFrames.length },
@@ -512,6 +512,9 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
       return;
     }
 
+    // Resume both the authored walk and future replay templates from the last
+    // replayed move, even when a setup preceded this replay.
+    replayState = replayFrames[moveCount - 1].state;
     const sequence: ReplaySequence = {
       start: event.t, end, step, moveCount, terminal: replayState, line: event.line,
     };

@@ -37,8 +37,10 @@ Open the URL Vite prints (typically http://localhost:5173).
 a different step: 0.1–10 seconds, written with a leading digit and at most one
 decimal place (`rp 1`, `rp 0.5`); anything else is a script error. The replay
 keeps the authored start time, including finer precision such as `[3.06]`.
-Resets, standard starts,
-and valid FEN changes are honored without consuming a replay step. The replay
+Resets, standard starts, and valid FEN changes between moves are honored without
+consuming a replay step. A reset after the last move can hold the starting board
+for explanation before `rp`; replay finishes on its last move and subsequent
+commands continue from that position. The replay
 must fit before the next authored event; otherwise Gambit shows a script error
 and leaves the board unchanged. Use `reveal` before `rp` when mind's-eye mode is
 active.
