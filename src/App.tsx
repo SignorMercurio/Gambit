@@ -1336,7 +1336,7 @@ export default function App() {
             revealedAt={world.revealedAt}
             time={time}
             orientation={orientation}
-            interactive={tab === 'script' && !present && !worldFrame.replayActive && !exporting}
+            interactive={tab === 'script' && !present && worldFrame.replaySourceEventIndex === null && !exporting}
             legalTargets={legalTargets}
             onMoveRejected={onMoveRejected}
             onMoveGesture={onMoveGesture}

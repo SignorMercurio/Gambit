@@ -680,7 +680,6 @@ text`;
       const frame = worldFrameAt(build, 2, time);
       assert.equal(frame.snapshot.chessState, finalMove, 'replay settles on its last move, not a trailing reset');
       assert.equal(frame.replaySourceEventIndex, null);
-      assert.equal(frame.replayActive, false);
       assert.equal(moveSoundKey(frame.snapshot.lastMove),
         moveSoundKey(worldFrameAt(build, 2, 10.25).snapshot.lastMove));
     }
@@ -708,7 +707,7 @@ text`;
   for (const [start, step, end] of [[0.1, 0.2, 0.3], [0.01, 0.1, 0.11]]) {
     const exact = worldFrom(`[0] e4\n[${start}] rp ${step}\n[${end}] cl`);
     assert.deepEqual(exact.scriptErrors, [], 'decimal rounding does not invent an overlap');
-    assert.equal(worldFrameAt(exact, 1, end).replayActive, false);
+    assert.equal(worldFrameAt(exact, 1, end).replaySourceEventIndex, null);
     assert.ok(worldFrom(`[0] e4\n[${start}] rp ${step}\n[${end - 0.02}] cl`).scriptErrors.length);
   }
   const decimalSteps = worldFrom('[0] e4\n[0.1] e5\n[0.7] rp 0.1');
@@ -739,14 +738,13 @@ text`;
   );
   const replayFirst = worldFrameAt(replayWorld, 5, 10);
   assert.equal(replayFirst.replaySourceEventIndex, 0);
-  assert.equal(replayFirst.replayActive, true);
   assert.equal(
     worldFrameAt(replayWorld, 5, 10.5).replaySourceEventIndex,
     0,
     'the exact paused-seek boundary still shows the first replay move',
   );
   assert.equal(worldFrameAt(replayWorld, 5, 10.5001).replaySourceEventIndex, 4);
-  assert.equal(worldFrameAt(replayWorld, 5, 11).replayActive, false);
+  assert.equal(worldFrameAt(replayWorld, 5, 11).replaySourceEventIndex, null);
   assert.strictEqual(
     worldFrameAt(replayWorld, 5, 10.75).snapshot,
     worldFrameAt(replayWorld, 5, 10.75).snapshot,
@@ -924,8 +922,12 @@ text`;
   const withoutReplay = worldFrom(longMainline.join('\n'));
   assert.deepEqual(withoutReplay.replayFrames, [], 'ordinary scripts retain no unused replay templates');
   assert.deepEqual(withoutReplay.snapshots, repeatedReplay.snapshots.slice(0, 101));
-  for (const sequence of repeatedReplay.replaySequences.values()) {
-    assert.strictEqual(sequence.terminal, repeatedReplay.replayFrames[99].state);
+  for (const [eventIndex, sequence] of repeatedReplay.replaySequences) {
+    assert.strictEqual(
+      repeatedReplay.snapshots[eventIndex + 1].chessState,
+      repeatedReplay.replayFrames[sequence.moveCount - 1].state.chessState,
+      'each replay settles on its last shared template',
+    );
     assert.equal(sequence.moveCount, 100);
   }
   const runtimeEvents = parseScript(

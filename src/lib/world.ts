@@ -108,14 +108,13 @@ type ReplaySequence = {
   // Seconds per frame: the directive's own step, or REPLAY_STEP_SECONDS.
   step: number;
   moveCount: number;
-  terminal: ReplayState;
   line: number;
 };
 
 type WorldFrame = {
   snapshot: WorldSnapshot;
+  // Null outside replay; the source index also gates board editing.
   replaySourceEventIndex: number | null;
-  replayActive: boolean;
 };
 
 function replayTime(sequence: Pick<ReplaySequence, 'start' | 'step'>, ordinal: number): number {
@@ -180,7 +179,6 @@ export function worldFrameAt(
     return {
       snapshot: build.snapshots[reachedEventIndex + 1],
       replaySourceEventIndex: null,
-      replayActive: false,
     };
   }
   // Compare absolute boundaries rather than dividing elapsed floats: at
@@ -199,7 +197,6 @@ export function worldFrameAt(
   const frame: WorldFrame = {
     snapshot: replaySnapshot(template.state, sequence),
     replaySourceEventIndex: template.sourceEventIndex,
-    replayActive: true,
   };
   REPLAY_FRAME_CACHE.set(build, { sequence, index, frame });
   return frame;
@@ -516,12 +513,12 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     // replayed move, even when a setup preceded this replay.
     replayState = replayFrames[moveCount - 1].state;
     const sequence: ReplaySequence = {
-      start: event.t, end, step, moveCount, terminal: replayState, line: event.line,
+      start: event.t, end, step, moveCount, line: event.line,
     };
     // Only the terminal frame becomes authored history. In-flight frames are
     // selected on demand; another rp never reruns chess or copies the prefix.
     ({ positions, chessState, lastMove, highlights, arrows, lastCapture, check, mind, revealedAt } =
-      replaySnapshot(sequence.terminal, sequence));
+      replaySnapshot(replayState, sequence));
     replaySequences.set(eventIndex, sequence);
     visualEndTime = Math.max(visualEndTime, end);
   };

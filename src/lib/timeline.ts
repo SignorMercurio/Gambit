@@ -115,21 +115,25 @@ const ARROW_RE = new RegExp(`^(?:arrow\\s+)?${ARROW_PATTERN}$`, 'i');
 const MAX_SCRIPT_CHARACTERS = 1_000_000;
 export const MAX_SCRIPT_LINES = 5_000;
 
-export type ParsedEvent =
-  | { t: number; kind: 'move'; san: string; annotation?: MoveAnnotation; line: number; raw: string }
-  | { t: number; kind: 'highlight'; squares: string[]; pinned?: boolean; line: number; raw: string }
-  | { t: number; kind: 'arrow'; from: string; to: string; pinned?: boolean; line: number; raw: string }
-  | { t: number; kind: 'clear'; line: number; raw: string }
-  | { t: number; kind: 'reset'; line: number; raw: string }
-  | { t: number; kind: 'start'; line: number; raw: string }
-  | { t: number; kind: 'fen'; fen: string; line: number; raw: string }
-  | { t: number; kind: 'branch'; line: number; raw: string }
-  | { t: number; kind: 'mainline'; line: number; raw: string }
-  | { t: number; kind: 'replay'; step?: number; line: number; raw: string }
-  | { t: number; kind: 'mind'; line: number; raw: string }
-  | { t: number; kind: 'reveal'; line: number; raw: string };
+// Every outcome retains the same timestamp and authored source location.
+type EventSource = { t: number; line: number; raw: string };
 
-export type ErrorEvent = { t: number; error: string; line: number; raw: string; kind?: undefined };
+export type ParsedEvent = EventSource & (
+  | { kind: 'move'; san: string; annotation?: MoveAnnotation }
+  | { kind: 'highlight'; squares: string[]; pinned?: boolean }
+  | { kind: 'arrow'; from: string; to: string; pinned?: boolean }
+  | { kind: 'clear' }
+  | { kind: 'reset' }
+  | { kind: 'start' }
+  | { kind: 'fen'; fen: string }
+  | { kind: 'branch' }
+  | { kind: 'mainline' }
+  | { kind: 'replay'; step?: number }
+  | { kind: 'mind' }
+  | { kind: 'reveal' }
+);
+
+export type ErrorEvent = EventSource & { error: string; kind?: undefined };
 
 export type TimelineEvent = ParsedEvent | ErrorEvent;
 
