@@ -324,10 +324,13 @@ export function LastMoveRect({
   fill: string;
   opacity: number;
 }) {
-  return (
-    <rect x={view.x * SQ} y={view.y * SQ} width={SQ} height={SQ} fill={fill} opacity={opacity} />
-  );
+  return squareRect(view, fill, opacity);
 }
+
+// One whole square, filled: the last-move flood and the check glow.
+const squareRect = (view: BoardViewPosition, fill: string, opacity: number) => (
+  <rect x={view.x * SQ} y={view.y * SQ} width={SQ} height={SQ} fill={fill} opacity={opacity} />
+);
 
 // The move-quality badge, in board units (SQ = 100). Exported because the
 // suite checks the disc stays on the board, and a second `23` there would be
@@ -473,90 +476,94 @@ function coordLabels(orientation: BoardOrientation) {
   ];
 }
 
-// Static gradient defs, hoisted so 60Hz renders reuse one element instead of
-// rebuilding (and remounting) the defs subtree with the check state.
-const CHECK_GLOW_DEFS = (
+// The board's one <defs>, hoisted so 60Hz renders reuse one element instead of
+// rebuilding (and remounting) the subtree with the check state. SVG ids are
+// document-global, so the arrow and badge planes resolve `url(#…)` against
+// these from the base plane, which is always mounted; one copy per id also
+// means a plane cannot shadow another's definition.
+const BOARD_DEFS = (
   <defs>
     <radialGradient id="board-check-glow">
       <stop offset="0%" stopColor={tokens.boardCheckCenter} />
       <stop offset="55%" stopColor={tokens.boardCheckMid} />
       <stop offset="92%" stopColor={tokens.boardCheckEdge} />
     </radialGradient>
-  </defs>
-);
-const ARROW_SHADOW_DEFS = (
-  <defs>
     <filter id="arrow-shadow" x="-10%" y="-10%" width="120%" height="120%">
       <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodColor="#0f1525" floodOpacity="0.32" />
     </filter>
-  </defs>
-);
-// The badge's only edge, now that the rim is gone. Deeper than an ordinary
-// board shadow on purpose: chess.com's `great` blue is 1.08:1 against our dark
-// square, so on half the board this filter is the entire difference between a
-// disc and a smudge. Compared on the page at 0.34 / 0.55 / 0.70 / 0.85 — 0.34
-// left the circle's edge to guesswork on blue, and 0.85 turned into a grey
-// halo that reads as grime on the cream squares, where the fills already have
-// contrast to spare. 0.70 is the last stop that helps the blue case without
-// dirtying the cream one.
-const ANNOTATION_BADGE_SHADOW_DEFS = (
-  <defs>
+    {/* The badge's only edge, now that the rim is gone. Deeper than an
+       ordinary board shadow on purpose: chess.com's `great` blue is 1.08:1
+       against our dark square, so on half the board this filter is the
+       entire difference between a disc and a smudge. Compared on the page at
+       0.34 / 0.55 / 0.70 / 0.85 — 0.34 left the circle's edge to guesswork on
+       blue, and 0.85 turned into a grey halo that reads as grime on the cream
+       squares, where the fills already have contrast to spare. 0.70 is the
+       last stop that helps the blue case without dirtying the cream one. */}
     <filter id="annotation-badge-shadow" x="-45%" y="-45%" width="190%" height="190%">
       <feDropShadow dx="0" dy="3" stdDeviation="3.5" floodColor="#0f1525" floodOpacity="0.7" />
     </filter>
   </defs>
 );
 
-// One square pair per surface. Both sets are hoisted so a steady frame diffs
-// a single constant element instead of 64 rects.
-const squareRects = (light: string, dark: string) =>
-  SQUARES.map(({ f, r, isLight }) => (
-    <rect
-      key={`${f}-${r}`}
-      x={f * SQ}
-      y={(7 - r) * SQ}
-      width={SQ}
-      height={SQ}
-      fill={isLight ? light : dark}
-    />
-  ));
+// One square pair per surface. Both sets are hoisted fragments so a lit frame
+// diffs a single constant element instead of 64 rects. Alone under the void's
+// fading <g>, React unwraps the fragment, so there each rect bails out on
+// identity instead.
+const squareRects = (light: string, dark: string) => (
+  <>
+    {SQUARES.map(({ f, r, isLight }) => (
+      <rect
+        key={`${f}-${r}`}
+        x={f * SQ}
+        y={(7 - r) * SQ}
+        width={SQ}
+        height={SQ}
+        fill={isLight ? light : dark}
+      />
+    ))}
+  </>
+);
 const SQUARE_RECTS = squareRects(tokens.squareLight, tokens.squareDark);
 // The void layer: the same 64 squares in near-black, faded in over the lit
 // board by `mindSink`. A layer rather than a fill swap so the sink follows the
-// playback clock (and so overlays keep landing on top of it). VOID_G is the
-// fully-sunk steady state — the whole mind phase after the 0.6s ramp.
+// playback clock (and so overlays keep landing on top of it).
 const VOID_RECTS = squareRects(tokens.mindVoidLight, tokens.mindVoidDark);
-const VOID_G = <g>{VOID_RECTS}</g>;
-
-function voidLayer(sink: number) {
-  if (sink <= 0) return null;
-  if (sink >= 1) return VOID_G;
-  return <g opacity={sink}>{VOID_RECTS}</g>;
-}
 
 // Coordinates sit above enlarged Staunty pieces so file/rank labels remain
-// visible in recordings, but below annotation arrows. Two hoisted sets of the
-// same labels: the board ink, and the bright mind's-eye ink that cross-fades
-// in with the void (in the dark, the coordinates are the only orientation
-// left, so they must read at full strength).
+// visible in recordings, but below annotation arrows: they open the arrows'
+// plane, painted before the arrows in it. Two hoisted sets of the same
+// labels: the board ink, and the bright mind's-eye ink that cross-fades in
+// with the void (in the dark, the coordinates are the only orientation left,
+// so they must read at full strength). Each set is one hoisted fragment, so
+// a lit frame — every frame of an ordinary script — bails out on element
+// identity instead of reconciling 16 labels; under the mind <g> the fragment
+// is unwrapped and each label bails out on its own.
 // `ink` null means the per-square board pair; a color means the one bright
 // mind's-eye ink.
-const coordTexts = (ink: string | null, orientation: BoardOrientation) =>
-  coordLabels(orientation).map((c, i) => (
-    <text
-      key={`coord-${i}`}
-      x={c.x}
-      y={c.y}
-      fontFamily="ui-sans-serif, system-ui"
-      fontSize="14"
-      fontWeight="700"
-      textAnchor={c.anchor}
-      fill={ink ?? coordInk(c.isLight)}
-      opacity="0.95"
-    >
-      {c.text}
-    </text>
-  ));
+const coordTexts = (ink: string | null, orientation: BoardOrientation) => (
+  <>
+    {coordLabels(orientation).map((c, i) => (
+      <text
+        key={`coord-${i}`}
+        x={c.x}
+        y={c.y}
+        fontFamily="ui-sans-serif, system-ui"
+        fontSize="14"
+        fontWeight="700"
+        textAnchor={c.anchor}
+        fill={ink ?? coordInk(c.isLight)}
+        opacity="0.95"
+      >
+        {c.text}
+      </text>
+    ))}
+  </>
+);
+const coordSet = (orientation: BoardOrientation) => ({
+  lit: coordTexts(null, orientation),
+  mind: coordTexts(tokens.mindCoordInk, orientation),
+});
+const COORDS = { white: coordSet('white'), black: coordSet('black') };
 
 // The board's stack, in one place: the code half of the layer table in
 // docs/design.md. A new layer names itself here rather than landing wherever
@@ -564,9 +571,12 @@ const coordTexts = (ink: string | null, orientation: BoardOrientation) =>
 // The per-piece 1/4/5 z-index is deliberately not sourced from this map:
 // those numbers live inside the pieces layer's own stacking context and mean
 // nothing to the outer stack.
+// Coordinates ride in the overlay plane, under the arrows, so they take no
+// entry. The numbers are not packed: the board is not its own stacking
+// context, so they meet the page's z-indexes, and 3 is the plane DESIGN.md
+// names for the gesture preview.
 const BOARD_LAYER_Z = {
   pieces: 1,
-  coords: 2,
   // Arrows and the editor-only gesture preview share a plane so an annotate
   // preview reads exactly like the artifact it is about to record.
   overlay: 3,
@@ -591,8 +601,7 @@ const BOARD_LAYER_STYLE: Record<number, CSSProperties> = Object.fromEntries(
 );
 
 // A layer adds its own z (or none, to sit at the base) and, for the gesture
-// preview, the class the PNG export filters on. A hoisted `function` on
-// purpose: the coordinate layers below build their elements at module scope.
+// preview, the class the PNG export filters on.
 function BoardLayer({
   z,
   className,
@@ -611,33 +620,6 @@ function BoardLayer({
     >
       {children}
     </svg>
-  );
-}
-
-// The coordinate plane's box, stacking and aria state in one place: a steady
-// frame and a mid-ramp frame cannot render at a different z or coordinate box.
-const coordSvg = (texts: ReactNode) => (
-  <BoardLayer z={BOARD_LAYER_Z.coords}>{texts}</BoardLayer>
-);
-// Both steady states are whole hoisted layers, so every frame outside the
-// 0.6s ramp — which is every frame of an ordinary script — bails out on
-// element identity instead of reconciling 16 labels.
-const coordSet = (orientation: BoardOrientation) => {
-  const lit = coordTexts(null, orientation);
-  const mind = coordTexts(tokens.mindCoordInk, orientation);
-  return { lit, mind, litLayer: coordSvg(lit), mindLayer: coordSvg(mind) };
-};
-const COORDS = { white: coordSet('white'), black: coordSet('black') };
-
-function coordLayer(sink: number, orientation: BoardOrientation) {
-  const coords = COORDS[orientation];
-  if (sink <= 0) return coords.litLayer;
-  if (sink >= 1) return coords.mindLayer;
-  return coordSvg(
-    <>
-      {coords.lit}
-      <g opacity={sink}>{coords.mind}</g>
-    </>,
   );
 }
 
@@ -707,7 +689,10 @@ export function GestureOverlay({
   // One wrapper for both gesture kinds. `BOARD_GESTURE_CLASS` is the single
   // hook the PNG export filters on, so a branch that grew its own <svg> and
   // missed the class would bake the in-flight preview into a user's 1440×1440
-  // export with nothing failing.
+  // export with nothing failing. The wrapper is its own root <svg> rather than
+  // a <g> in the arrows' plane because html-to-image clones an <svg> whole
+  // (`cloneNode(true)`) and never runs `filter` on its descendants: a classed
+  // <g> inside a shared plane would ship in every export.
   const body =
     gesture.kind === 'annotate' ? (
       gesture.over == null ? null : gesture.over !== gesture.from ? (
@@ -934,8 +919,7 @@ export function Board({
     : null;
 
   const sink = mindSink(mind, revealedAt, time);
-  const boardVoid = voidLayer(sink);
-  const coordinates = coordLayer(sink, orientation);
+  const coords = COORDS[orientation];
   // Outside mind mode every piece shares one strength (the reveal fade-up, or
   // a saturated 1 for scripts that never darken), so it is computed once here
   // instead of per piece per frame.
@@ -984,14 +968,14 @@ export function Board({
       >
         {/* squares */}
         <BoardLayer>
-          {CHECK_GLOW_DEFS}
+          {BOARD_DEFS}
           {/* Once the void is fully sunk it is opaque, so the lit squares
              underneath are pure cost — drop them for the rest of the phase. */}
           {sink < 1 && SQUARE_RECTS}
 
           {/* The void sinks in over the lit squares; every overlay below
              renders on top of it, so the alarms keep carrying the light. */}
-          {boardVoid}
+          {sink > 0 && <g opacity={sink}>{VOID_RECTS}</g>}
 
           {lastMove &&
             lastMoveSquares(lastMove).map(({ f, r, fill, alpha }, i) => (
@@ -1017,16 +1001,9 @@ export function Board({
           {/* Check glow: vermillion radial under the checked king. A board
              state (not a timed overlay), so it persists while the check
              lasts and clears the moment the position resolves it. */}
-          {checkView && checkOpacity > 0 && (
-            <rect
-              x={checkView.x * SQ}
-              y={checkView.y * SQ}
-              width={SQ}
-              height={SQ}
-              fill="url(#board-check-glow)"
-              opacity={checkOpacity}
-            />
-          )}
+          {checkView &&
+            checkOpacity > 0 &&
+            squareRect(checkView, 'url(#board-check-glow)', checkOpacity)}
         </BoardLayer>
 
         {/* Not a `BoardLayer`: the pieces ride HTML divs so their transforms
@@ -1066,14 +1043,14 @@ export function Board({
           })}
         </div>
 
-        {/* Mid-ramp only: an opaque base with one fading layer over it, the
-           same compositing rule the squares use. Cross-fading both at once
-           would dip the labels to ~72% coverage at the midpoint. */}
-        {coordinates}
-
-        {/* arrows overlay — sits above pieces so annotations land on top */}
+        {/* coordinates, then arrows — above pieces so annotations land on top */}
         <BoardLayer z={BOARD_LAYER_Z.overlay}>
-          {ARROW_SHADOW_DEFS}
+          {/* Both sets draw only mid-ramp: an opaque base with one fading
+             layer over it, the same compositing rule the squares use.
+             Cross-fading both at once would dip the labels to ~72% coverage
+             at the midpoint. */}
+          {sink < 1 && coords.lit}
+          {sink > 0 && <g opacity={sink}>{coords.mind}</g>}
           <g filter="url(#arrow-shadow)">
             {arrowShapes.map(({ arrow: a, d, guideD, maskId }, i) => {
               if (!d) return null;
@@ -1083,22 +1060,21 @@ export function Board({
               const draw = timedProgress(age, ARROW_DRAW_DURATION);
               return (
                 <g key={`arr-${a.from}-${a.to}-${a.t}-${i}`} opacity={opacity}>
-                  <defs>
-                    <mask id={maskId} maskUnits="userSpaceOnUse">
-                      <rect x="0" y="0" width={BOARD_SIZE} height={BOARD_SIZE} fill="black" />
-                      <path
-                        d={guideD}
-                        fill="none"
-                        stroke="white"
-                        strokeWidth="86"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        pathLength={1}
-                        strokeDasharray={1}
-                        strokeDashoffset={1 - draw}
-                      />
-                    </mask>
-                  </defs>
+                  {/* A mask never renders in place, so it needs no <defs>. */}
+                  <mask id={maskId} maskUnits="userSpaceOnUse">
+                    <rect x="0" y="0" width={BOARD_SIZE} height={BOARD_SIZE} fill="black" />
+                    <path
+                      d={guideD}
+                      fill="none"
+                      stroke="white"
+                      strokeWidth="86"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      pathLength={1}
+                      strokeDasharray={1}
+                      strokeDashoffset={1 - draw}
+                    />
+                  </mask>
                   <path
                     d={d}
                     fill={tokens.boardArrow}
@@ -1140,7 +1116,6 @@ export function Board({
            scale with the board's viewBox without container queries. */}
         {lastMove?.annotation && (
           <BoardLayer z={BOARD_LAYER_Z.badge}>
-            {ANNOTATION_BADGE_SHADOW_DEFS}
             {(() => {
               const annotation = lastMove.annotation;
               const mark = ANNOTATION_MARKS[annotation];
