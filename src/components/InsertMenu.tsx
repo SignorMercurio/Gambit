@@ -10,8 +10,14 @@
 // stamping policy, collision stepping, and the paused-playhead landing are the
 // gestures' rules verbatim — this is another way to type a line, not a second
 // way to edit state.
+//
+// It owns its open flag and the `/` shortcut. Mounting is the gate: the menu is
+// rendered only in the Script tab's Moves view outside present mode, so `/`
+// does nothing wherever the result of pressing it couldn't be shown, and
+// leaving the view drops the open flag with the component instead of
+// reopening on return.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CommandEntry } from '../lib/commands';
 import { AUTHORED_ELSEWHERE_COMMANDS, INSERTABLE_COMMANDS } from '../lib/commands';
 import { markerColors } from '../lib/tokens';
@@ -35,8 +41,6 @@ function CommandFace({ command }: { command: CommandEntry }) {
 }
 
 type InsertMenuProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   onInsert: (body: string) => void;
   // Where the line will land, already formatted. Shown on the trigger so the
   // playhead's role is visible before the menu is ever opened.
@@ -54,9 +58,31 @@ const ELSEWHERE_ROWS = AUTHORED_ELSEWHERE_COMMANDS.map((c) => (
   </li>
 ));
 
-export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMenuProps) {
+export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
+  const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // `/` opens the menu. Its guard is narrower than the transport's: the
+  // transport keys must stay off every control (Space would re-trigger a
+  // focused button), but `/` is only ever ambiguous inside real text entry,
+  // and blocking it on buttons would kill the shortcut exactly when focus is
+  // parked on the move list. A PNG export makes `main` `inert`, which
+  // stops clicks but not a window listener — so the key checks it too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/') return;
+      if (
+        e.target instanceof HTMLElement &&
+        e.target.closest('input, textarea, [contenteditable="true"]')
+      ) return;
+      if (triggerRef.current?.closest('[inert]')) return;
+      e.preventDefault();
+      setOpen(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Same mechanism as the event list and the pin row: the command rows cost
   // one Tab stop, and Up/Down walk them.
@@ -68,9 +94,9 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
   // Closing always returns focus to the trigger — a menu that dismisses into
   // nowhere strands the keyboard.
   const close = useCallback(() => {
-    onOpenChange(false);
+    setOpen(false);
     triggerRef.current?.focus();
-  }, [onOpenChange]);
+  }, []);
 
   // This component sits in the default view, so it re-renders on every
   // animation frame of playback. `onInsert` closes over the playhead and so
@@ -123,11 +149,11 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
       const target = e.target;
       if (!(target instanceof Node)) return;
       if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      onOpenChange(false);
+      setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [open, onOpenChange]);
+  }, [open]);
 
   return (
     <div className="insert-dock">
@@ -160,7 +186,7 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
         type="button"
         className="insert-trigger"
         aria-expanded={open}
-        onClick={() => onOpenChange(!open)}
+        onClick={() => setOpen(!open)}
       >
         <span className="insert-plus" aria-hidden="true">
           +

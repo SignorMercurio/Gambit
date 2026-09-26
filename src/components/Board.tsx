@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { BOARD_GESTURE_CLASS } from '../lib/boardExport';
 import { Piece } from './Piece';
-import { idxToSq, sqToIdx } from '../lib/chess';
+import { idxToSq, legalTargets, sqToIdx, type GameState } from '../lib/chess';
 import {
   boardViewPosition,
   squareViewPosition,
@@ -85,7 +85,9 @@ type BoardProps = {
   // text stays the single source of truth. Mouse-only by design: this is a
   // desktop screen-recording tool and right-button gestures need a mouse.
   interactive: boolean;
-  legalTargets: (from: string) => ReadonlySet<string>;
+  // The frame's position, for the gesture's legality questions. The same
+  // snapshot value the board draws from, never a copy of it.
+  chessState: GameState;
   onMoveGesture: (from: string, to: string) => void;
   onArrowGesture: (from: string, to: string) => void;
   onHighlightGesture: (sq: string) => void;
@@ -742,7 +744,7 @@ export function Board({
   time,
   orientation,
   interactive,
-  legalTargets,
+  chessState,
   onMoveGesture,
   onArrowGesture,
   onHighlightGesture,
@@ -787,11 +789,12 @@ export function Board({
 
   // A new position makes the cached hover answer wrong on the very same
   // square — the piece that could move a moment ago may be the opponent's now.
-  // `legalTargets`'s identity changes with the position, so it is the signal.
+  // `chessState` is an immutable value whose identity changes with the
+  // position, so it is the signal.
   useEffect(() => {
     hoverSqRef.current = null;
     setHoverGrab(false);
-  }, [legalTargets, interactive]);
+  }, [chessState, interactive]);
 
   // Map a pointer event to the square under it, or null outside the board.
   const squareAtPointer = (e: React.PointerEvent): string | null => {
@@ -828,7 +831,7 @@ export function Board({
       setGesture(beginAnnotationGesture(owner, sq, onArrowGesture, onHighlightGesture));
       return;
     }
-    const targets = legalTargets(sq);
+    const targets = legalTargets(chessState, sq);
     if (targets.size === 0) {
       onMoveRejected(sq);
       return;
@@ -844,7 +847,7 @@ export function Board({
     const sq = squareAtPointer(e);
     if (sq === hoverSqRef.current) return;
     hoverSqRef.current = sq;
-    setHoverGrab(sq != null && legalTargets(sq).size > 0);
+    setHoverGrab(sq != null && legalTargets(chessState, sq).size > 0);
   };
 
   const onGesturePointerMove = (e: React.PointerEvent) => {

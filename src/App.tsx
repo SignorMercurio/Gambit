@@ -1,7 +1,7 @@
 // Main app: orchestrates state from a script, drives playback,
 // renders the board, the timeline scrubber, and the editor panel.
 
-import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Board } from './components/Board';
 import {
   BOARD_EXPORT_SIZE,
@@ -49,20 +49,30 @@ import {
 } from './lib/playback';
 
 type NarrationTrack = { url: string; name: string; duration: number };
-type BoardExportState = 'idle' | 'exporting' | 'success' | 'error';
+// The failure message exists only in the error state, so the two cannot
+// disagree about whether the last export failed.
+type BoardExportState =
+  | { status: 'idle' | 'exporting' | 'success' }
+  | { status: 'error'; message: string };
 type BoardExportOperation = {
   controller: AbortController;
   done: Promise<void>;
   release: () => void;
 };
-// Just the surfaces where a printable character means "type this character".
-// Narrower than the transport's interactive-control guard on purpose: see the
-// `/` branch in the window keydown listener.
-function isTextEntryTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && Boolean(
-    target.closest('input, textarea, [contenteditable="true"]'),
-  );
-}
+// Element ids for ARIA wiring. Literals rather than `useId`: there is one App
+// per document and no server render, so a fixed name is already unique — the
+// same reason `start-fen` and `subtitle-text` were always literals.
+const editorLabelId = 'script-editor-label';
+const subtitleLabelId = 'subtitle-label';
+const narrationLabelId = 'narration-label';
+const narrationFileInputId = 'narration-file';
+const narrationErrorId = 'narration-error';
+const scriptImportErrorId = 'script-import-error';
+const subtitleImportErrorId = 'subtitle-import-error';
+const setupTabId = 'setup-tab';
+const scriptTabId = 'script-tab';
+const panelId = 'side-panel';
+const fenErrorId = 'fen-error';
 
 // How many error rows the band shows before collapsing the rest behind a
 // count. Three keeps the band a fixed, readable strip: the common case (one
@@ -70,13 +80,13 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 // burying it in a 140px scroll well.
 const ERRORS_COLLAPSED_ROWS = 3;
 
-const EXPORT_LABELS: Record<BoardExportState, string> = {
+const EXPORT_LABELS: Record<BoardExportState['status'], string> = {
   idle: 'Export PNG',
   exporting: 'Exporting…',
   success: 'Saved',
   error: 'Retry PNG',
 };
-const EXPORT_GLYPHS: Record<BoardExportState, string> = {
+const EXPORT_GLYPHS: Record<BoardExportState['status'], string> = {
   idle: 'PNG',
   exporting: '…',
   success: '✓',
@@ -271,13 +281,11 @@ export default function App() {
   // and the subtitles, kept in IndexedDB because they do not fit localStorage.
   const [narration, setNarration] = useState<NarrationTrack | null>(null);
   const [narrationError, setNarrationError] = useState<string | null>(null);
-  const pendingNarrationRef = useRef<{
-    url: string;
-    probe: HTMLAudioElement;
-  } | null>(null);
-  // Latched by any deliberate act on the track — importing or removing — and
-  // never unlatched: it exists only to stop the restore from overruling one.
-  const narrationChosenRef = useRef(false);
+  // Bumped by every deliberate act on the track — importing or removing — and
+  // by unmount. A probe or restore carries the number it started under and
+  // commits only if it is still current, so the latest act wins, a remove
+  // beats any probe in flight, and the restore never overrules a pick.
+  const narrationRequestRef = useRef(0);
 
   const duration = useMemo(() => {
     return playbackDuration(
@@ -313,10 +321,6 @@ export default function App() {
   // default survive a junk draft rather than reading as muted.
   const [moveSoundRaw, setMoveSoundDraft] = useDraftText(DRAFT_KEYS.moveSound, '1');
   const moveSoundOn = moveSoundEnabled(moveSoundRaw);
-  // The insert menu only exists in the Moves view of the Script tab; `/` is
-  // inert everywhere else so the key never fires at a surface that can't show
-  // the result of pressing it.
-  const canInsert = !present && tab === 'script' && scriptView === 'moves';
   // Chrome (floating transport + cursor) fades out while present + playing +
   // pointer idle; pointer movement or contact brings it back.
   const [chromeHidden, setChromeHidden] = useState(false);
@@ -330,21 +334,17 @@ export default function App() {
   // dep would re-identify it (and the window keydown listener) every frame.
   // exportBoard reads it after its awaits, when a closed-over `time` is stale.
   const timeRef = useLatest(time);
-  // Read by the window keydown listener, which must not re-subscribe every
-  // time the user flips a tab.
-  const canInsertRef = useLatest(canInsert);
   // Pre-insert script snapshot for one-step undo of the last board gesture or
   // structured edit. Hand edits clear it so undo never reverts typing.
   const [gestureUndo, setGestureUndo] = useState<string | null>(null);
-  const [insertOpen, setInsertOpen] = useState(false);
   const [errorsExpanded, setErrorsExpanded] = useState(false);
   const [scriptEditError, setScriptEditError] = useState<string | null>(null);
   const [scriptImportError, setScriptImportError] = useState<string | null>(null);
   const [subtitleImportError, setSubtitleImportError] = useState<string | null>(null);
-  const [boardExportState, setBoardExportState] = useState<BoardExportState>('idle');
-  const [boardExportError, setBoardExportError] = useState<string | null>(null);
+  const [boardExport, setBoardExport] = useState<BoardExportState>({ status: 'idle' });
+  const boardExportError = boardExport.status === 'error' ? boardExport.message : null;
   const boardExportRef = useRef<BoardExportOperation | null>(null);
-  const exporting = boardExportState === 'exporting';
+  const exporting = boardExport.status === 'exporting';
 
   // Imports may finish during a PNG capture. Wait for that single operation,
   // then let the import's own identity check decide whether it is still current.
@@ -357,25 +357,6 @@ export default function App() {
     setTime((t) => Math.min(t, duration));
   }, [duration, exporting]);
 
-  // Leaving the Moves view unmounts the menu's trigger; drop the open flag with
-  // it so returning doesn't land on a panel the user never reopened.
-  useEffect(() => {
-    if (!canInsert) setInsertOpen(false);
-  }, [canInsert]);
-
-  const editorLabelId = useId();
-  const subtitleLabelId = useId();
-  const narrationLabelId = useId();
-  const narrationFileInputId = useId();
-  const narrationErrorId = useId();
-  const scriptImportErrorId = useId();
-  const subtitleImportErrorId = useId();
-  const setupTabId = useId();
-  const scriptTabId = useId();
-  const panelId = useId();
-  const fenErrorId = useId();
-  const setupTabRef = useRef<HTMLButtonElement>(null);
-  const scriptTabRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const boardExportResetRef = useRef<number | null>(null);
@@ -390,7 +371,9 @@ export default function App() {
     setTab(next);
     // Both tab buttons stay mounted, so focus can follow selection
     // synchronously without inserting an uncancelled frame of latency.
-    (next === 'script' ? scriptTabRef : setupTabRef).current?.focus();
+    e.currentTarget
+      .querySelector<HTMLElement>(`#${next === 'script' ? scriptTabId : setupTabId}`)
+      ?.focus();
   };
 
   // The one way the script text is replaced: four pieces move with it, or the
@@ -448,38 +431,26 @@ export default function App() {
     );
   };
 
-  const cancelPendingNarration = useCallback(() => {
-    const pending = pendingNarrationRef.current;
-    pendingNarrationRef.current = null;
-    if (!pending) return;
-    // Nulling the ref is the whole cancel: both probe handlers open with an
-    // identity guard against it, so a late fire is already a no-op. Detach and
-    // reset the probe too, so superseded large files stop loading metadata.
-    pending.probe.onloadedmetadata = null;
-    pending.probe.onerror = null;
-    pending.probe.removeAttribute('src');
-    pending.probe.load();
-    URL.revokeObjectURL(pending.url);
-  }, []);
-
   // Shared by the file picker and the restore-on-load below: a separate restore
   // path would be a second definition of "playable".
   const adoptNarration = useCallback(
-    (blob: Blob, name: string, source: 'import' | 'restore') => {
-      cancelPendingNarration();
+    (blob: Blob, name: string, source: 'import' | 'restore', request: number) => {
       const url = URL.createObjectURL(blob);
       // Probe metadata off-DOM so a broken file never becomes the live track.
-      // Only the latest selection may commit: a slow earlier probe must not
-      // overwrite a newer file or resurrect audio after Remove.
+      // Only the latest request may commit: a slow earlier probe must not
+      // overwrite a newer file or resurrect audio after Remove. A superseded
+      // probe still settles, and settling is where it frees its URL.
       const probe = new Audio();
-      const pending = { url, probe };
-      pendingNarrationRef.current = pending;
       probe.preload = 'metadata';
       probe.src = url;
       probe.onloadedmetadata = async () => {
+        // Each probe settles once; a later error must not reach a live track.
+        probe.onloadedmetadata = probe.onerror = null;
         await waitForBoardExport();
-        if (pendingNarrationRef.current !== pending) return;
-        pendingNarrationRef.current = null;
+        if (narrationRequestRef.current !== request) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         const audioDuration = Number.isFinite(probe.duration)
           ? Math.min(probe.duration, MAX_SAFE_PLAYBACK_SECONDS)
           : 0;
@@ -490,9 +461,9 @@ export default function App() {
         if (source === 'import') void saveNarration({ blob, name });
       };
       probe.onerror = () => {
-        if (pendingNarrationRef.current !== pending) return;
-        pendingNarrationRef.current = null;
+        probe.onloadedmetadata = probe.onerror = null;
         URL.revokeObjectURL(url);
+        if (narrationRequestRef.current !== request) return;
         if (source === 'import') {
           setNarrationError(`Could not decode audio file: "${name}"`);
           // No `clearNarration` here on purpose: a rejected import never
@@ -506,35 +477,36 @@ export default function App() {
         void clearStoredNarration();
       };
     },
-    [cancelPendingNarration, waitForBoardExport],
+    [waitForBoardExport],
   );
 
   const onNarrationFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (boardExportRef.current) return;
     const file = takeSelectedFile(e);
     if (!file) return;
-    narrationChosenRef.current = true;
-    adoptNarration(file, file.name, 'import');
+    adoptNarration(file, file.name, 'import', ++narrationRequestRef.current);
   };
 
   // Restoring is async, and an author who picks a file before it lands must not
   // have last session's track land on top. The ref, not `narration` state: a
   // pick is a decision the moment it is made, well before the probe commits it.
+  // The restore claims no number of its own, so any act since it started wins.
+  // Cleanup (unmount) bumps the counter, superseding the restore and every
+  // probe still in flight.
   useEffect(() => {
-    let cancelled = false;
+    const request = narrationRequestRef.current;
     void loadNarration().then((stored) => {
-      if (cancelled || !stored || narrationChosenRef.current) return;
-      adoptNarration(stored.blob, stored.name, 'restore');
+      if (!stored || narrationRequestRef.current !== request) return;
+      adoptNarration(stored.blob, stored.name, 'restore', request);
     });
     return () => {
-      cancelled = true;
+      narrationRequestRef.current++;
     };
   }, [adoptNarration]);
 
   const clearNarration = () => {
     if (boardExportRef.current) return;
-    narrationChosenRef.current = true;
-    cancelPendingNarration();
+    narrationRequestRef.current++;
     setNarrationError(null);
     setNarration(null);
     void clearStoredNarration();
@@ -545,8 +517,6 @@ export default function App() {
   useEffect(() => () => {
     if (narration) URL.revokeObjectURL(narration.url);
   }, [narration]);
-
-  useEffect(() => cancelPendingNarration, [cancelPendingNarration]);
 
   const lastTickRef = useRef<number | null>(null);
   useEffect(() => {
@@ -576,40 +546,38 @@ export default function App() {
   }, [playing, speed, duration]);
 
   // Narration follows the playback clock; the clock stays the single source
-  // of truth so the board remains fully determined by script + time. Two
-  // couplings: idempotent state application (rate + play/pause, re-applied
-  // when the <audio> element remounts on narration change), and a drift snap
-  // that also covers seeks.
-  useEffect(() => {
-    const el = audioRef.current;
-    if (!el || !narration) return;
-    el.playbackRate = speed;
-    if (playing) {
-      el.play().catch(() => {
-        // Autoplay rejection: playback starts from a user gesture in every
-        // Gambit flow, but if a browser still refuses, stay silent.
-      });
-    } else {
-      el.pause();
-    }
-  }, [playing, speed, narration]);
-
-  // 0.25s tick granularity matches the snap tolerance below: any seek larger
-  // than the tolerance crosses a tick boundary, while steady playback runs
-  // this check ~4x/s instead of every animation frame. `time` is deliberately
-  // left out of the effect's deps and sampled through narrationDriftTick.
+  // of truth so the board remains fully determined by script + time. One
+  // idempotent application: rate, a drift snap that also covers seeks, and
+  // play/pause — re-applied when the <audio> element remounts on narration
+  // change. Past the track's end the element is paused, never played: `play()`
+  // on an ended element would restart it from zero. A seek back into the track
+  // snaps first, which clears `ended`, so the resume below still happens.
+  //
+  // 0.25s tick granularity matches the snap tolerance: any seek larger than the
+  // tolerance crosses a tick boundary, while steady playback runs this ~4x/s
+  // instead of every animation frame. `time` is deliberately left out of the
+  // effect's deps and sampled through narrationDriftTick.
   const narrationDriftTick = narration ? Math.round(time * 4) : 0;
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !narration) return;
+    el.playbackRate = speed;
     const target = Math.min(time, narration.duration);
-    if (Math.abs(el.currentTime - target) > 0.25) {
-      el.currentTime = target;
-      if (playing && time < narration.duration && el.paused) {
-        el.play().catch(() => {});
+    if (Math.abs(el.currentTime - target) > 0.25) el.currentTime = target;
+    if (playing && time < narration.duration) {
+      // `ended` too: the element can finish a few ticks before the clock
+      // reaches `narration.duration` (audio clock drift, or a VBR length
+      // estimate), and this runs every tick, not only on a state change.
+      if (el.paused && !el.ended) {
+        el.play().catch(() => {
+          // Autoplay rejection: playback starts from a user gesture in every
+          // Gambit flow, but if a browser still refuses, stay silent.
+        });
       }
+    } else {
+      el.pause();
     }
-  }, [narrationDriftTick, narration, playing]);
+  }, [narrationDriftTick, narration, playing, speed]);
 
   const { scriptErrors, snapshots, rejectedEventIndexes } = worldBuild;
 
@@ -690,11 +658,6 @@ export default function App() {
     if (gestureIsStale()) return;
     applyEditPlan(planLineInsert(events, scriptText, time, body));
   };
-
-  const legalTargets = useCallback(
-    (from: string) => Chess.legalTargets(world.chessState, from),
-    [world.chessState],
-  );
 
   // A press that can't start a move says why, in the EDIT row the planners
   // already write to, so gesture feedback has one home.
@@ -777,8 +740,7 @@ export default function App() {
       window.clearTimeout(boardExportResetRef.current);
       boardExportResetRef.current = null;
     }
-    setBoardExportError(null);
-    setBoardExportState('exporting');
+    setBoardExport({ status: 'exporting' });
     setPlaying(false);
     try {
       // One ceiling over the whole operation, not just the rasterize: the frame
@@ -804,9 +766,9 @@ export default function App() {
         operation.controller.signal,
       );
       if (boardExportRef.current !== operation) return;
-      setBoardExportState('success');
+      setBoardExport({ status: 'success' });
       boardExportResetRef.current = window.setTimeout(() => {
-        setBoardExportState('idle');
+        setBoardExport({ status: 'idle' });
         boardExportResetRef.current = null;
       }, 1800);
     } catch (error) {
@@ -815,8 +777,7 @@ export default function App() {
       operation.controller.abort();
       if (boardExportRef.current !== operation) return;
       const detail = error instanceof Error ? error.message : 'Unknown browser error.';
-      setBoardExportError(`Could not export board PNG: ${detail}`);
-      setBoardExportState('error');
+      setBoardExport({ status: 'error', message: `Could not export board PNG: ${detail}` });
     } finally {
       if (boardExportRef.current === operation) {
         boardExportRef.current = null;
@@ -832,7 +793,7 @@ export default function App() {
   const exportButtonProps = {
     type: 'button' as const,
     onClick: exportBoard,
-    disabled: boardExportState === 'exporting',
+    disabled: exporting,
     'aria-label': `Export current board as a ${BOARD_EXPORT_SIZE} by ${BOARD_EXPORT_SIZE} PNG`,
     title: boardExportError ?? 'Export current board as PNG',
   };
@@ -852,10 +813,10 @@ export default function App() {
   // Present-mode chrome auto-hide: fade the floating transport and cursor
   // after the pointer is idle during playback; pointer movement or contact
   // brings them back. Re-arms on play/pause so pausing always reveals the
-  // chrome. The pointer handler fires at sample rate during a recording, so it
-  // dispatches only on a real reveal — the board is already re-rendering every
-  // frame, and a redundant setState here would schedule a second pass on top.
-  const chromeHiddenRef = useLatest(chromeHidden);
+  // chrome. The pointer handler fires at sample rate during a recording; an
+  // unconditional `setChromeHidden(false)` is fine there because useState
+  // bails out on an unchanged value — at worst one extra App pass that
+  // re-renders no child.
   useEffect(() => {
     if (!present) {
       setChromeHidden(false);
@@ -863,7 +824,7 @@ export default function App() {
     }
     let timer = 0;
     const arm = () => {
-      if (chromeHiddenRef.current) setChromeHidden(false);
+      setChromeHidden(false);
       window.clearTimeout(timer);
       if (playing) timer = window.setTimeout(() => setChromeHidden(true), PRESENT_IDLE_MS);
     };
@@ -880,7 +841,7 @@ export default function App() {
       window.removeEventListener('pointerdown', arm);
       window.removeEventListener('focusin', arm);
     };
-  }, [present, playing, chromeHiddenRef]);
+  }, [present, playing]);
 
   // The one transport keymap (Space toggle, ←/→ ±1s), shared by the global
   // shortcut listener and the scrub input's handler so the two can't drift
@@ -918,23 +879,13 @@ export default function App() {
         setPresent(false);
         return;
       }
-      // `/` opens the insert menu. Its guard is narrower than the transport's:
-      // the transport keys must stay off every control (Space would re-trigger
-      // a focused button), but `/` is only ever ambiguous inside real text
-      // entry, and blocking it on buttons would kill the shortcut exactly when
-      // focus is parked on the move list.
-      if (e.key === '/' && !isTextEntryTarget(e.target)) {
-        if (!canInsertRef.current) return;
-        e.preventDefault();
-        setInsertOpen(true);
-        return;
-      }
-      // The wider interactive set builds on isTextEntryTarget so the
-      // text-entry selectors are spelled once.
+      // Transport keys stay off every text entry and interactive control:
+      // Space would re-trigger a focused button. (`/` is InsertMenu's own.)
       if (
-        isTextEntryTarget(e.target) ||
-        (e.target instanceof HTMLElement &&
-          e.target.closest('button, select, [role="button"], [role="tab"]'))
+        e.target instanceof HTMLElement &&
+        e.target.closest(
+          'input, textarea, [contenteditable="true"], button, select, [role="button"], [role="tab"]',
+        )
       ) return;
       // Space scrolls the page by default; the arrows keep their native
       // scroll behavior at window level.
@@ -947,10 +898,7 @@ export default function App() {
 
 
   const activeSubtitle = getActiveSubtitle(subtitleCues, time);
-  const activeSubtitleText = useMemo(
-    () => activeSubtitle ? formatSubtitleText(activeSubtitle.text) : '',
-    [activeSubtitle],
-  );
+  const activeSubtitleText = activeSubtitle ? formatSubtitleText(activeSubtitle.text) : '';
 
   // The ruler's ticks depend only on the duration; memoized like
   // `timelinePins` so per-frame renders of `.controls` reuse the row.
@@ -1059,67 +1007,46 @@ export default function App() {
 
   // Rendered at the bottom of whichever panel page is open, so an error
   // anywhere stays visible on both pages; one ordered list so the band can
-  // count itself.
-  const errorRows = useMemo(() => {
-    // Rows are keyed by index, not `tag`: `S{line}` is not unique (one SRT
-    // line can raise two errors).
-    const rows: { tag: string; text: string; id?: string }[] = [];
-    if (initialSetup.error) rows.push({ tag: 'FEN', text: initialSetup.error, id: fenErrorId });
-    if (narrationError) rows.push({ tag: 'AUD', text: narrationError, id: narrationErrorId });
-    if (boardExportError) rows.push({ tag: 'PNG', text: boardExportError });
-    if (scriptEditError) rows.push({ tag: 'EDIT', text: scriptEditError });
-    if (scriptImportError) {
-      rows.push({ tag: 'SCRIPT', text: scriptImportError, id: scriptImportErrorId });
-    }
-    if (subtitleImportError) {
-      rows.push({ tag: 'SRT', text: subtitleImportError, id: subtitleImportErrorId });
-    }
-    // Already line-sorted by buildWorld; the band preserves that order.
-    for (const er of scriptErrors) rows.push({ tag: `L${er.line}`, text: er.error });
-    for (const er of subtitleResult.errors) rows.push({ tag: `S${er.line}`, text: er.error });
-    return rows;
-  }, [
-    initialSetup.error,
-    narrationError,
-    boardExportError,
-    scriptImportError,
-    subtitleImportError,
-    scriptEditError,
-    scriptErrors,
-    subtitleResult.errors,
-    fenErrorId,
-    narrationErrorId,
-    scriptImportErrorId,
-    subtitleImportErrorId,
-  ]);
+  // count itself. Rows are keyed by index, not `tag`: `S{line}` is not unique
+  // (one SRT line can raise two errors).
+  const errorRows: { tag: string; text: string; id?: string }[] = [];
+  if (initialSetup.error) errorRows.push({ tag: 'FEN', text: initialSetup.error, id: fenErrorId });
+  if (narrationError) errorRows.push({ tag: 'AUD', text: narrationError, id: narrationErrorId });
+  if (boardExportError) errorRows.push({ tag: 'PNG', text: boardExportError });
+  if (scriptEditError) errorRows.push({ tag: 'EDIT', text: scriptEditError });
+  if (scriptImportError) {
+    errorRows.push({ tag: 'SCRIPT', text: scriptImportError, id: scriptImportErrorId });
+  }
+  if (subtitleImportError) {
+    errorRows.push({ tag: 'SRT', text: subtitleImportError, id: subtitleImportErrorId });
+  }
+  // Already line-sorted by buildWorld; the band preserves that order.
+  for (const er of scriptErrors) errorRows.push({ tag: `L${er.line}`, text: er.error });
+  for (const er of subtitleResult.errors) errorRows.push({ tag: `S${er.line}`, text: er.error });
 
-  const errorsBlock = useMemo(() => {
-    if (errorRows.length === 0) return false;
-    const collapsed = !errorsExpanded && errorRows.length > ERRORS_COLLAPSED_ROWS;
-    const shown = collapsed ? errorRows.slice(0, ERRORS_COLLAPSED_ROWS) : errorRows;
-    return (
-      // role="status" (implicitly polite): errors persist and update as the
-      // user types — an assertive alert would interrupt every edit.
-      <div className={`errors${errorsExpanded ? ' errors--expanded' : ''}`} role="status">
-        {shown.map((row, i) => (
-          <div key={i} className="err-row">
-            <span className="err-line">{row.tag}</span>
-            <span id={row.id}>{row.text}</span>
-          </div>
-        ))}
-        {errorRows.length > ERRORS_COLLAPSED_ROWS && (
-          <button
-            type="button"
-            className="errors-toggle"
-            aria-expanded={errorsExpanded}
-            onClick={() => setErrorsExpanded((v) => !v)}
-          >
-            {collapsed ? `Show ${errorRows.length - ERRORS_COLLAPSED_ROWS} more` : 'Show fewer'}
-          </button>
-        )}
-      </div>
-    );
-  }, [errorRows, errorsExpanded]);
+  const errorsCollapsed = !errorsExpanded && errorRows.length > ERRORS_COLLAPSED_ROWS;
+  const errorsBlock = errorRows.length > 0 && (
+    // role="status" (implicitly polite): errors persist and update as the
+    // user types — an assertive alert would interrupt every edit.
+    <div className={`errors${errorsExpanded ? ' errors--expanded' : ''}`} role="status">
+      {(errorsCollapsed ? errorRows.slice(0, ERRORS_COLLAPSED_ROWS) : errorRows).map((row, i) => (
+        <div key={i} className="err-row">
+          <span className="err-line">{row.tag}</span>
+          <span id={row.id}>{row.text}</span>
+        </div>
+      ))}
+      {errorRows.length > ERRORS_COLLAPSED_ROWS && (
+        <button
+          type="button"
+          className="errors-toggle"
+          aria-expanded={errorsExpanded}
+          onClick={() => setErrorsExpanded((v) => !v)}
+        >
+          {errorsCollapsed ? `Show ${errorRows.length - ERRORS_COLLAPSED_ROWS} more` : 'Show fewer'}
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div
@@ -1131,9 +1058,9 @@ export default function App() {
       {/* Narration track: invisible, driven entirely by the playback clock. */}
       {narration && <audio ref={audioRef} src={narration.url} preload="auto" />}
       <div className="sr-only" role="status" aria-live="polite">
-        {boardExportState === 'exporting' && 'Exporting board PNG.'}
-        {boardExportState === 'success' && 'Board PNG downloaded.'}
-        {boardExportState === 'error' && boardExportError}
+        {boardExport.status === 'exporting' && 'Exporting board PNG.'}
+        {boardExport.status === 'success' && 'Board PNG downloaded.'}
+        {boardExportError}
       </div>
       <header className="header" {...(exporting ? { inert: '' } : {})}>
         <div className="title-block">
@@ -1151,10 +1078,10 @@ export default function App() {
             className="present-btn export-board-btn"
           >
             <span className="export-board-label-wide">
-              {EXPORT_LABELS[boardExportState]}
+              {EXPORT_LABELS[boardExport.status]}
             </span>
             <span className="export-board-label-compact" aria-hidden="true">
-              {EXPORT_GLYPHS[boardExportState]}
+              {EXPORT_GLYPHS[boardExport.status]}
             </span>
           </button>
           <button
@@ -1183,7 +1110,7 @@ export default function App() {
             time={time}
             orientation={orientation}
             interactive={tab === 'script' && !present && worldFrame.replaySourceEventIndex === null && !exporting}
-            legalTargets={legalTargets}
+            chessState={world.chessState}
             onMoveRejected={onMoveRejected}
             onMoveGesture={onMoveGesture}
             onArrowGesture={(from, to) => recordGestureLine(`${from}->${to}`)}
@@ -1276,7 +1203,7 @@ export default function App() {
                   {...exportButtonProps}
                   className="present-toggle"
                 >
-                  {EXPORT_GLYPHS[boardExportState]}
+                  {EXPORT_GLYPHS[boardExport.status]}
                 </button>
                 <button
                   type="button"
@@ -1330,7 +1257,6 @@ export default function App() {
                 aria-controls={panelId}
                 aria-selected={tab === 'script'}
                 tabIndex={tab === 'script' ? 0 : -1}
-                ref={scriptTabRef}
                 className="tab-btn"
                 onClick={() => setTab('script')}
               >
@@ -1343,7 +1269,6 @@ export default function App() {
                 aria-controls={panelId}
                 aria-selected={tab === 'setup'}
                 tabIndex={tab === 'setup' ? 0 : -1}
-                ref={setupTabRef}
                 className="tab-btn"
                 onClick={() => setTab('setup')}
               >
@@ -1433,8 +1358,6 @@ export default function App() {
                   {/* Insertion reuses recordGestureLine — the board gesture's
                       own commit path — rather than opening a second one. */}
                   <InsertMenu
-                    open={insertOpen}
-                    onOpenChange={setInsertOpen}
                     onInsert={recordGestureLine}
                     timeLabel={currentTimeText}
                   />
