@@ -225,7 +225,7 @@ function captureFlashVisual(age: number) {
   );
   return {
     opacity: Math.min(fadeIn, fadeOut),
-    scale: 0.45 + easeOutQuart(age / BOARD_OVERLAY_LIFETIME.captureFlash) * 1.85,
+    scale: 0.45 + timedProgress(age, BOARD_OVERLAY_LIFETIME.captureFlash) * 1.85,
   };
 }
 
@@ -530,6 +530,9 @@ const SQUARE_RECTS = squareRects(tokens.squareLight, tokens.squareDark);
 // board by `mindSink`. A layer rather than a fill swap so the sink follows the
 // playback clock (and so overlays keep landing on top of it).
 const VOID_RECTS = squareRects(tokens.mindVoidLight, tokens.mindVoidDark);
+// The fully-sunk steady state — the whole mind phase after the 0.6s ramp —
+// hoisted so it bails out on identity like the lit squares do.
+const VOID_G = <g>{VOID_RECTS}</g>;
 
 // Coordinates sit above enlarged Staunty pieces so file/rank labels remain
 // visible in recordings, but below annotation arrows: they open the arrows'
@@ -538,8 +541,9 @@ const VOID_RECTS = squareRects(tokens.mindVoidLight, tokens.mindVoidDark);
 // with the void (in the dark, the coordinates are the only orientation left,
 // so they must read at full strength). Each set is one hoisted fragment, so
 // a lit frame — every frame of an ordinary script — bails out on element
-// identity instead of reconciling 16 labels; under the mind <g> the fragment
-// is unwrapped and each label bails out on its own.
+// identity instead of reconciling 16 labels; so does the fully-sunk mind set
+// (`mindG`). Only the 0.6s ramp wraps a fresh <g>, whose labels bail out one
+// by one.
 // `ink` null means the per-square board pair; a color means the one bright
 // mind's-eye ink.
 const coordTexts = (ink: string | null, orientation: BoardOrientation) => (
@@ -561,10 +565,10 @@ const coordTexts = (ink: string | null, orientation: BoardOrientation) => (
     ))}
   </>
 );
-const coordSet = (orientation: BoardOrientation) => ({
-  lit: coordTexts(null, orientation),
-  mind: coordTexts(tokens.mindCoordInk, orientation),
-});
+const coordSet = (orientation: BoardOrientation) => {
+  const mind = coordTexts(tokens.mindCoordInk, orientation);
+  return { lit: coordTexts(null, orientation), mind, mindG: <g>{mind}</g> };
+};
 const COORDS = { white: coordSet('white'), black: coordSet('black') };
 
 // The board's stack, in one place: the code half of the layer table in
@@ -978,7 +982,7 @@ export function Board({
 
           {/* The void sinks in over the lit squares; every overlay below
              renders on top of it, so the alarms keep carrying the light. */}
-          {sink > 0 && <g opacity={sink}>{VOID_RECTS}</g>}
+          {sink >= 1 ? VOID_G : sink > 0 && <g opacity={sink}>{VOID_RECTS}</g>}
 
           {lastMove &&
             lastMoveSquares(lastMove).map(({ f, r, fill, alpha }, i) => (
@@ -1053,7 +1057,7 @@ export function Board({
              Cross-fading both at once would dip the labels to ~72% coverage
              at the midpoint. */}
           {sink < 1 && coords.lit}
-          {sink > 0 && <g opacity={sink}>{coords.mind}</g>}
+          {sink >= 1 ? coords.mindG : sink > 0 && <g opacity={sink}>{coords.mind}</g>}
           <g filter="url(#arrow-shadow)">
             {arrowShapes.map(({ arrow: a, d, guideD, maskId }, i) => {
               if (!d) return null;

@@ -1,6 +1,5 @@
-// Design tokens consumed by the JS/SVG layer (Board, App, MoveList,
-// InsertMenu) where CSS custom properties can't be used directly inside SVG
-// attributes or React style props.
+// Design tokens consumed by the JS/SVG layer, where CSS custom properties
+// can't be used directly inside SVG attributes or React style props.
 // Mirrored by the :root rule in src/styles.css; if you change a value here,
 // update there as well.
 

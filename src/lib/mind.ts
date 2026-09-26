@@ -12,7 +12,7 @@ export type MindWorld = {
   held: ReadonlySet<string>;
 };
 
-export type MindFrame = {
+type MindFrame = {
   touches: ReadonlyMap<string, number>;
   rehearsed: ReadonlySet<string>;
 };

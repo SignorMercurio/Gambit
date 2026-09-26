@@ -21,7 +21,7 @@ import * as Chess from './lib/chess';
 import { DEFAULT_SCRIPT, DEFAULT_SUBTITLES } from './lib/defaults';
 import { moveSoundEnabled, moveSoundKey, useMoveSound } from './lib/moveSound';
 import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from './lib/subtitles';
-import { InsertMenu } from './components/InsertMenu';
+import { InsertMenu, TEXT_ENTRY_SELECTOR } from './components/InsertMenu';
 import { MoveList } from './components/MoveList';
 import { SYNTAX_HINT } from './components/SyntaxHint';
 import { PresentationMoves } from './components/PresentationMoves';
@@ -324,6 +324,7 @@ export default function App() {
   // Chrome (floating transport + cursor) fades out while present + playing +
   // pointer idle; pointer movement or contact brings it back.
   const [chromeHidden, setChromeHidden] = useState(false);
+  const chromeHiddenRef = useLatest(chromeHidden);
   const scriptTextRef = useLatest(scriptText);
   // The pause-landing rule must follow the transport state at release, not
   // the pointer-down snapshot: playback can flip mid-drag (Space, auto-pause
@@ -813,10 +814,10 @@ export default function App() {
   // Present-mode chrome auto-hide: fade the floating transport and cursor
   // after the pointer is idle during playback; pointer movement or contact
   // brings them back. Re-arms on play/pause so pausing always reveals the
-  // chrome. The pointer handler fires at sample rate during a recording; an
-  // unconditional `setChromeHidden(false)` is fine there because useState
-  // bails out on an unchanged value — at worst one extra App pass that
-  // re-renders no child.
+  // chrome. The pointer handler fires at sample rate during a recording, so it
+  // only sets state when the chrome is actually hidden: useState's eager
+  // bail-out rarely applies while `setTime` updates App every frame, and each
+  // miss is a full extra App render pass.
   useEffect(() => {
     if (!present) {
       setChromeHidden(false);
@@ -824,7 +825,7 @@ export default function App() {
     }
     let timer = 0;
     const arm = () => {
-      setChromeHidden(false);
+      if (chromeHiddenRef.current) setChromeHidden(false);
       window.clearTimeout(timer);
       if (playing) timer = window.setTimeout(() => setChromeHidden(true), PRESENT_IDLE_MS);
     };
@@ -884,7 +885,7 @@ export default function App() {
       if (
         e.target instanceof HTMLElement &&
         e.target.closest(
-          'input, textarea, [contenteditable="true"], button, select, [role="button"], [role="tab"]',
+          `${TEXT_ENTRY_SELECTOR}, button, select, [role="button"], [role="tab"]`,
         )
       ) return;
       // Space scrolls the page by default; the arrows keep their native
@@ -1059,7 +1060,7 @@ export default function App() {
       {/* Narration track: invisible, driven entirely by the playback clock. */}
       {narration && <audio ref={audioRef} src={narration.url} preload="auto" />}
       <div className="sr-only" role="status" aria-live="polite">
-        {boardExport.status === 'exporting' && 'Exporting board PNG.'}
+        {exporting && 'Exporting board PNG.'}
         {boardExport.status === 'success' && 'Board PNG downloaded.'}
         {boardExportError}
       </div>

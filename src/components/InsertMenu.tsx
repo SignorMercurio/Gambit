@@ -24,6 +24,10 @@ import { markerColors } from '../lib/tokens';
 import { useLatest } from './useLatest';
 import { useRovingTabIndex } from './useRovingTabIndex';
 
+// What counts as typing, for every single-key shortcut: `/` here, and the
+// transport keys in App (which widen it to every interactive control).
+export const TEXT_ENTRY_SELECTOR = 'input, textarea, [contenteditable="true"]';
+
 // The two lists differ in one thing — whether the row is a button — so the face
 // itself is shared.
 function CommandFace({ command }: { command: CommandEntry }) {
@@ -74,7 +78,7 @@ export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
       if (e.key !== '/') return;
       if (
         e.target instanceof HTMLElement &&
-        e.target.closest('input, textarea, [contenteditable="true"]')
+        e.target.closest(TEXT_ENTRY_SELECTOR)
       ) return;
       if (triggerRef.current?.closest('[inert]')) return;
       e.preventDefault();
