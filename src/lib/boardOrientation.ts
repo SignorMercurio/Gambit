@@ -23,12 +23,8 @@ export function squareFromBoardView(
   return orientation === 'white' ? idxToSq(x, 7 - y) : idxToSq(7 - x, y);
 }
 
-// Same transform, entered from a square name. Every rendered layer holds
-// squares as strings (`hl e4`, `check.sq`, a gesture's origin) and had to
-// destructure `sqToIdx` itself just to call `boardViewPosition` — one site
-// called it twice in a single expression to fill both arguments. Named as the
-// inverse of `squareFromBoardView` so the module's two directions read as a
-// pair.
+// Same transform, entered from a square name — the inverse of
+// `squareFromBoardView` — so no layer bridges through `sqToIdx` itself.
 export function squareViewPosition(
   sq: string,
   orientation: BoardOrientation,

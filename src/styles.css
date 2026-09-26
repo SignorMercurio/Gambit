@@ -178,8 +178,8 @@
      The inset is shared with the bar's `bottom` so the two cannot disagree.
      The height is measured, not derived — the bar is content-sized, so nothing
      in CSS knows it. Measured at 80px with the default `.controls` padding;
-     the short-desktop tier tightens that padding and runs 72px, so the reserve
-     is ~8px of slack there rather than wrong. It is a token because the number
+     the short-desktop tiers put the bar in flow with a zero reserve, so the
+     number never applies there. It is a token because the number
      is also quoted in the floor rationale further down: named once, it is at
      least obvious where the other reader is. Do not turn it into a
      `min-height` on the bar — that would grow the 560px tier's transport by
@@ -240,7 +240,6 @@ body {
   font-family: var(--font-ui);
   background: var(--surface-app);
   color: var(--color-sodium-chalk);
-  min-height: 100%;
   overflow-x: hidden;
 }
 #root { min-height: 100vh; }
@@ -278,8 +277,7 @@ body {
    are the transport's (see .ctrl-btn) — shared by selector so the treatment
    can't drift; only label type, size and shape are local. */
 .present-btn,
-.present-toggle,
-.exit-present-btn {
+.present-toggle {
   position: relative;
   border: 0; cursor: pointer;
   font-family: var(--font-ui);
@@ -289,9 +287,7 @@ body {
 /* Hit-area extension: the visual stays small, the hit zone reaches 44 — the
    convention every sub-44px control here follows (.ctrl-btn, .speed-btn,
    .upload-btn). */
-.present-btn::before,
-.present-toggle::before,
-.exit-present-btn::before {
+.present-btn::before {
   content: '';
   position: absolute;
   inset: -5px -4px;
@@ -302,7 +298,6 @@ body {
    `.speed-btn`/`.view-btn`, whose hover and pressed states it does share: it is
    already 30px tall, so it needs 7 and not their 11. */
 .present-toggle::before,
-.exit-present-btn::before,
 .mute-btn::before {
   content: '';
   position: absolute;
@@ -355,7 +350,6 @@ body {
   letter-spacing: 0;
   line-height: 1.1;
   margin: 0;
-  color: var(--color-sodium-chalk);
 }
 .app-sub {
   font-size: 12.5px;
@@ -467,10 +461,8 @@ body {
   font-weight: 600;
   line-height: 1.36;
   letter-spacing: 0;
-  color: var(--color-sodium-chalk);
   text-wrap: balance;
   white-space: pre-line;
-  word-break: normal;
   overflow-wrap: anywhere;
   font-kerning: normal;
   text-rendering: optimizeLegibility;
@@ -516,15 +508,13 @@ body {
    brightening to chalk. Shared with present mode's ghost buttons. */
 .ctrl-btn,
 .present-btn,
-.present-toggle,
-.exit-present-btn {
+.present-toggle {
   background: var(--tonal-white-06);
   color: var(--color-rim-light-pewter);
 }
 .ctrl-btn:hover,
 .present-btn:hover,
-.present-toggle:hover,
-.exit-present-btn:hover { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
+.present-toggle:hover { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
 /* Hit-area extension: visual stays 36, hit zone reaches 44. */
 .ctrl-btn::before {
   content: '';
@@ -1008,11 +998,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-.subtitle-editor.grow .subtitle-textarea {
-  flex: 1;
-  height: auto;
-  max-height: none;
-}
 .subtitle-editor-head {
   min-height: 36px;
   padding: 7px 18px 5px;
@@ -1099,12 +1084,8 @@ body {
   display: none;
 }
 .subtitle-textarea {
-  height: 92px;
+  flex: 1;
   min-height: 92px;
-  max-height: 92px;
-  padding-top: 0;
-  border-top: 0;
-  color: var(--color-rim-light-pewter);
 }
 
 /* =====================================================================
@@ -1435,15 +1416,25 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .pgn-ret:hover { opacity: 1; background: var(--row-hover-bg); color: var(--color-sodium-chalk); }
 .pgn-ret.current { opacity: 1; background: var(--tonal-white-10); color: var(--color-sodium-chalk); }
 /* Structural resets (rs / st / fen) as full-width vermillion section breaks;
-   numbering restarts beneath them. */
-.pgn-divider {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  min-height: 26px; margin: 3px 0; padding: 2px 10px;
+   numbering restarts beneath them. Error rows share the same full-width box. */
+.pgn-divider,
+.pgn-error {
+  display: flex; gap: 8px; width: 100%;
   border: 0; border-radius: var(--radius-xs); background: transparent;
   font-family: var(--font-mono); font-size: 11.5px;
-  color: var(--color-reset-text); cursor: pointer; text-align: left;
+  cursor: pointer; text-align: left;
   transition: background var(--duration-chrome);
 }
+.pgn-divider {
+  align-items: center; min-height: 26px; margin: 3px 0; padding: 2px 10px;
+  color: var(--color-reset-text);
+}
+.pgn-error {
+  align-items: baseline; margin: 2px 0; padding: 5px 10px;
+  color: var(--color-error-text);
+}
+.pgn-divider:hover,
+.pgn-error:hover { background: var(--row-hover-bg); }
 .pgn-divider::before {
   content: ''; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
   background: var(--color-studio-vermillion); opacity: 0.85;
@@ -1451,17 +1442,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .pgn-divider-body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.pgn-divider:hover { background: var(--row-hover-bg); }
 .pgn-divider.current { background: var(--row-active-bg-reset); }
-.pgn-error {
-  display: flex; align-items: baseline; gap: 8px; width: 100%;
-  margin: 2px 0; padding: 5px 10px;
-  border: 0; border-radius: var(--radius-xs); background: transparent;
-  font-family: var(--font-mono); font-size: 11.5px;
-  color: var(--color-error-text); cursor: pointer; text-align: left;
-  transition: background var(--duration-chrome);
-}
-.pgn-error:hover { background: var(--row-hover-bg); }
 .pgn-error.current { background: var(--row-active-bg-err); }
 /* Annotations with no move to attach to (script preamble). */
 .pgn-marks {
@@ -1694,7 +1675,6 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   }
 
   .app--present .controls {
-    gap: 8px;
     padding: 10px 12px;
   }
   .app--present .time-readout { min-width: 100px; }
@@ -1702,8 +1682,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   .app--present .mute-btn { padding-inline: 6px; }
   .app--present .transport-prefs { gap: 6px; }
   .app--present .present-controls { gap: 4px; }
-  .app--present .present-toggle,
-  .app--present .exit-present-btn { padding-inline: 8px; }
+  .app--present .present-toggle { padding-inline: 8px; }
 }
 
 /* =====================================================================
@@ -1761,7 +1740,6 @@ button.insert-item:hover { background: var(--tonal-white-08); }
      below its natural width and overlaps the speed group. */
   .controls {
     grid-template-columns: auto auto 1fr;
-    grid-template-rows: auto auto auto;
     column-gap: 12px;
     row-gap: 12px;
     padding: 12px 14px;
@@ -1856,7 +1834,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   backdrop-filter: none;
   transition: opacity var(--duration-state);
 }
-.app--present .timeline { flex: 1; min-width: 0; }
+.app--present .timeline { flex: 1; }
 /* Idle during playback: fade the bar and hide the cursor for a clean frame;
    pointer activity or keyboard focus re-arms the chrome (App toggles
    .app--idle). A focused control must never become visually hidden. */
@@ -1867,8 +1845,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .present-controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 /* Shared ghost recipe, hover and hit area live with .present-btn in the
    header block. */
-.present-toggle,
-.exit-present-btn {
+.present-toggle {
   height: 30px; padding: 0 11px;
   border-radius: var(--radius-sm);
   font-size: 11px; text-transform: uppercase;
@@ -1917,13 +1894,10 @@ button.insert-item:hover { background: var(--tonal-white-08); }
        mobile console returns to its authored slot below the subtitle; hiding
        it still changes only opacity, so the recording frame never reflows. */
     position: static;
-    left: auto;
-    bottom: auto;
     transform: none;
     width: 100%;
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
-    grid-template-rows: auto auto auto auto;
     column-gap: 10px;
     row-gap: 10px;
     padding: 12px 14px;
@@ -2003,13 +1977,10 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 
   .app--present .controls {
     position: static;
-    left: auto;
-    bottom: auto;
     transform: none;
     width: 100%;
     display: grid;
     grid-template-columns: auto auto auto 1fr auto;
-    grid-template-rows: auto auto;
     column-gap: 12px;
     row-gap: 10px;
   }

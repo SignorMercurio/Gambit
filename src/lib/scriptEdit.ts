@@ -71,7 +71,7 @@ function nextFreeTime(
     // the neighboring events executes against the same position the gesture
     // previewed, so start one tick under the cap instead; if that slot is
     // taken the grid truly is saturated and the caller reports a conflict.
-    if (Number.isFinite(cap) && deci >= cap) deci = Math.max(0, cap - 1);
+    if (deci >= cap) deci = Math.max(0, cap - 1);
     deci = Math.max(deci, firstDeciAbove(floor));
     while (taken.has(deci)) deci += step;
     return deci < cap ? deci / 10 : null;
@@ -161,10 +161,8 @@ export function setLineTime(text: string, line: number, t: number): LineTimeEdit
   let next: number | null = null;
   for (let i = idx + 1; i < lines.length && next == null; i++) next = lineTime(lines[i]);
   if ((prev == null || prev <= roundedT) && (next == null || roundedT <= next)) {
-    const retimed = rewriteScriptLineTime(lines[idx], roundedT);
-    if (retimed == null) return { text, line: null };
-    lines[idx] = retimed;
-    return { text: lines.join('\n'), line };
+    const retimed = retimeLine(text, line, roundedT);
+    return retimed == null ? { text, line: null } : { text: retimed, line };
   }
   const parsed = parseScriptLine(lines[idx]);
   if (!parsed) return { text, line: null };
@@ -312,15 +310,8 @@ export function planMoveGesture(
   }
 
   if (stateEv.kind === 'mainline') {
-    const afterMl = events[stateIdx + 1];
-    const cap = afterMl ? afterMl.t : Infinity;
-    const slot = findSlots(
-      scriptText,
-      time,
-      [],
-      Number.isFinite(cap) ? cap - 0.1 : Infinity,
-      prevT,
-    );
+    const mlCap = (events[stateIdx + 1]?.t ?? Infinity) - 0.1;
+    const slot = findSlots(scriptText, time, [], mlCap, prevT);
     if (!slot) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
     const [mvT] = slot;
     let text = scriptText;
@@ -329,7 +320,7 @@ export function planMoveGesture(
       // The pushed ml must land on a free slot: a timestamp collision
       // would tie-break by textual order and silently decide another
       // line's variation membership.
-      const pushed = Number.isFinite(cap) ? Math.min(mvT + 1, cap - 0.1) : mvT + 1;
+      const pushed = Math.min(mvT + 1, mlCap);
       const free = nearestFreeTimeBelow(text, pushed + 0.1, mvT);
       if (free == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
       mlT = free;

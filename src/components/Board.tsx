@@ -1,14 +1,13 @@
 // Pieces translate via `translate3d` so motion stays on the GPU compositor.
 
 import {
-  forwardRef,
   useEffect,
-  useImperativeHandle,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { BOARD_GESTURE_CLASS } from '../lib/boardExport';
 import { Piece } from './Piece';
@@ -25,15 +24,13 @@ import {
   beginMoveGesture,
   buttonBit,
   finishBoardGesture,
-  updateGestureTarget,
   type BoardGesture,
 } from '../lib/boardGesture';
-import { clamp01, easeOutQuart, timedProgress } from '../lib/animation';
+import { easeOutQuart, timedProgress } from '../lib/animation';
 import {
   mindPieceStrength,
   mindRevealStrength,
   mindSink,
-  type MindFrame,
   type MindWorld,
 } from '../lib/mind';
 import { ANNOTATION_MARKS, type MoveAnnotation } from '../lib/timeline';
@@ -70,6 +67,7 @@ const BADGE_IN_DURATION = 0.18;
 const RESTORE_FADE_IN = 0.3;
 
 type BoardProps = {
+  boardRef: RefObject<HTMLDivElement>;
   positions: Positions;
   lastMove: LastMove | null;
   highlights: BoardHighlight[];
@@ -109,22 +107,21 @@ const BOARD_ARROW = {
 // intermediates are knight-L elbows.
 type Seg = { x1: number; y1: number; ux: number; uy: number; len: number };
 
-// Intersection of the offset edges along consecutive segments `a` and `b`,
-// shifted by `side * shaftHalf` (side: +1 = walker's left, -1 = right).
+// Where the offset edges along consecutive segments `a` and `b` meet, shifted
+// by `side * shaftHalf` (side: +1 = walker's left, -1 = right). A closed form,
+// not a general line intersection: the only multi-segment arrow is the knight
+// L from `arrowPoints`, whose legs are axis-aligned and perpendicular, so the
+// edges meet at the elbow offset by both legs' normals. A non-perpendicular
+// elbow would need the general intersection back.
 function elbowJoin(a: Seg, b: Seg, side: number, shaftHalf: number): [number, number] {
-  const ax = a.x1 + side * a.uy * shaftHalf;
-  const ay = a.y1 - side * a.ux * shaftHalf;
-  const bx = b.x1 + side * b.uy * shaftHalf;
-  const by = b.y1 - side * b.ux * shaftHalf;
-  const det = b.ux * a.uy - a.ux * b.uy;
-  if (Math.abs(det) < 1e-9) return [ax + a.ux * a.len, ay + a.uy * a.len];
-  const t = ((by - ay) * b.ux - (bx - ax) * b.uy) / det;
-  return [ax + a.ux * t, ay + a.uy * t];
+  return [b.x1 + side * shaftHalf * (a.uy + b.uy), b.y1 - side * shaftHalf * (a.ux + b.ux)];
 }
+
+const polyline = (pts: ReadonlyArray<readonly [number, number]>) =>
+  'M' + pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L');
 
 function buildArrowPath(pts: Array<readonly [number, number]>): string {
   const { shaftHalf, headHalf, headLen } = BOARD_ARROW;
-  if (pts.length < 2) return '';
   const segs: Seg[] = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const [x1, y1] = pts[i];
@@ -136,7 +133,6 @@ function buildArrowPath(pts: Array<readonly [number, number]>): string {
     segs.push({ x1, y1, ux: dx / len, uy: dy / len, len });
   }
   const last = segs[segs.length - 1];
-  if (last.len < headLen + 0.5) return '';
 
   const tipX = last.x1 + last.ux * last.len;
   const tipY = last.y1 + last.uy * last.len;
@@ -155,12 +151,7 @@ function buildArrowPath(pts: Array<readonly [number, number]>): string {
   for (let i = segs.length - 2; i >= 0; i--) out.push(elbowJoin(segs[i], segs[i + 1], -1, shaftHalf));
   out.push([s0.x1 - s0.uy * shaftHalf, s0.y1 + s0.ux * shaftHalf]);
 
-  return 'M' + out.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L') + 'Z';
-}
-
-function buildArrowGuidePath(pts: Array<readonly [number, number]>): string {
-  if (pts.length < 2) return '';
-  return 'M' + pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L');
+  return polyline(out) + 'Z';
 }
 
 function overlayOpacity(age: number, lifetime: number, pinned?: boolean): number {
@@ -173,11 +164,6 @@ function overlayOpacity(age: number, lifetime: number, pinned?: boolean): number
   return 1;
 }
 
-function moveDuration(f: number, r: number, fromF: number, fromR: number): number {
-  const distance = Math.hypot(f - fromF, r - fromR);
-  return Math.min(0.44, Math.max(0.22, 0.2 + distance * 0.045));
-}
-
 function pieceVisual(p: PiecePos, time: number) {
   let f = p.f;
   let r = p.r;
@@ -188,7 +174,10 @@ function pieceVisual(p: PiecePos, time: number) {
 
   if (p.moveT != null && p.moveFromF != null && p.moveFromR != null) {
     const age = time - p.moveT;
-    const duration = moveDuration(p.f, p.r, p.moveFromF, p.moveFromR);
+    const duration = Math.min(
+      0.44,
+      Math.max(0.22, 0.2 + Math.hypot(p.f - p.moveFromF, p.r - p.moveFromR) * 0.045),
+    );
     if (age >= 0 && age < duration) {
       const eased = timedProgress(age, duration);
       f = p.moveFromF + (p.f - p.moveFromF) * eased;
@@ -226,22 +215,15 @@ function pieceVisual(p: PiecePos, time: number) {
   return { f, r, opacity, scale, isMoving, isCapturedFading };
 }
 
-function pieceZIndex(visual: ReturnType<typeof pieceVisual>): number {
-  if (visual.isMoving) return 5;
-  if (visual.isCapturedFading) return 4;
-  return 1;
-}
-
 function captureFlashVisual(age: number) {
-  const p = clamp01(age / BOARD_OVERLAY_LIFETIME.captureFlash);
   const fadeIn = timedProgress(age, BOARD_OVERLAY_LIFETIME.captureFlash * 0.32);
   const fadeOut = 1 - timedProgress(
-    Math.max(0, age - BOARD_OVERLAY_LIFETIME.captureFlash * 0.32),
+    age - BOARD_OVERLAY_LIFETIME.captureFlash * 0.32,
     BOARD_OVERLAY_LIFETIME.captureFlash * 0.68,
   );
   return {
-    opacity: Math.max(0, Math.min(fadeIn, fadeOut)),
-    scale: 0.45 + easeOutQuart(p) * 1.85,
+    opacity: Math.min(fadeIn, fadeOut),
+    scale: 0.45 + easeOutQuart(age / BOARD_OVERLAY_LIFETIME.captureFlash) * 1.85,
   };
 }
 
@@ -249,14 +231,6 @@ const viewCenter = (view: BoardViewPosition): [number, number] => [
   view.x * SQ + SQ / 2,
   view.y * SQ + SQ / 2,
 ];
-
-function squareCenter(
-  f: number,
-  r: number,
-  orientation: BoardOrientation,
-): [number, number] {
-  return viewCenter(boardViewPosition(f, r, orientation));
-}
 
 function insetPoint(
   x1: number,
@@ -276,8 +250,8 @@ function arrowPoints(
 ): Array<readonly [number, number]> {
   const fromXY = sqToIdx(from);
   const toXY = sqToIdx(to);
-  const [x1, y1] = squareCenter(fromXY.f, fromXY.r, orientation);
-  const [x2, y2] = squareCenter(toXY.f, toXY.r, orientation);
+  const [x1, y1] = viewCenter(squareViewPosition(from, orientation));
+  const [x2, y2] = viewCenter(squareViewPosition(to, orientation));
   const df = toXY.f - fromXY.f;
   const dr = toXY.r - fromXY.r;
   const isKnight =
@@ -288,7 +262,7 @@ function arrowPoints(
     const verticalFirst = Math.abs(dr) === 2;
     const elbowF = verticalFirst ? fromXY.f : toXY.f;
     const elbowR = verticalFirst ? toXY.r : fromXY.r;
-    const [ex, ey] = squareCenter(elbowF, elbowR, orientation);
+    const [ex, ey] = viewCenter(boardViewPosition(elbowF, elbowR, orientation));
     const start = insetPoint(x1, y1, ex, ey, BOARD_ARROW.startInset);
     const end = insetPoint(x2, y2, ex, ey, BOARD_ARROW.endInset);
     return [start, [ex, ey], end];
@@ -340,9 +314,7 @@ export function lastMoveSquares(move: LastMove): [PaintedSquare, PaintedSquare] 
 // added at a call site would put a hard box on every move of the recording —
 // the drift the flood exists to avoid. Owning the element makes that
 // unrepresentable there, and lets the suite assert its absence by calling this
-// function rather than slicing Board.tsx between `{lastMove &&` and
-// `litHighlights.map`, a guard a rename of either local could fail in the name
-// of last-move color.
+// function.
 export function LastMoveRect({
   view,
   fill,
@@ -402,9 +374,7 @@ export function badgeCenter(view: BoardViewPosition): [number, number] {
 // the reason `HlRing` does it below: the reference has no rim, and a `stroke`
 // added at a call site is the exact drift this replica keeps inviting. Owning
 // the element makes a rim unrepresentable there, and lets the suite assert its
-// absence by calling this function instead of pattern-matching JSX source —
-// which is how the first version of that guard came to slice an empty string
-// out of Board.tsx and pass without reading a character of the disc.
+// absence by calling this function instead of pattern-matching JSX source.
 export function BadgeDisc({
   annotation,
   cx,
@@ -476,15 +446,7 @@ for (let r = 7; r >= 0; r--) {
   for (let f = 0; f < 8; f++) SQUARES.push({ f, r, isLight: isLightSquare(f, r) });
 }
 
-type CoordLabel = {
-  x: number;
-  y: number;
-  isLight: boolean;
-  text: string;
-  anchor: 'end' | 'start';
-};
-
-function coordLabels(orientation: BoardOrientation): CoordLabel[] {
+function coordLabels(orientation: BoardOrientation) {
   const bottomRank = orientation === 'white' ? 0 : 7;
   const leftFile = orientation === 'white' ? 0 : 7;
   return [
@@ -595,21 +557,13 @@ const coordTexts = (ink: string | null, orientation: BoardOrientation) =>
       {c.text}
     </text>
   ));
-const COORD_TEXTS = {
-  white: coordTexts(null, 'white'),
-  black: coordTexts(null, 'black'),
-};
-const COORD_TEXTS_MIND = {
-  white: coordTexts(tokens.mindCoordInk, 'white'),
-  black: coordTexts(tokens.mindCoordInk, 'black'),
-};
 
 // The board's stack, in one place: the code half of the layer table in
 // docs/design.md. A new layer names itself here rather than landing wherever
 // the DOM puts it, and the squares plane takes no entry — it is the base.
-// The per-piece 1/4/5 (`pieceZIndex`) is deliberately not sourced from this
-// map: those numbers live inside the pieces layer's own stacking context and
-// mean nothing to the outer stack.
+// The per-piece 1/4/5 z-index is deliberately not sourced from this map:
+// those numbers live inside the pieces layer's own stacking context and mean
+// nothing to the outer stack.
 const BOARD_LAYER_Z = {
   pieces: 1,
   coords: 2,
@@ -668,22 +622,21 @@ const coordSvg = (texts: ReactNode) => (
 // Both steady states are whole hoisted layers, so every frame outside the
 // 0.6s ramp — which is every frame of an ordinary script — bails out on
 // element identity instead of reconciling 16 labels.
-const COORD_LAYER = {
-  white: coordSvg(COORD_TEXTS.white),
-  black: coordSvg(COORD_TEXTS.black),
+const coordSet = (orientation: BoardOrientation) => {
+  const lit = coordTexts(null, orientation);
+  const mind = coordTexts(tokens.mindCoordInk, orientation);
+  return { lit, mind, litLayer: coordSvg(lit), mindLayer: coordSvg(mind) };
 };
-const COORD_LAYER_MIND = {
-  white: coordSvg(COORD_TEXTS_MIND.white),
-  black: coordSvg(COORD_TEXTS_MIND.black),
-};
+const COORDS = { white: coordSet('white'), black: coordSet('black') };
 
 function coordLayer(sink: number, orientation: BoardOrientation) {
-  if (sink <= 0) return COORD_LAYER[orientation];
-  if (sink >= 1) return COORD_LAYER_MIND[orientation];
+  const coords = COORDS[orientation];
+  if (sink <= 0) return coords.litLayer;
+  if (sink >= 1) return coords.mindLayer;
   return coordSvg(
     <>
-      {COORD_TEXTS[orientation]}
-      <g opacity={sink}>{COORD_TEXTS_MIND[orientation]}</g>
+      {coords.lit}
+      <g opacity={sink}>{coords.mind}</g>
     </>,
   );
 }
@@ -722,14 +675,6 @@ function insetSquareMarker(sq: string, key: string, orientation: BoardOrientatio
   );
 }
 
-// Not a `BoardLayer`: the pieces ride HTML divs so their transforms stay on
-// the compositor.
-const PIECE_LAYER_STYLE: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  zIndex: BOARD_LAYER_Z.pieces,
-};
-
 // Live preview of the gesture in progress. Move gestures mark the origin and
 // the legal destinations (dot on empty squares, ring on occupied ones);
 // annotate gestures preview the exact highlight or arrow a release would
@@ -748,7 +693,7 @@ export function GestureOverlay({
 }) {
   // Memoized on positions (not gesture start): a scripted move firing during
   // playback must restyle the dots, but a 60Hz drag frame must not rebuild
-  // the set. Computed before the annotate early-return per the hooks rules.
+  // the set.
   const occupied = useMemo(
     () =>
       new Set(
@@ -762,8 +707,7 @@ export function GestureOverlay({
   // One wrapper for both gesture kinds. `BOARD_GESTURE_CLASS` is the single
   // hook the PNG export filters on, so a branch that grew its own <svg> and
   // missed the class would bake the in-flight preview into a user's 1440×1440
-  // export with nothing failing. The early return existed only to narrow
-  // `gesture.kind`; a ternary narrows just as well.
+  // export with nothing failing.
   const body =
     gesture.kind === 'annotate' ? (
       gesture.over == null ? null : gesture.over !== gesture.from ? (
@@ -800,7 +744,8 @@ export function GestureOverlay({
   );
 }
 
-export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
+export function Board({
+  boardRef,
   positions,
   lastMove,
   highlights,
@@ -817,9 +762,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
   onArrowGesture,
   onHighlightGesture,
   onMoveRejected,
-}: BoardProps, forwardedRef) {
-  const boardRef = useRef<HTMLDivElement | null>(null);
-  useImperativeHandle(forwardedRef, () => boardRef.current as HTMLDivElement, []);
+}: BoardProps) {
   const [gesture, setGesture] = useState<BoardGesture | null>(null);
   // Whether the square under the pointer can start a move, so the board can
   // offer a resting `grab` cursor. Without it an editable board is visually
@@ -837,7 +780,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
         return {
           arrow,
           d: buildArrowPath(points),
-          guideD: buildArrowGuidePath(points),
+          guideD: polyline(points),
           maskId: `arrow-mask-${index}-${arrow.from}-${arrow.to}`,
         };
       }),
@@ -936,7 +879,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
       return;
     }
     const sq = squareAtPointer(e);
-    if (sq !== gesture.over) setGesture(updateGestureTarget(gesture, sq));
+    if (sq !== gesture.over) setGesture({ ...gesture, over: sq });
   };
 
   const onGesturePointerUp = (e: React.PointerEvent) => {
@@ -979,17 +922,16 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
   // is an unpinned highlight,
   // which expires between events and keeps its own stamp. Arrows deliberately
   // hold nothing: the attack line persists while its endpoints fade.
-  let mindFrame: MindFrame | null = null;
-  if (mind) {
-    let rehearsed: ReadonlySet<string> = mind.held;
-    if (litHighlights.length > 0 || check) {
-      const expanded = new Set(mind.held);
-      for (const { h } of litHighlights) expanded.add(h.sq);
-      if (check) expanded.add(check.sq);
-      rehearsed = expanded;
-    }
-    mindFrame = { touches: mind.touches, rehearsed };
-  }
+  const mindFrame = mind
+    ? {
+        touches: mind.touches,
+        rehearsed: new Set([
+          ...mind.held,
+          ...litHighlights.map(({ h }) => h.sq),
+          ...(check ? [check.sq] : []),
+        ]),
+      }
+    : null;
 
   const sink = mindSink(mind, revealedAt, time);
   const boardVoid = voidLayer(sink);
@@ -1000,11 +942,12 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
   const revealStrength = mindRevealStrength(revealedAt, time);
   const flash =
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
-      ? captureFlashVisual(time - captureFlash.t)
+      ? {
+          id: captureFlash.id,
+          view: boardViewPosition(captureFlash.f, captureFlash.r, orientation),
+          ...captureFlashVisual(time - captureFlash.t),
+        }
       : null;
-  const captureView = captureFlash
-    ? boardViewPosition(captureFlash.f, captureFlash.r, orientation)
-    : null;
 
   return (
     <div className="board-wrap">
@@ -1086,12 +1029,11 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
           )}
         </BoardLayer>
 
-        {/* zIndex here creates a stacking context so per-piece zIndex (1/4/5)
-           stays contained and doesn't outrank the arrows overlay. */}
-        <div
-          aria-hidden="true"
-          style={PIECE_LAYER_STYLE}
-        >
+        {/* Not a `BoardLayer`: the pieces ride HTML divs so their transforms
+           stay on the compositor. zIndex here creates a stacking context so
+           per-piece zIndex (1/4/5) stays contained and doesn't outrank the
+           arrows overlay. */}
+        <div aria-hidden="true" style={BOARD_LAYER_STYLE[BOARD_LAYER_Z.pieces]}>
           {positionEntries.map(([id, p]) => {
             const strength = mindFrame
               ? mindPieceStrength(mindFrame, idxToSq(p.f, p.r), time)
@@ -1112,8 +1054,7 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
                   height: '12.5%',
                   transform: `translate3d(${tx}%, ${ty}%, 0) scale(${visual.scale})`,
                   opacity: visual.opacity * strength,
-                  pointerEvents: 'none',
-                  zIndex: pieceZIndex(visual),
+                  zIndex: visual.isMoving ? 5 : visual.isCapturedFading ? 4 : 1,
                   willChange: visual.isMoving || visual.isCapturedFading ? 'transform, opacity' : 'auto',
                   padding: '0.75%',
                   boxSizing: 'border-box',
@@ -1173,15 +1114,15 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
           <GestureOverlay gesture={gesture} positions={positions} orientation={orientation} />
         )}
 
-        {captureFlash && captureView && flash && flash.opacity > 0 && (
+        {flash && flash.opacity > 0 && (
           <div
-            key={captureFlash.id}
+            key={flash.id}
             className="capture-flash"
             aria-hidden="true"
             style={{
               position: 'absolute',
-              left: `${(captureView.x / 8) * 100}%`,
-              top: `${(captureView.y / 8) * 100}%`,
+              left: `${(flash.view.x / 8) * 100}%`,
+              top: `${(flash.view.y / 8) * 100}%`,
               width: '12.5%',
               height: '12.5%',
               borderRadius: '50%',
@@ -1238,4 +1179,4 @@ export const Board = forwardRef<HTMLDivElement, BoardProps>(function Board({
       </div>
     </div>
   );
-});
+}

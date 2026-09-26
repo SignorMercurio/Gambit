@@ -50,10 +50,6 @@ function parseSrtTime(token: string): number {
   return Number.isFinite(total) && total <= MAX_SUBTITLE_TIMESTAMP_SECONDS ? total : NaN;
 }
 
-function matchTimeRangeLine(line: string): RegExpMatchArray | null {
-  return line.trim().match(SRT_TIME_RANGE_RE);
-}
-
 function parseTimeRangeMatch(match: RegExpMatchArray): { start: number; end: number } | null {
   const start = parseSrtTime(match[1]);
   const end = parseSrtTime(match[2]);
@@ -61,7 +57,7 @@ function parseTimeRangeMatch(match: RegExpMatchArray): { start: number; end: num
 }
 
 function parseTimeRangeLine(line: string): { start: number; end: number } | null {
-  const match = matchTimeRangeLine(line);
+  const match = line.trim().match(SRT_TIME_RANGE_RE);
   return match ? parseTimeRangeMatch(match) : null;
 }
 
@@ -100,18 +96,20 @@ export function parseSrt(text: string): SubtitleParseResult {
   const isCueBoundary = (lineIndex: number) =>
     isIndexedCueBoundary(lineIndex) || parseTimeRangeLine(lines[lineIndex] ?? '') != null;
 
-  const reportMissingSeparator = () => {
-    errors.push({ line: i + 1, error: 'missing blank line before subtitle cue' });
-  };
-
-  const skipBlock = () => {
+  // A missing blank separator must not absorb every following cue into the
+  // current block. Recover at the next valid indexed or bare timestamp
+  // boundary, leave `i` there for the outer loop, and surface the malformed
+  // separator instead of silently repairing it.
+  const readBlock = (): string[] => {
+    const block: string[] = [];
     while (i < lines.length && lines[i].trim()) {
       if (isCueBoundary(i)) {
-        reportMissingSeparator();
+        errors.push({ line: i + 1, error: 'missing blank line before subtitle cue' });
         break;
       }
-      i++;
+      block.push(lines[i++]);
     }
+    return block;
   };
 
   while (i < lines.length) {
@@ -121,36 +119,22 @@ export function parseSrt(text: string): SubtitleParseResult {
     const blockLine = i + 1;
     if (isIndexedCueBoundary(i)) i++;
 
-    const timeMatch = matchTimeRangeLine(lines[i] ?? '');
+    const timeMatch = (lines[i] ?? '').trim().match(SRT_TIME_RANGE_RE);
     if (!timeMatch) {
       errors.push({ line: blockLine, error: 'invalid SRT timestamp' });
-      skipBlock();
+      readBlock();
       continue;
     }
     const timeRange = parseTimeRangeMatch(timeMatch);
     if (!timeRange) {
       errors.push({ line: i + 1, error: 'invalid SRT time range' });
-      skipBlock();
+      readBlock();
       continue;
     }
     const { start, end } = timeRange;
 
     i++;
-    const textLines: string[] = [];
-    while (i < lines.length && lines[i].trim()) {
-      // A missing blank separator must not absorb every following cue into the
-      // current cue's text. Recover at the next valid indexed or bare timestamp
-      // boundary, leave `i` there for the outer loop, and surface the malformed
-      // separator instead of silently repairing it.
-      if (isCueBoundary(i)) {
-        reportMissingSeparator();
-        break;
-      }
-      textLines.push(lines[i]);
-      i++;
-    }
-
-    const cueText = textLines.join('\n').trim();
+    const cueText = readBlock().join('\n').trim();
     if (!cueText) {
       errors.push({ line: blockLine, error: 'empty subtitle cue' });
       continue;

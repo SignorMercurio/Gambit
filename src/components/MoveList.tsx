@@ -121,6 +121,14 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
       }
       continue;
     }
+    if (varNodes && e.kind !== 'move' && e.kind !== 'branch' && e.kind !== 'mainline') {
+      varNodes.push({
+        type: 'mark',
+        mark: { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) },
+      });
+      flowInterrupted = true;
+      continue;
+    }
     switch (e.kind) {
       case 'move': {
         const st = states[i];
@@ -166,29 +174,22 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
       case 'mind':
       case 'reveal': {
         const mark: Mark = { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) };
-        if (varNodes) {
-          varNodes.push({ type: 'mark', mark });
-          flowInterrupted = true;
-        } else if (lastCell) {
-          lastCell.marks.push(mark);
-        } else {
-          markAcc.push(mark);
-        }
+        if (lastCell) lastCell.marks.push(mark);
+        else markAcc.push(mark);
         break;
       }
       case 'branch': {
         varDepth++;
         if (varNodes) {
           varNodes.push({ type: 'open', i });
-          flowInterrupted = true;
         } else {
           flushRows();
           flushMarks();
           varNodes = [];
           varLines = [e.line];
           varHeadI = i;
-          flowInterrupted = true;
         }
+        flowInterrupted = true;
         break;
       }
       case 'mainline': {
@@ -206,20 +207,11 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
       }
       case 'reset':
       case 'start':
-      case 'fen': {
-        if (varNodes) {
-          varNodes.push({
-            type: 'mark',
-            mark: { i, kind: e.kind, t: e.t, line: e.line, body: eventBody(e) },
-          });
-          flowInterrupted = true;
-        } else {
-          flushRows();
-          flushMarks();
-          blocks.push({ type: 'divider', i, t: e.t, line: e.line, body: eventBody(e) });
-        }
+      case 'fen':
+        flushRows();
+        flushMarks();
+        blocks.push({ type: 'divider', i, t: e.t, line: e.line, body: eventBody(e) });
         break;
-      }
     }
   }
   closeVar();
@@ -379,8 +371,7 @@ export const MoveList = memo(function MoveList({
   // the nearest surviving control at the same DOM index.
   useEffect(() => {
     if (!focusRequest) return;
-    const container = listRef.current;
-    if (!container) return;
+    const container = listRef.current!;
     let target: HTMLElement | null | undefined;
     if (focusRequest.kind === 'line') {
       target = container.querySelector<HTMLElement>(
@@ -394,27 +385,19 @@ export const MoveList = memo(function MoveList({
     setFocusRequest(null);
   }, [focusRequest, roving]);
 
-  // Moves view follow-scroll: keep the event the playhead has reached
-  // visible, like a video editor's timeline list. Manual reading wins:
-  // following pauses while a mouse pointer is over the list and resumes
-  // when it leaves. Scrolls only the list container, never the page.
-  // The list follows the playhead only while playback runs; while paused it
-  // scrolls independently — editing must not fight the scroll position.
-  // Hovering pauses the follow so a click target stays put.
-  //
-  // Declared after the focus-restore effect above: that effect calls focus(),
-  // which scrolls too, and the follow must land last.
+  // Follow the playhead only while playback runs, scrolling only the list
+  // container (never the page), so paused editing never fights the scroll; a
+  // mouse pointer over the list pauses the follow so click targets stay put.
+  // Declared after the focus-restore effect: focus() scrolls too, and the
+  // follow must land last.
   const followPausedRef = useRef(false);
   useEffect(() => {
     if (!playing || followPausedRef.current) return;
-    const list = listRef.current;
-    if (!list) return;
+    const list = listRef.current!;
     if (reachedEventIndex < 0) {
       list.scrollTop = 0;
       return;
     }
-    // The PGN list nests event elements, so the reached event is located by
-    // its data-evi attribute (shared helper); playback/hover gating is above.
     scrollEviIntoView(list, reachedEventIndex);
   }, [reachedEventIndex, playing]);
 
@@ -499,36 +482,36 @@ export const MoveList = memo(function MoveList({
   // inheriting the row's chalk is the same move `.pgn-varnum` already makes.
   // Nothing is lost — the mark's own `!!`/`??` still reads, and the board
   // badge is showing the color full size at that exact moment.
-  const sanLabel = (san: string, current = false) => {
-    const { text, mark, annotation } = splitSanAnnotation(san);
+  const moveBtn = (
+    m: { i: number; t: number; line: number; san: string },
+    className: 'pgn-mv' | 'pgn-var-mv',
+    plainTitle?: string,
+    prefix?: React.ReactNode,
+  ) => {
+    const hasError = errorLines.has(m.line);
+    const { text, mark, annotation } = splitSanAnnotation(m.san);
     return (
-      <>
+      <button
+        type="button"
+        className={`${className} ${stateClass(m.i)}${hasError ? ' has-error' : ''}`}
+        data-evi={m.i}
+        aria-current={m.i === reachedEventIndex ? 'step' : undefined}
+        title={hasError ? 'This line has a script error' : plainTitle}
+        aria-label={`Seek to ${fmtTime(m.t, 'auto')}: ${m.san}${hasError ? ' (script error)' : ''}`}
+        onClick={() => onSeek(m.t)}
+      >
+        {prefix}
         {text}
         {annotation && (
           <span
             className="pgn-annot"
-            style={current ? undefined : { color: annotationMarkColors[annotation] }}
+            style={
+              m.i === reachedEventIndex ? undefined : { color: annotationMarkColors[annotation] }
+            }
           >
             {mark}
           </span>
         )}
-      </>
-    );
-  };
-
-  const moveBtn = (c: Cell) => {
-    const hasError = errorLines.has(c.line);
-    return (
-      <button
-        type="button"
-        className={`pgn-mv ${stateClass(c.i)}${hasError ? ' has-error' : ''}`}
-        data-evi={c.i}
-        aria-current={c.i === reachedEventIndex ? 'step' : undefined}
-        title={hasError ? 'This line has a script error' : undefined}
-        aria-label={`Seek to ${fmtTime(c.t, 'auto')}: ${c.san}${hasError ? ' (script error)' : ''}`}
-        onClick={() => onSeek(c.t)}
-      >
-        {sanLabel(c.san, c.i === reachedEventIndex)}
       </button>
     );
   };
@@ -537,7 +520,7 @@ export const MoveList = memo(function MoveList({
   const cell = (c: Cell | null, empty: string) =>
     c ? (
       <span className="pgn-cell">
-        {tok(`mv${c.i}`, moveBtn(c), c.line, c.t, c.san)}
+        {tok(`mv${c.i}`, moveBtn(c, 'pgn-mv'), c.line, c.t, c.san)}
         {c.marks.map(markDot)}
       </span>
     ) : (
@@ -546,31 +529,24 @@ export const MoveList = memo(function MoveList({
 
   const flowNode = (n: FlowNode) => {
     switch (n.type) {
-      case 'mv': {
-        const hasError = errorLines.has(n.line);
-        const btn = (
-          <button
-            type="button"
-            className={`pgn-var-mv ${stateClass(n.i)}${hasError ? ' has-error' : ''}`}
-            data-evi={n.i}
-            aria-current={n.i === reachedEventIndex ? 'step' : undefined}
-            aria-label={`Seek to ${fmtTime(n.t, 'auto')}: ${n.san}${
-              hasError ? ' (script error)' : ''
-            }`}
-            title={hasError ? 'This line has a script error' : fmtTime(n.t, 'auto')}
-            onClick={() => onSeek(n.t)}
-          >
-            {n.showNum && (
+      case 'mv':
+        return tok(
+          `v${n.i}`,
+          moveBtn(
+            n,
+            'pgn-var-mv',
+            fmtTime(n.t, 'auto'),
+            n.showNum && (
               <span className="pgn-varnum">
                 {n.num}
                 {n.side === 'b' ? '…' : '.'}
               </span>
-            )}
-            {sanLabel(n.san, n.i === reachedEventIndex)}
-          </button>
+            ),
+          ),
+          n.line,
+          n.t,
+          n.san,
         );
-        return tok(`v${n.i}`, btn, n.line, n.t, n.san);
-      }
       case 'mark':
         return markDot(n.mark);
       case 'open':

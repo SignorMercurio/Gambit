@@ -1,8 +1,6 @@
 // Small pure playback policies shared by the React transport and regression
 // tests. These functions describe clock behavior; they do not own clock state.
 
-export type PlayState = 'play' | 'pause' | 'replay';
-
 // Every formatter and generated script line works in deciseconds. Keeping
 // accepted playback times within this arithmetic boundary prevents `t * 10`
 // from overflowing or losing integer identity while remaining far beyond any
@@ -33,15 +31,6 @@ export function playbackDuration(
       narrationDuration,
     ),
   );
-}
-
-export function playStateAt(
-  playing: boolean,
-  time: number,
-  duration: number,
-): PlayState {
-  if (playing) return 'pause';
-  return time >= duration ? 'replay' : 'play';
 }
 
 // Paused event seeks land just after the event so age-based visuals are

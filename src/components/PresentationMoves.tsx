@@ -95,16 +95,11 @@ export const PresentationMoves = memo(function PresentationMoves({
   // last move it actually shows at or before the playhead. Keying straight off
   // reachedEventIndex would blank the current-move pill (and no-op the scroll)
   // for every hl, arrow, cl, and the whole of any variation.
-  const cursorIndex = Math.min(reachedEventIndex, cursorByEvent.length - 1);
-  const cursor = cursorIndex < 0 ? -1 : cursorByEvent[cursorIndex];
+  const cursor = cursorByEvent[reachedEventIndex] ?? -1;
 
   // Keep the current move in view as playback advances (scrolls only this
   // container, never the page — the shared helper both move lists use).
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list || cursor < 0) return;
-    scrollEviIntoView(list, cursor);
-  }, [cursor]);
+  useEffect(() => scrollEviIntoView(listRef.current!, cursor), [cursor]);
 
   const moveClass = (m: PresMove | null) => {
     if (!m || m.i > reachedEventIndex) return 'present-mv';

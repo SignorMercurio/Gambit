@@ -1,20 +1,11 @@
 // The script language's one catalogue: every event kind the parser accepts,
-// with the token that writes it and a line of prose explaining it.
-//
-// This exists because the language outgrew its interface. `src/lib/timeline.ts`
-// parses twelve kinds; the Text view's hint line named ten and the default
-// script demonstrates a handful, so `mind`, `reveal`, and the `pin` modifier
-// shipped with no surface at all — a feature nobody can find has not really
-// shipped. Both syntax surfaces now read this list — the insert menu's rows and
-// that same hint line — and the regression suite inserts every one-click token, so
-// a thirteenth kind cannot be added to the parser while quietly staying
-// invisible in the UI.
-//
-// Eight of the twelve take no argument, and those eight are exactly the ones
-// with no other input path: they insert with a single click. The three that
-// need squares already have board gestures — the catalogue points at the
-// gesture rather than inserting a template that would parse as an error the
-// moment it lands. `fen` needs a whole position, which is Setup's job.
+// with its token and one line of prose. Both syntax surfaces read it (the
+// insert menu's rows and the Text view's hint via SYNTAX_GROUPS), and the
+// regression suite chains it to `markerColors` and checks the hint and every
+// one-click token, so a new parser kind cannot stay invisible in the UI.
+// The eight argument-free kinds insert with one click. The four that need
+// arguments point at their board gesture or at Setup (`via`) instead of
+// inserting a template that would parse as an error the moment it lands.
 
 import type { MarkerKind } from './tokens';
 

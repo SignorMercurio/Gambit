@@ -1,7 +1,5 @@
-// The script language's way in. Twelve event kinds ship in the parser; before
-// this, three had board gestures and the rest existed only as tokens in a
-// 60-character hint, so `mind` and `reveal` — the most distinctive thing the
-// product does — had no pixels at all.
+// The script language's way in for the argument-free kinds — notably `mind`
+// and `reveal`, which otherwise had no on-screen entry point beyond a syntax hint.
 //
 // It is deliberately an inline disclosure rather than a popover: the side panel
 // is a tall column with room to spare, an in-flow panel can't be clipped by an
@@ -21,8 +19,7 @@ import { useLatest } from './useLatest';
 import { useRovingTabIndex } from './useRovingTabIndex';
 
 // The two lists differ in one thing — whether the row is a button — so the face
-// itself is shared. It was copied once already and the copies had started to
-// drift apart in class names.
+// itself is shared.
 function CommandFace({ command }: { command: CommandEntry }) {
   return (
     <>
@@ -46,9 +43,8 @@ type InsertMenuProps = {
   timeLabel: string;
 };
 
-// The four kinds authored on another surface. A module constant, not a
-// `useMemo(…, [])`: it closes over nothing, so an empty dep array was a memo
-// cell and a dependency claim for a value that cannot differ between renders.
+// The four kinds authored on another surface; a module constant because it
+// closes over nothing.
 const ELSEWHERE_ROWS = AUTHORED_ELSEWHERE_COMMANDS.map((c) => (
   <li key={c.token} className="insert-row insert-row--ref">
     <span className="insert-item insert-item--static">
@@ -70,10 +66,7 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
   });
 
   // Closing always returns focus to the trigger — a menu that dismisses into
-  // nowhere strands the keyboard. This took a `restoreFocus` boolean back when
-  // light-dismiss passed `false`; that path now calls `onOpenChange` directly,
-  // and a parameter with one live value reads as a choice someone made rather
-  // than a leftover.
+  // nowhere strands the keyboard.
   const close = useCallback(() => {
     onOpenChange(false);
     triggerRef.current?.focus();
@@ -84,8 +77,7 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
   // changes identity every frame; held in a ref, the click handler below can be
   // stable, which is what lets the row lists memoize down to zero per-frame
   // work while the panel is open. `close` is a `useCallback` for the same
-  // reason — inlining its body here would work, but then the two spellings of
-  // "close and restore focus" could drift.
+  // reason.
   const insertRef = useLatest(onInsert);
   const handleInsert = useCallback(
     (body: string) => {
@@ -95,11 +87,9 @@ export function InsertMenu({ open, onOpenChange, onInsert, timeLabel }: InsertMe
     [close],
   );
 
-  // The time is deliberately absent from the row labels. The trigger carries it
-  // ("Insert at 00:12.3") and the panel's own label names the playhead, so
-  // repeating it here bought nothing and cost eight `setAttribute` writes per
-  // frame — plus an accessible name that changes 60×/s under a screen reader's
-  // cursor.
+  // The time is deliberately absent from the row labels: the trigger carries
+  // it ("Insert at 00:12.3"), and per-frame labels would rewrite eight
+  // accessible names 60×/s under a screen reader's cursor.
   const insertable = useMemo(
     () =>
       INSERTABLE_COMMANDS.map((c) => (

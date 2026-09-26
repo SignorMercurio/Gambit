@@ -15,19 +15,14 @@ export function buttonBit(button: number): number {
 
 type GestureOwner = { pointerId: number; buttonBit: number };
 
-export type BoardGesture = GestureOwner &
-  (
+export type BoardGesture = GestureOwner & { from: string; over: string | null } & (
     | {
         kind: 'move';
-        from: string;
-        over: string | null;
         targets: ReadonlySet<string>;
         commit: (from: string, to: string) => void;
       }
     | {
         kind: 'annotate';
-        from: string;
-        over: string | null;
         commitArrow: (from: string, to: string) => void;
         commitHighlight: (sq: string) => void;
       }
@@ -49,12 +44,6 @@ export function beginAnnotationGesture(
   commitHighlight: (sq: string) => void,
 ): BoardGesture {
   return { ...owner, kind: 'annotate', from, over: from, commitArrow, commitHighlight };
-}
-
-// Callers only re-target on an actual square change, so this always produces a
-// fresh gesture; the captured commit callbacks ride along untouched.
-export function updateGestureTarget(gesture: BoardGesture, over: string | null): BoardGesture {
-  return { ...gesture, over };
 }
 
 export function finishBoardGesture(gesture: BoardGesture, over: string | null): void {

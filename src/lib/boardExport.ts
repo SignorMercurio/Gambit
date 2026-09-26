@@ -80,20 +80,17 @@ export async function downloadBoardPng(
     // A seam, defaulted to the real thing. Delivery needs a DOM, so the
     // abandoned-export contract below is otherwise only assertable by grepping
     // this file's source — which passes an `if (aborted) console.warn()` and
-    // fails a rename of `blob`. `exporter` has no default on purpose: every
-    // caller starts the load before its own settle wait, and a default here
-    // would advertise a serialized path nothing takes.
+    // fails a rename of `blob`. `exporter` has no default: the caller loads it
+    // concurrently with its settle wait and passes the loaded module.
     deliver = downloadBlob,
   }: {
     signal?: AbortSignal;
-    exporter: ReturnType<typeof loadExporter>;
+    exporter: Awaited<ReturnType<typeof loadExporter>>;
     deliver?: (blob: Blob, filename: string) => void;
   },
 ): Promise<void> {
   if (signal?.aborted) return;
-  const { toBlob } = await exporter;
-  if (signal?.aborted) return;
-  const blob = await toBlob(board, {
+  const blob = await exporter.toBlob(board, {
     cacheBust: true,
     canvasWidth: BOARD_EXPORT_SIZE,
     canvasHeight: BOARD_EXPORT_SIZE,

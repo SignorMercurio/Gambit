@@ -28,9 +28,9 @@ const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
 export const STARTING_FEN = DEFAULT_POSITION;
 const SAN_SUFFIX_RE = /^([^+#!?\s]+)([+#])?(!!|\?\?|!|\?)?$/;
 
-export type SANSuffix = {
-  text: string;
-  check: '+' | '#' | null;
+type SANSuffix = {
+  // The SAN chess.js reads, check or mate suffix included.
+  san: string;
   annotation: '!!' | '!' | '?' | '??' | null;
 };
 
@@ -40,8 +40,7 @@ export function parseSANSuffix(san: string): SANSuffix | null {
   const match = san.match(SAN_SUFFIX_RE);
   if (!match) return null;
   return {
-    text: match[1],
-    check: (match[2] as '+' | '#' | undefined) ?? null,
+    san: match[1] + (match[2] ?? ''),
     annotation: (match[3] as SANSuffix['annotation'] | undefined) ?? null,
   };
 }
@@ -177,13 +176,10 @@ export function parseSAN(san: string, state: GameState): Move | null {
   const suffix = parseSANSuffix(trimmed);
   // chess.js accepts null moves in strict mode too; Gambit records only
   // actual board moves, which can be reapplied by their from/to squares.
-  if (!suffix || suffix.text === '--') return null;
+  if (!suffix || suffix.san.startsWith('--')) return null;
 
   try {
-    const move = new ChessJs(state.fen).move(
-      suffix.text + (suffix.check ?? ''),
-      { strict: true },
-    );
+    const move = new ChessJs(state.fen).move(suffix.san, { strict: true });
     return moveFromChessJs(move);
   } catch {
     return null;

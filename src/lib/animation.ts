@@ -11,6 +11,5 @@ export function easeOutQuart(n: number): number {
 }
 
 export function timedProgress(age: number, duration: number): number {
-  if (age >= duration) return 1;
   return easeOutQuart(age / duration);
 }

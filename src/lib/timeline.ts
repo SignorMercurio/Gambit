@@ -102,7 +102,7 @@ export function splitSanAnnotation(san: string): { text: string } & (
   const suffix = parseSANSuffix(san);
   if (!suffix?.annotation) return { text: san, mark: null };
   return {
-    text: suffix.text + (suffix.check ?? ''),
+    text: suffix.san,
     mark: suffix.annotation,
     annotation: ANNOTATION_BY_MARK[suffix.annotation],
   };
@@ -158,18 +158,6 @@ const SIMPLE_COMMANDS = new Map<string, SimpleEventKind>([
   ['mind', 'mind'],
   ['reveal', 'reveal'],
 ]);
-
-function toArrowEvent(t: number, line: number, raw: string, match: RegExpMatchArray): ParsedEvent {
-  return {
-    t,
-    kind: 'arrow',
-    from: match[1].toLowerCase(),
-    to: match[2].toLowerCase(),
-    pinned: !!match[3],
-    line,
-    raw,
-  };
-}
 
 export function parseTime(s: string): number {
   const text = s.trim();
@@ -270,16 +258,21 @@ export function parseScript(text: string): TimelineEvent[] {
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i].trim();
     if (isSkippedLine(raw)) continue;
+    const line = i + 1;
+    const fail = (t: number, error: string) => {
+      events.push({ t, error: `Line ${line}: ${error}`, line, raw });
+    };
     const matched = matchScriptLine(raw);
     if (!matched) {
-      events.push({ t: 0, error: `Line ${i + 1}: missing [mm:ss]`, line: i + 1, raw });
+      fail(0, 'missing [mm:ss]');
       continue;
     }
     const { t, body } = matched;
     if (!Number.isFinite(t)) {
-      events.push({ t: 0, error: `Line ${i + 1}: invalid timestamp`, line: i + 1, raw });
+      fail(0, 'invalid timestamp');
       continue;
     }
+    const at = { t, line, raw };
 
     const hm = body.match(/^(?:hl|highlight)\s+(.+)$/i);
     if (hm) {
@@ -292,20 +285,26 @@ export function parseScript(text: string): TimelineEvent[] {
       const invalid = tokens.filter((sq) => !SQUARE_RE.test(sq));
       if (tokens.length === 0 || invalid.length > 0) {
         const detail = invalid.length > 0 ? `: ${invalid.join(', ')}` : '';
-        events.push({ t, error: `Line ${i + 1}: invalid highlight square${detail}`, line: i + 1, raw });
+        fail(t, `invalid highlight square${detail}`);
         continue;
       }
       const squares = [...new Set(tokens.map((sq) => sq.toLowerCase()))];
-      events.push({ t, kind: 'highlight', squares, pinned, line: i + 1, raw });
+      events.push({ ...at, kind: 'highlight', squares, pinned });
       continue;
     }
     const arrowMatch = body.match(ARROW_RE);
     if (arrowMatch) {
-      events.push(toArrowEvent(t, i + 1, raw, arrowMatch));
+      events.push({
+        ...at,
+        kind: 'arrow',
+        from: arrowMatch[1].toLowerCase(),
+        to: arrowMatch[2].toLowerCase(),
+        pinned: !!arrowMatch[3],
+      });
       continue;
     }
     if (/^arrow\b/i.test(body)) {
-      events.push({ t, error: `Line ${i + 1}: invalid arrow`, line: i + 1, raw });
+      fail(t, 'invalid arrow');
       continue;
     }
     // Derived from the table rather than by restating its keys. The alias set
@@ -320,7 +319,7 @@ export function parseScript(text: string): TimelineEvent[] {
     if (simpleKind) {
       const argument = body.slice(firstWord.length).trim();
       if (!argument) {
-        events.push({ t, kind: simpleKind, line: i + 1, raw });
+        events.push({ ...at, kind: simpleKind });
         continue;
       }
       if (simpleKind === 'replay') {
@@ -328,38 +327,28 @@ export function parseScript(text: string): TimelineEvent[] {
         // timestamp lives on, so replay frame times never leave it.
         const step = /^\d+(?:\.\d)?$/.test(argument) ? Number(argument) : NaN;
         if (step >= 0.1 && step <= 10) {
-          events.push({ t, kind: 'replay', step, line: i + 1, raw });
+          events.push({ ...at, kind: 'replay', step });
         } else {
-          events.push({
-            t,
-            error: `Line ${i + 1}: replay step must be 0.1–10 seconds in 0.1s increments`,
-            line: i + 1,
-            raw,
-          });
+          fail(t, 'replay step must be 0.1–10 seconds in 0.1s increments');
         }
         continue;
       }
-      events.push({
-        t,
-        error: `Line ${i + 1}: ${firstWord} takes no arguments`,
-        line: i + 1,
-        raw,
-      });
+      fail(t, `${firstWord} takes no arguments`);
       continue;
     }
     const fenMatch = body.match(/^(?:fen|setfen)\s+(.+)$/i);
     if (fenMatch) {
-      events.push({ t, kind: 'fen', fen: fenMatch[1].trim(), line: i + 1, raw });
+      events.push({ ...at, kind: 'fen', fen: fenMatch[1].trim() });
       continue;
     }
     if (/^(?:fen|setfen)$/i.test(body)) {
-      events.push({ t, error: `Line ${i + 1}: missing FEN`, line: i + 1, raw });
+      fail(t, 'missing FEN');
       continue;
     }
     // The chess parser owns the strict SAN suffix grammar; the timeline only
     // derives a badge when that shared parser recognizes a supported mark.
     const { annotation } = splitSanAnnotation(body);
-    events.push({ t, kind: 'move', san: body, annotation, line: i + 1, raw });
+    events.push({ ...at, kind: 'move', san: body, annotation });
   }
   events.sort((a, b) => a.t - b.t);
   return events;

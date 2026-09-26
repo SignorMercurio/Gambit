@@ -28,36 +28,24 @@ const VOLUME = 0.5;
 let players: HTMLAudioElement[] | null = null;
 let nextPlayer = 0;
 
-function audioPlayers(): HTMLAudioElement[] {
-  // The regression suite imports this module without a DOM; the pure policy
-  // below is the part it loads it for.
-  if (typeof Audio === 'undefined') return [];
-  if (players) return players;
-
-  players = Array.from({ length: PLAYER_COUNT }, () => {
+function playMoveSound(): void {
+  // Lazy, on first play: the regression suite imports this module without a
+  // DOM for the pure policy below.
+  players ??= Array.from({ length: PLAYER_COUNT }, () => {
     const audio = new Audio(MOVE_SOUND_URL);
     audio.preload = 'auto';
     audio.volume = VOLUME;
     return audio;
   });
-  return players;
-}
-
-function playMoveSound(): void {
-  const pool = audioPlayers();
-  if (!pool.length) return;
-
-  const player = pool[nextPlayer];
-  nextPlayer = (nextPlayer + 1) % pool.length;
+  const player = players[nextPlayer];
+  nextPlayer = (nextPlayer + 1) % PLAYER_COUNT;
   player.currentTime = 0;
-  try {
-    void player.play().catch(() => undefined);
-  } catch {
-    // Feedback, never a dependency. Playback in every Gambit flow starts from
-    // a user gesture, so autoplay policy should not reach here — but a refused
-    // play, a missing output device or an undecodable sample must cost the
-    // click and nothing else, least of all the frame that caused it.
-  }
+  // Feedback, never a dependency. Playback in every Gambit flow starts from a
+  // user gesture, so autoplay policy should not reach here — but a refused
+  // play, a missing output device or an undecodable sample all arrive as this
+  // rejection, and must cost the click and nothing else, least of all the
+  // frame that caused it.
+  void player.play().catch(() => undefined);
 }
 
 type MoveSoundKey = string | null;

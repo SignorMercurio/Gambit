@@ -45,9 +45,7 @@ import {
   landBetween,
   MAX_SAFE_PLAYBACK_SECONDS,
   playbackDuration,
-  playStateAt,
   timelineTicks,
-  type PlayState,
 } from './lib/playback';
 
 type NarrationTrack = { url: string; name: string; duration: number };
@@ -58,24 +56,11 @@ type BoardExportOperation = {
   release: () => void;
 };
 // Just the surfaces where a printable character means "type this character".
-// Narrower than isInteractiveShortcutTarget on purpose: see the `/` branch in
-// the window keydown listener.
+// Narrower than the transport's interactive-control guard on purpose: see the
+// `/` branch in the window keydown listener.
 function isTextEntryTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(
     target.closest('input, textarea, [contenteditable="true"]'),
-  );
-}
-
-// The wider set is built on the narrower one rather than restating it: every
-// text-entry surface is also an interactive one, and spelling the three
-// selectors twice meant a fourth (a `[role="textbox"]`) had to be remembered in
-// both places, after which `/` and Space would disagree about what counts as
-// typing.
-function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
-  return (
-    isTextEntryTarget(target) ||
-    (target instanceof HTMLElement &&
-      Boolean(target.closest('button, select, [role="button"], [role="tab"]')))
   );
 }
 
@@ -85,8 +70,6 @@ function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
 // burying it in a 140px scroll well.
 const ERRORS_COLLAPSED_ROWS = 3;
 
-// One row per export state, the same shape PLAY_LABELS uses below. These were
-// three inline four-branch ternaries, two of them byte-identical copies.
 const EXPORT_LABELS: Record<BoardExportState, string> = {
   idle: 'Export PNG',
   exporting: 'Exporting…',
@@ -100,12 +83,10 @@ const EXPORT_GLYPHS: Record<BoardExportState, string> = {
   error: '!',
 };
 
-// Transport glyphs. Module scope, not inline JSX: `App` re-renders on every
-// animation frame of playback, and an element rebuilt per frame is an element
-// React must reconcile per frame — while these depend on nothing the clock
-// changes. Hoisted, the identity is stable and React bails out of the subtree,
-// the same reason `timelinePins` and the tick row below are memoized. `Board`
-// already does this for its own static layers (CHECK_GLOW_DEFS, SQUARE_RECTS).
+type PlayState = 'play' | 'pause' | 'replay';
+
+// Transport glyphs live at module scope: `App` re-renders every playback frame,
+// and a stable element identity lets React bail out of the subtree.
 const PLAY_GLYPHS: Record<PlayState, React.ReactElement> = {
   pause: (
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
@@ -132,7 +113,6 @@ const PLAY_GLYPHS: Record<PlayState, React.ReactElement> = {
   ),
 };
 
-// Named separately because it is used on its own, not through a state table.
 const REWIND_GLYPH = (
   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
     <path
@@ -171,14 +151,6 @@ const SCRIPT_CHANGED_DURING_GESTURE_ERROR =
   'Cannot record this gesture because the script changed while the pointer was held. Try again from the updated position.';
 const MAX_TEXT_IMPORT_BYTES = 1_000_000;
 
-function loadDraft(key: string, fallback: string): string {
-  try {
-    return window.localStorage.getItem(key) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function saveDraft(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value);
@@ -188,7 +160,13 @@ function saveDraft(key: string, value: string): void {
 }
 
 function useDraftText(key: string, fallback: string) {
-  const [value, setValue] = useState(() => loadDraft(key, fallback));
+  const [value, setValue] = useState(() => {
+    try {
+      return window.localStorage.getItem(key) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  });
   // Debounced: a synchronous localStorage write per keystroke is jank waiting
   // to happen on large scripts. The pagehide flush covers the tab closing
   // inside the debounce window, so at most a blink of typing is at risk.
@@ -228,31 +206,6 @@ function waitForBoardPaint(signal: AbortSignal): Promise<void> {
     if (signal.aborted) finish();
     else frame = requestAnimationFrame(() => { frame = requestAnimationFrame(finish); });
   });
-}
-
-function readSelectedTextFile(
-  e: React.ChangeEvent<HTMLInputElement>,
-  latestRead: { current: number },
-  onRead: (text: string, fileName: string) => void,
-  onError: (message: string) => void,
-  beforeCommit: () => Promise<void>,
-): void {
-  const file = takeSelectedFile(e);
-  if (!file) return;
-  const request = ++latestRead.current;
-  if (file.size > MAX_TEXT_IMPORT_BYTES) {
-    onError(`Could not import "${file.name}": text files are limited to 1 MB.`);
-    return;
-  }
-  file.text().then(
-    async (text) => {
-      await beforeCommit();
-      if (latestRead.current === request) onRead(text, file.name);
-    },
-    () => {
-      if (latestRead.current === request) onError(`Could not read "${file.name}".`);
-    },
-  );
 }
 
 // Import affordance: a labelled button driving a hidden file input. The
@@ -337,11 +290,8 @@ export default function App() {
   }, [worldBuild.visualEndTime, subtitleCues, narration]);
 
   const [time, setTime] = useState(0);
-  // Paused on load. The board is an authoring surface before it is a
-  // recording: opening the app used to start the clock immediately, so a
-  // returning author's first act was to catch a script already in motion and
-  // scrub back to where they were. Playback is a deliberate act — the
-  // transport, space, or a seek starts it.
+  // Paused on load: playback is a deliberate act — the transport, space, or a
+  // seek starts it.
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   // Side panel: the script editor is the primary surface; setup (start FEN,
@@ -378,6 +328,7 @@ export default function App() {
   const playingRef = useLatest(playing);
   // pauseToggle reads the clock only for its at-end restart branch; a `time`
   // dep would re-identify it (and the window keydown listener) every frame.
+  // exportBoard reads it after its awaits, when a closed-over `time` is stale.
   const timeRef = useLatest(time);
   // Read by the window keydown listener, which must not re-subscribe every
   // time the user flips a tab.
@@ -431,19 +382,16 @@ export default function App() {
   const latestScriptReadRef = useRef(0);
   const latestSubtitleReadRef = useRef(0);
 
-  const onTabKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault();
-      e.stopPropagation();
-      const next = tab === 'script' ? 'setup' : 'script';
-      setTab(next);
-      // Both tab buttons stay mounted, so focus can follow selection
-      // synchronously without inserting an uncancelled frame of latency.
-      (next === 'script' ? scriptTabRef : setupTabRef).current?.focus();
-    },
-    [tab],
-  );
+  const onTabKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const next = tab === 'script' ? 'setup' : 'script';
+    setTab(next);
+    // Both tab buttons stay mounted, so focus can follow selection
+    // synchronously without inserting an uncancelled frame of latency.
+    (next === 'script' ? scriptTabRef : setupTabRef).current?.focus();
+  };
 
   // The one way the script text is replaced: four pieces move with it, or the
   // next surface to replace it gets the subset wrong — the text, the
@@ -464,40 +412,41 @@ export default function App() {
     [setScriptText],
   );
 
-  const applySubtitles = useCallback((text: string, fileName: string | null = null) => {
+  const applySubtitles = (text: string, fileName: string | null = null) => {
     if (boardExportRef.current) return;
     latestSubtitleReadRef.current++;
     setSubtitleText(text);
     setSubtitleFileName(fileName);
     setSubtitleImportError(null);
-  }, [setSubtitleText]);
+  };
 
-  const onScriptFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (boardExportRef.current) return;
-      setScriptImportError(null);
-      readSelectedTextFile(
-        e,
-        latestScriptReadRef,
-        (text, fileName) => applyScript(text, { fileName }),
-        setScriptImportError,
-        waitForBoardExport,
-      );
-    },
-    [applyScript, waitForBoardExport],
-  );
-
-  const onSubtitleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  // Shared intake for the script and subtitle imports. Only the newest pick
+  // may commit, and only once any PNG capture has finished.
+  const importTextFile = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    latestRead: { current: number },
+    onRead: (text: string, fileName: string) => void,
+    setError: (message: string | null) => void,
+  ) => {
     if (boardExportRef.current) return;
-    setSubtitleImportError(null);
-    readSelectedTextFile(
-      e,
-      latestSubtitleReadRef,
-      applySubtitles,
-      setSubtitleImportError,
-      waitForBoardExport,
+    setError(null);
+    const file = takeSelectedFile(e);
+    if (!file) return;
+    const request = ++latestRead.current;
+    if (file.size > MAX_TEXT_IMPORT_BYTES) {
+      setError(`Could not import "${file.name}": text files are limited to 1 MB.`);
+      return;
+    }
+    file.text().then(
+      async (text) => {
+        await waitForBoardExport();
+        if (latestRead.current === request) onRead(text, file.name);
+      },
+      () => {
+        if (latestRead.current === request) setError(`Could not read "${file.name}".`);
+      },
     );
-  }, [applySubtitles, waitForBoardExport]);
+  };
 
   const cancelPendingNarration = useCallback(() => {
     const pending = pendingNarrationRef.current;
@@ -513,10 +462,8 @@ export default function App() {
     URL.revokeObjectURL(pending.url);
   }, []);
 
-  // Shared by the file picker and by the restore-on-load below, so a track read
-  // back from storage has to clear exactly the bar a freshly picked one does.
-  // A separate restore path would be a second definition of "playable", and the
-  // one that runs on load is the one nobody is watching.
+  // Shared by the file picker and the restore-on-load below: a separate restore
+  // path would be a second definition of "playable".
   const adoptNarration = useCallback(
     (blob: Blob, name: string, source: 'import' | 'restore') => {
       cancelPendingNarration();
@@ -562,16 +509,13 @@ export default function App() {
     [cancelPendingNarration, waitForBoardExport],
   );
 
-  const onNarrationFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (boardExportRef.current) return;
-      const file = takeSelectedFile(e);
-      if (!file) return;
-      narrationChosenRef.current = true;
-      adoptNarration(file, file.name, 'import');
-    },
-    [adoptNarration],
-  );
+  const onNarrationFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (boardExportRef.current) return;
+    const file = takeSelectedFile(e);
+    if (!file) return;
+    narrationChosenRef.current = true;
+    adoptNarration(file, file.name, 'import');
+  };
 
   // Restoring is async, and an author who picks a file before it lands must not
   // have last session's track land on top. The ref, not `narration` state: a
@@ -587,14 +531,14 @@ export default function App() {
     };
   }, [adoptNarration]);
 
-  const clearNarration = useCallback(() => {
+  const clearNarration = () => {
     if (boardExportRef.current) return;
     narrationChosenRef.current = true;
     cancelPendingNarration();
     setNarrationError(null);
     setNarration(null);
     void clearStoredNarration();
-  }, [cancelPendingNarration]);
+  };
 
   // State owns the live URL: replacing or removing a track cleans up the
   // previous one, and unmounting cleans up the current one.
@@ -604,7 +548,6 @@ export default function App() {
 
   useEffect(() => cancelPendingNarration, [cancelPendingNarration]);
 
-  const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
   useEffect(() => {
     if (!playing) {
@@ -626,12 +569,10 @@ export default function App() {
         }
         return next;
       });
-      if (!terminal) rafRef.current = requestAnimationFrame(tick);
+      if (!terminal) raf = requestAnimationFrame(tick);
     }
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-    };
+    let raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [playing, speed, duration]);
 
   // Narration follows the playback clock; the clock stays the single source
@@ -655,7 +596,8 @@ export default function App() {
 
   // 0.25s tick granularity matches the snap tolerance below: any seek larger
   // than the tolerance crosses a tick boundary, while steady playback runs
-  // this check ~4x/s instead of every animation frame.
+  // this check ~4x/s instead of every animation frame. `time` is deliberately
+  // left out of the effect's deps and sampled through narrationDriftTick.
   const narrationDriftTick = narration ? Math.round(time * 4) : 0;
   useEffect(() => {
     const el = audioRef.current;
@@ -667,8 +609,6 @@ export default function App() {
         el.play().catch(() => {});
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- time is sampled
-    // at tick granularity on purpose; see narrationDriftTick above.
   }, [narrationDriftTick, narration, playing]);
 
   const { scriptErrors, moveStates, rejectedEventIndexes } = worldBuild;
@@ -683,11 +623,9 @@ export default function App() {
   const presentationEventIndex =
     worldFrame.replaySourceEventIndex ?? reachedEventIndex;
 
-  // The piece click reads the frame the board is about to draw rather than any
-  // event that produced it, so playback, an `rp` replay step, a scrub landing
-  // and a gesture's own paused landing all sound through one rule — and present
-  // mode keeps it, because the click belongs to the recording. Muting gates the
-  // call rather than the volume: a muted click makes no `play()` at all.
+  // The piece click reads the frame the board draws, not the event behind it,
+  // so every landing sounds through one rule; present mode keeps it, and muting
+  // gates the call (no `play()` at all) rather than the volume.
   useMoveSound(moveSoundKey(world.lastMove), moveSoundOn);
 
   // Full-script errors are returned once beside the board snapshots. Keeping
@@ -698,23 +636,20 @@ export default function App() {
     [scriptErrors],
   );
 
-  // landBetween with the boundary looked up from the current events — for
-  // freshly written lines the events array is stale, so those callers pass
-  // the boundary they just placed to landBetween directly.
-  const landAfter = useCallback(
-    (t: number): number => landBetween(t, events[lastEventIndexAt(events, t) + 1]?.t),
-    [events],
-  );
-
   // Event-anchored seek: while playing, land on t and let it animate; while
   // paused, land just past it so the click shows what it named — and never
-  // shows more (the landing stays clamped before the next event).
+  // shows more (the landing stays clamped before the next event). The boundary
+  // is looked up from the current events; for freshly written lines the events
+  // array is stale, so those callers pass the boundary they just placed to
+  // landBetween directly.
   const seekEvent = useCallback(
     (t: number) => {
       if (boardExportRef.current) return;
-      setTime(playingRef.current ? t : landAfter(t));
+      setTime(
+        playingRef.current ? t : landBetween(t, events[lastEventIndexAt(events, t) + 1]?.t),
+      );
     },
-    [landAfter],
+    [events],
   );
 
   // One commit contract for every programmatic script edit (gestures and
@@ -734,111 +669,70 @@ export default function App() {
   // Both gestures reject the same way: the script text changed between
   // pointer-down and pointer-up (hand edit, undo), so any plan would be built
   // against text the gesture never previewed. Leaves the script untouched.
-  const gestureIsStale = useCallback((): boolean => {
+  const gestureIsStale = (): boolean => {
     if (boardExportRef.current) return true;
     if (scriptTextRef.current === scriptText) return false;
     setScriptEditError(SCRIPT_CHANGED_DURING_GESTURE_ERROR);
     return true;
-  }, [scriptText]);
+  };
 
   // The one way a planner's edit reaches React: surface a conflict, or commit
   // the new text and land the paused playhead between the line it wrote and
   // whatever follows.
-  const applyEditPlan = useCallback(
-    (plan: ScriptEditPlan) => {
-      if (plan.kind === 'conflict') setScriptEditError(plan.error);
-      else commitScriptEdit(plan.text, landBetween(plan.t, plan.nextT));
-    },
-    [commitScriptEdit],
-  );
+  const applyEditPlan = (plan: ScriptEditPlan) => {
+    if (plan.kind === 'conflict') setScriptEditError(plan.error);
+    else commitScriptEdit(plan.text, landBetween(plan.t, plan.nextT));
+  };
 
   // Board gestures (Script tab only): each gesture becomes one script line
   // stamped at the playhead — stamping policy lives in planLineInsert.
-  const recordGestureLine = useCallback(
-    (body: string) => {
-      if (gestureIsStale()) return;
-      applyEditPlan(planLineInsert(events, scriptText, time, body));
-    },
-    [scriptText, time, events, gestureIsStale, applyEditPlan],
-  );
-
-  const undoGestureLine = useCallback(() => {
-    if (gestureUndo == null) return;
-    applyScript(gestureUndo);
-  }, [gestureUndo, applyScript]);
+  const recordGestureLine = (body: string) => {
+    if (gestureIsStale()) return;
+    applyEditPlan(planLineInsert(events, scriptText, time, body));
+  };
 
   const legalTargets = useCallback(
     (from: string) => Chess.legalTargets(world.chessState, from),
     [world.chessState],
   );
 
-  // A press that can't start a move used to return in silence, which reads as
-  // a dead board rather than a refused gesture. Reuses the EDIT row the
-  // planners already write to, so gesture feedback has one home.
-  const onMoveRejected = useCallback(
-    (from: string) => {
-      const reason = Chess.explainNoMoves(world.chessState, from);
-      if (!reason) return;
-      setScriptEditError(
-        `Can't move from ${from} at ${fmtTime(timeRef.current, 'always')}: ${reason}.`,
-      );
-    },
-    [world.chessState, timeRef],
-  );
+  // A press that can't start a move says why, in the EDIT row the planners
+  // already write to, so gesture feedback has one home.
+  const onMoveRejected = (from: string) => {
+    const reason = Chess.explainNoMoves(world.chessState, from);
+    if (!reason) return;
+    setScriptEditError(`Can't move from ${from} at ${fmtTime(time, 'always')}: ${reason}.`);
+  };
 
-  // Move gestures: chess resolution (legality, SAN, same-move comparison)
-  // happens here against the current position; the branch-aware policy —
-  // advance / extend / wrap / plain-insert fallback — is planMoveGesture's
-  // (scriptEdit.ts). The plan is either a seek or new text plus landing
-  // boundaries; committing stays a React concern.
-  const onMoveGesture = useCallback(
-    (from: string, to: string) => {
-      if (gestureIsStale()) return;
-      const candidates = Chess.movesBetween(world.chessState, from, to);
-      // Promotion records a queen; underpromotion stays a hand edit.
-      const mv = candidates.find((m) => !m.promotion || m.promotion === 'q');
-      if (!mv) return;
-      const san = Chess.sanForMove(world.chessState, mv);
-      const matchesScripted = (scriptedSan: string) => {
-        const scripted = Chess.parseSAN(scriptedSan, world.chessState);
-        return !!scripted && Chess.sameMoveSquares(scripted, mv);
-      };
-      const plan = planMoveGesture(
-        events,
-        scriptText,
-        time,
-        san,
-        matchesScripted,
-        rejectedEventIndexes,
-      );
-      if (plan.kind === 'seek') {
-        setScriptEditError(null);
-        seekEvent(plan.t);
-      } else {
-        applyEditPlan(plan);
-      }
-    },
-    [
-      world.chessState,
+  // Move gestures: chess resolution happens here against the current position;
+  // the branch-aware policy is planMoveGesture's (scriptEdit.ts). The plan is
+  // either a seek or new text plus landing boundaries; committing stays here.
+  const onMoveGesture = (from: string, to: string) => {
+    if (gestureIsStale()) return;
+    const candidates = Chess.movesBetween(world.chessState, from, to);
+    // Promotion records a queen; underpromotion stays a hand edit.
+    const mv = candidates.find((m) => !m.promotion || m.promotion === 'q');
+    if (!mv) return;
+    const san = Chess.sanForMove(world.chessState, mv);
+    const matchesScripted = (scriptedSan: string) => {
+      const scripted = Chess.parseSAN(scriptedSan, world.chessState);
+      return !!scripted && Chess.sameMoveSquares(scripted, mv);
+    };
+    const plan = planMoveGesture(
       events,
-      time,
       scriptText,
-      seekEvent,
-      gestureIsStale,
-      applyEditPlan,
+      time,
+      san,
+      matchesScripted,
       rejectedEventIndexes,
-    ],
-  );
-
-  const onArrowGesture = useCallback(
-    (from: string, to: string) => recordGestureLine(`${from}->${to}`),
-    [recordGestureLine],
-  );
-
-  const onHighlightGesture = useCallback(
-    (sq: string) => recordGestureLine(`hl ${sq}`),
-    [recordGestureLine],
-  );
+    );
+    if (plan.kind === 'seek') {
+      setScriptEditError(null);
+      seekEvent(plan.t);
+    } else {
+      applyEditPlan(plan);
+    }
+  };
 
   // Structured edits from the PGN script view. Free-form times by design:
   // the script re-sorts (and the line relocates) when an edit crosses other
@@ -859,14 +753,6 @@ export default function App() {
     [scriptText, commitScriptEdit],
   );
 
-  // Rewind preserves the play state (editor convention): while playing it
-  // replays from 0; while paused or at the end it returns to 0 paused. The
-  // gradient play button owns "replay from the end", so the two transport
-  // buttons never duplicate.
-  const restart = useCallback(() => {
-    if (boardExportRef.current) return;
-    setTime(0);
-  }, []);
   const pauseToggle = useCallback(() => {
     if (boardExportRef.current) return;
     if (timeRef.current >= duration) {
@@ -877,7 +763,7 @@ export default function App() {
     }
   }, [duration]);
 
-  const exportBoard = useCallback(async () => {
+  const exportBoard = async () => {
     if (boardExportRef.current) return;
     const resumePlayback = playingRef.current;
     let release!: () => void;
@@ -896,10 +782,8 @@ export default function App() {
     setPlaying(false);
     try {
       // One ceiling over the whole operation, not just the rasterize: the frame
-      // wait, the exporter's dynamic import, and the rasterize can each stall,
-      // and an await that never settles never runs the `finally` — which is
-      // what used to leave playback paused and this button disabled for the
-      // rest of the session.
+      // wait, the dynamic import, and the rasterize can each stall, and an
+      // await that never settles never runs the `finally`.
       await withTimeout(
         (async () => {
           // Load and settle concurrently, with both rejections observed from
@@ -912,7 +796,7 @@ export default function App() {
           if (!board) throw new Error('The board is not available.');
           await downloadBoardPng(board, timeRef.current, {
             signal: operation.controller.signal,
-            exporter: Promise.resolve(exporter),
+            exporter,
           });
         })(),
         BOARD_EXPORT_TIMEOUT_MS,
@@ -940,15 +824,11 @@ export default function App() {
       }
       operation.release();
     }
-  }, [playingRef, timeRef]);
+  };
 
-  // Two buttons run this — one in the header, one in present mode — and the
-  // half they share is the whole accessibility contract: the announced size,
-  // the disabled-while-exporting rule, and the convention that the error rides
-  // in the tooltip. Present mode has no visible label to contradict a stale
-  // one, so a fix landing in only one copy is invisible exactly where it
-  // matters. The size is templated off the exporter's own constant rather than
-  // spelled out, so the announcement cannot outlive a change to the output.
+  // Shared by the header and present-mode buttons: the whole accessibility
+  // contract (announced size, disabled-while-exporting, error in the tooltip).
+  // The size comes from BOARD_EXPORT_SIZE so it cannot outlive the output.
   const exportButtonProps = {
     type: 'button' as const,
     onClick: exportBoard,
@@ -968,17 +848,6 @@ export default function App() {
       window.clearTimeout(boardExportResetRef.current);
     }
   }, []);
-
-  const enterPresent = useCallback(() => setPresent(true), []);
-  const exitPresent = useCallback(() => setPresent(false), []);
-  const togglePresentPgn = useCallback(
-    () => setPresentPgn((v) => (v === '1' ? '0' : '1')),
-    [setPresentPgn],
-  );
-  const toggleMoveSound = useCallback(
-    () => setMoveSoundDraft((v) => (moveSoundEnabled(v) ? '0' : '1')),
-    [setMoveSoundDraft],
-  );
 
   // Present-mode chrome auto-hide: fade the floating transport and cursor
   // after the pointer is idle during playback; pointer movement or contact
@@ -1060,7 +929,13 @@ export default function App() {
         setInsertOpen(true);
         return;
       }
-      if (isInteractiveShortcutTarget(e.target)) return;
+      // The wider interactive set builds on isTextEntryTarget so the
+      // text-entry selectors are spelled once.
+      if (
+        isTextEntryTarget(e.target) ||
+        (e.target instanceof HTMLElement &&
+          e.target.closest('button, select, [role="button"], [role="tab"]'))
+      ) return;
       // Space scrolls the page by default; the arrows keep their native
       // scroll behavior at window level.
       if (e.code === 'Space') e.preventDefault();
@@ -1077,27 +952,8 @@ export default function App() {
     [activeSubtitle],
   );
 
-  // Three booleans, rebuilt as an array + filter + join on every frame of
-  // playback. None of them is a clock input.
-  const appClass = useMemo(
-    () =>
-      [
-        'app',
-        present && 'app--present',
-        present && presentPgn && 'app--present-pgn',
-        present && chromeHidden && 'app--idle',
-      ]
-        .filter(Boolean)
-        .join(' '),
-    [present, presentPgn, chromeHidden],
-  );
-
-  // The ruler's fixed furniture. It sits inside `.controls`, which re-renders
-  // on every animation frame of playback, and depends only on the script: the
-  // ticks on the duration they divide. Unmemoized it rebuilt a tick element
-  // and a style object per division, every frame, for a row whose content had
-  // not changed since the last edit — next to `timelinePins`, which is
-  // memoized for exactly this reason.
+  // The ruler's ticks depend only on the duration; memoized like
+  // `timelinePins` so per-frame renders of `.controls` reuse the row.
   const tickRow = useMemo(
     () => (
       <div className="timeline-ticks" aria-hidden="true">
@@ -1110,13 +966,9 @@ export default function App() {
     ),
     [duration],
   );
-  // Rate and the piece click's on/off ride one wrapper rather than two grid
-  // children. The transport grid restates its column list in four tiers and
-  // places every child by hand, so a second bare child would auto-place into
-  // whatever cell each tier happened to leave free — a control that lands on
-  // the timeline at one viewport width only. Memoized because `App` re-renders
-  // on every animation frame of playback and neither the rate selector nor the
-  // SFX toggle depends on the clock.
+  // Rate and SFX ride one wrapper: the transport grid places every child by
+  // hand per tier, so a second bare child would auto-place into whatever cell
+  // a tier left free. Memoized because neither depends on the clock.
   const transportPrefs = useMemo(
     () => (
       <div className="transport-prefs">
@@ -1139,16 +991,16 @@ export default function App() {
           className="mute-btn"
           aria-pressed={moveSoundOn}
           aria-label="Move SFX"
-          onClick={toggleMoveSound}
+          onClick={() => setMoveSoundDraft((v) => (moveSoundEnabled(v) ? '0' : '1'))}
         >
           SFX
         </button>
       </div>
     ),
-    [speed, moveSoundOn, toggleMoveSound],
+    [speed, moveSoundOn, setMoveSoundDraft],
   );
 
-  const playState = playStateAt(playing, time, duration);
+  const playState: PlayState = playing ? 'pause' : time >= duration ? 'replay' : 'play';
   const playLabel = PLAY_LABELS[playState];
   const currentTimeText = fmtTime(time, 'always');
   const durationText = fmtTime(duration, 'always');
@@ -1205,20 +1057,12 @@ export default function App() {
     [events, errorLines, duration, seekEvent, pinsRoving],
   );
 
-  // Rendered at the bottom of whichever panel page is open: an error anywhere
-  // (FEN, script, subtitles, narration) must stay visible on both pages.
-  // Built as one ordered list rather than eight inline conditionals so the band
-  // can count itself — a fixed 140px cap turned six errors into a nested scroll
-  // region inside an already-scrolling panel, which hides the very thing it is
-  // trying to report.
+  // Rendered at the bottom of whichever panel page is open, so an error
+  // anywhere stays visible on both pages; one ordered list so the band can
+  // count itself.
   const errorRows = useMemo(() => {
-    // Rows are keyed by position, not by `tag`. The tag looked like a free
-    // identity — one row per source, one event per line — but `S{line}` is not
-    // unique: an SRT can produce two errors on the same line (a missing blank
-    // separator *and* an empty cue), and both rows then render with `key="S4"`
-    // in the one surface whose job is to report malformed input completely.
-    // The index is position-stable inside this memo and cannot drift from a
-    // label, which is what the tag was chosen to avoid.
+    // Rows are keyed by index, not `tag`: `S{line}` is not unique (one SRT
+    // line can raise two errors).
     const rows: { tag: string; text: string; id?: string }[] = [];
     if (initialSetup.error) rows.push({ tag: 'FEN', text: initialSetup.error, id: fenErrorId });
     if (narrationError) rows.push({ tag: 'AUD', text: narrationError, id: narrationErrorId });
@@ -1279,7 +1123,9 @@ export default function App() {
 
   return (
     <div
-      className={appClass}
+      className={`app${present ? ' app--present' : ''}${
+        present && presentPgn ? ' app--present-pgn' : ''
+      }${present && chromeHidden ? ' app--idle' : ''}`}
       aria-busy={exporting || undefined}
     >
       {/* Narration track: invisible, driven entirely by the playback clock. */}
@@ -1314,7 +1160,7 @@ export default function App() {
           <button
             type="button"
             className="present-btn"
-            onClick={enterPresent}
+            onClick={() => setPresent(true)}
             aria-label="Enter present mode"
           >
             Present
@@ -1325,7 +1171,7 @@ export default function App() {
       <main className="main" {...(exporting ? { inert: '' } : {})}>
         <div className="board-col">
           <Board
-            ref={boardRef}
+            boardRef={boardRef}
             positions={world.positions}
             lastMove={world.lastMove}
             highlights={world.highlights}
@@ -1340,8 +1186,8 @@ export default function App() {
             legalTargets={legalTargets}
             onMoveRejected={onMoveRejected}
             onMoveGesture={onMoveGesture}
-            onArrowGesture={onArrowGesture}
-            onHighlightGesture={onHighlightGesture}
+            onArrowGesture={(from, to) => recordGestureLine(`${from}->${to}`)}
+            onHighlightGesture={(sq) => recordGestureLine(`hl ${sq}`)}
           />
 
           <div
@@ -1363,7 +1209,16 @@ export default function App() {
             >
               {PLAY_GLYPHS[playState]}
             </button>
-            <button type="button" className="ctrl-btn" onClick={restart} aria-label="Rewind to start">
+            {/* Rewind preserves the play state (editor convention): while
+               playing it replays from 0; while paused or at the end it returns
+               to 0 paused. The gradient play button owns "replay from the
+               end", so the two transport buttons never duplicate. */}
+            <button
+              type="button"
+              className="ctrl-btn"
+              onClick={() => { if (!boardExportRef.current) setTime(0); }}
+              aria-label="Rewind to start"
+            >
               {REWIND_GLYPH}
             </button>
 
@@ -1427,15 +1282,15 @@ export default function App() {
                   type="button"
                   className="present-toggle"
                   aria-pressed={presentPgn}
-                  onClick={togglePresentPgn}
+                  onClick={() => setPresentPgn((v) => (v === '1' ? '0' : '1'))}
                   aria-label="Toggle move list"
                 >
                   PGN
                 </button>
                 <button
                   type="button"
-                  className="exit-present-btn"
-                  onClick={exitPresent}
+                  className="present-toggle"
+                  onClick={() => setPresent(false)}
                   aria-label="Exit present mode (Escape)"
                 >
                   Exit
@@ -1507,10 +1362,8 @@ export default function App() {
                 <>
                 <div className="panel-header">
                   <div className="panel-title-row">
-                    {/* The tab directly above already reads "Script". Kept in
-                        the DOM because it names the editor for assistive tech
-                        (aria-labelledby), hidden because repeating the tab
-                        label spent a row of a panel that is always short. */}
+                    {/* Visually hidden (the tab above reads "Script"); the h2
+                        exists to name the editor via aria-labelledby. */}
                     <h2 className="sr-only" id={editorLabelId}>Script</h2>
                     <div className="subtitle-actions">
                       <div className="view-toggle" role="group" aria-label="Script view mode">
@@ -1537,7 +1390,7 @@ export default function App() {
                           type="button"
                           className="upload-btn"
                           aria-label="Undo last board edit"
-                          onClick={undoGestureLine}
+                          onClick={() => applyScript(gestureUndo)}
                         >
                           Undo
                         </button>
@@ -1546,7 +1399,12 @@ export default function App() {
                         accept=".gambit,.txt,text/plain"
                         label="Import script file"
                         describedBy={scriptImportError ? scriptImportErrorId : undefined}
-                        onChange={onScriptFileChange}
+                        onChange={(e) => importTextFile(
+                          e,
+                          latestScriptReadRef,
+                          (text, fileName) => applyScript(text, { fileName }),
+                          setScriptImportError,
+                        )}
                       />
                     </div>
                   </div>
@@ -1572,9 +1430,7 @@ export default function App() {
                     onRetime={onRetimeEvent}
                     onDelete={onDeleteEvents}
                   />
-                  {/* The structured editor could retime and delete but never
-                      create, so nine of twelve event kinds had no way in.
-                      Insertion reuses recordGestureLine — the board gesture's
+                  {/* Insertion reuses recordGestureLine — the board gesture's
                       own commit path — rather than opening a second one. */}
                   <InsertMenu
                     open={insertOpen}
@@ -1585,7 +1441,6 @@ export default function App() {
                   </>
                 ) : (
                   <textarea
-                    id="script-text"
                     className="script-textarea"
                     spellCheck={false}
                     value={scriptText}
@@ -1601,8 +1456,6 @@ export default function App() {
                 </>
               ) : (
                 <>
-                {/* No header band: with the title hidden this one held nothing
-                    but padding and a rule above the first field. */}
                 <h2 className="sr-only">Setup</h2>
                 <div className="fen-field">
                   <label htmlFor="start-fen">Start FEN</label>
@@ -1649,7 +1502,12 @@ export default function App() {
                         accept=".srt,text/plain"
                         label="Import subtitle file"
                         describedBy={subtitleImportError ? subtitleImportErrorId : undefined}
-                        onChange={onSubtitleFileChange}
+                        onChange={(e) => importTextFile(
+                          e,
+                          latestSubtitleReadRef,
+                          applySubtitles,
+                          setSubtitleImportError,
+                        )}
                       />
                     </div>
                   </div>

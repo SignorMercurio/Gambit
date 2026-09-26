@@ -43,27 +43,12 @@ export const markerKindFor = (
 ): MarkerKind => (errorLines.has(line) ? 'err' : kind);
 
 
-// Pin shape by kind, decodable in grayscale. Data, not CSS: `.marker` keys off
-// `data-form`, so the shape a kind wears is stated once here and TypeScript
-// forces the table exhaustive over every event kind — a thirteenth kind cannot
-// reach the ruler without choosing a form.
-//
-// It is a table because the rule it enforces is a *relation between two
-// tables*: kind is never color alone, so two kinds sharing a `markerColors`
-// entry must not share a `markerForms` entry. `rp` is the pair that forced
-// this — a replay is about moves and deliberately keeps move blue, which
-// leaves shape as the only separation, and for a while it had none. Asserting
-// that in CSS source text does not work: the guard that did compared rule
-// bodies, so re-declaring `rp` with the base rule's own values read as
-// "different" while a longhand rewrite of the real shape read as "changed".
-//
-// Writing it down surfaced a second collision the CSS never showed: `cl`,
-// `mind`, and `reveal` all wear grey-mist, and all three were capsules.
-// `mind`/`reveal` are two halves of one gesture and may look alike; `cl` is
-// independent and may not. It takes the hollow form — which also settles a
-// mismatch, since its *seek dot* has always been the hollow ring while its pin
-// was a filled capsule, and DESIGN.md asks that one event read identically on
-// the ruler and in the list.
+// Pin shape by kind, decodable in grayscale (DESIGN.md "Event-kind markers").
+// Data, not CSS: `.marker` keys off `data-form`, and a Record forces every
+// kind to choose a form. It is a table because the rule is a relation between
+// two tables: kinds sharing a `markerColors` entry never share a form (except
+// mind/reveal, two halves of one gesture). `rp` keeps move blue, so its shape
+// is all that separates it. A guard over CSS source text cannot check that.
 type PinForm = 'bar' | 'capsule' | 'hollow' | 'pennant' | 'stack';
 
 export const markerForms: Record<MarkerKind, PinForm> = {
@@ -98,53 +83,17 @@ export const tokens = {
   mindVoidDark: '#0f1526',
   mindCoordInk: '#c8d0e6',
 
-  // Board overlays. Both board marks are legitimately amber, and they were
-  // once the same full-square flood 3% of alpha apart (0.55 vs 0.52 on blue) —
-  // in the recording, which is the whole product, a viewer could not tell "the
-  // tool moved a piece here" from "the teacher is pointing here". Kind is never
-  // color alone (the doctrine the seek dots and timeline pins already follow),
-  // so they differ in form. Which one changes is decided by frequency and by
-  // what the form means:
-  //
-  //   flood = ambient, "something happened on this square"
-  //   frame = pointing, "look at this square"
-  //
-  // The last move keeps the flood. It marks two squares on *every* move, one
-  // of them usually empty, so it has to stay quiet and conventional — framing
-  // it put a hard-edged box on every move of the recording, and a box around
-  // an empty origin square reads as a selection artifact, not as chess.
+  // Board overlays (DESIGN.md "The teacher's mark and the tool's mark"). Both
+  // marks are amber, so they differ in form, decided by frequency:
+  // flood = ambient last move, on every move and often an empty origin, so it
+  // stays quiet; ring = the authored `hl`, rare and aimed.
   boardLastMoveOnLight: 'rgba(255, 213, 79, 0.42)',
   boardLastMoveOnDark: 'rgba(255, 213, 79, 0.52)',
-  // `hl` takes the ring. It is rare and deliberate — the author aimed it — and
-  // a ring is a pointing gesture rather than a wash. Restraint here is not
-  // weakness: thin ink is more directed than a flood, not less.
-  //
-  // Marker amber, not the board stop, and fully opaque. The board stop
-  // `#ffd54f` is tuned for the *flood*, which has to sit under content without
-  // muddying the square; against studio-cream it is nearly the same luminance,
-  // so a ring drawn in it measured 1.15:1 on cream against 2.16:1 on blue —
-  // the author's mark was half-invisible on every other square. Marker amber
-  // is a step darker and more saturated, which is exactly what separates it
-  // from cream: 1.58:1 there and 1.81:1 on blue.
-  //
-  // Opacity 1 is load-bearing, not incidental. A translucent stroke takes on
-  // whatever it covers, so the same token composited to two different colors
-  // and needed a per-square-color alpha pair to compensate (0.72/0.88, chasing
-  // an olive drift on blue). An opaque stroke is the same pen everywhere, so
-  // one value replaces the pair. It reads as solid gold rather than the glare
-  // `#ffd54f` produced at the same opacity, because it is the darker stop.
-  //
-  // Side effect worth knowing: this lands near the board arrow's persimmon.
-  // They never collide because nothing confuses a circle with an arrow — form
-  // separates them, the same doctrine that split this ring from the flood —
-  // and it puts the board mark on the exact color its own timeline pin and
-  // seek dot already use, so one event reads identically in all three places.
-  //
-  // A reference, not a second `#f0b429`. "The ring is marker amber" is the
-  // whole paragraph above; spelled as a literal it was an equality a test had
-  // to keep true, and a test can only notice the drift after someone commits
-  // it. Marker amber is the source because that is the direction the rule runs
-  // — the board mark borrows the pin's color, never the reverse.
+  // The ring is marker amber, not the board stop: `#ffd54f` sits near
+  // studio-cream's luminance and half-vanishes on light squares. Opaque,
+  // because a translucent stroke composites to a different color per square.
+  // A reference, not a second literal: the rule runs from the pin to the
+  // board, so the board mark borrows the pin's color, never the reverse.
   boardHighlightRing: markerColors.highlight,
   boardArrow: 'rgba(255, 170, 60, 0.85)',
   // Check glow under the checked king: studio-vermillion radial, dense at
@@ -167,29 +116,13 @@ export const tokens = {
   shadowPieceMoving: 'drop-shadow(0 6px 5px rgba(15, 21, 37, 0.28))',
 } as const;
 
-// Move-quality annotation palette — chess.com's move-classification treatment,
-// adopted deliberately and against PRODUCT.md's original anti-reference, which
-// has been amended to carve out this one artifact — the quality mark, wherever
-// it appears — rather than a surface. The four values are chess.com's own
-// classification colors.
-//
-// Two contrast costs come with them, both accepted rather than overlooked:
-//
-//   1. White ink on these fills is under the 3:1 large-text floor on two of
-//      the four — `mistake` at 1.96 and `brilliant` at 2.80 (`great` 3.64 and
-//      `blunder` 3.58 clear it). Darkening the ink would fix that and break
-//      the replica, so the trade is paid at the disc's edge instead of at its
-//      glyph; see the drop shadow in Board.tsx.
-//   2. `great` (#5c8bb0) is 1.08:1 against Gambit's dark square — all but the
-//      same luminance. chess.com never hits this because their board is green
-//      and cream, so a blue badge never lands on a blue square; ours does. On
-//      those squares that shadow is the entire difference between a disc and
-//      a smudge, which is what it was tuned against.
-//
-// No rim. The reference has none, and a halo was the wrong way to buy that
-// separation back: it puts a ring of Gambit's own making around a mark whose
-// whole point is to be the borrowed one. `BadgeDisc` in Board.tsx owns the
-// circle so a rim is unrepresentable at a call site.
+// Move-quality annotation palette (DESIGN.md "Move-Quality Marks"):
+// chess.com's classification colors, a deliberate exception carved out in
+// PRODUCT.md. Two contrast costs are accepted, not overlooked: white ink sits
+// under 3:1 on `mistake` and `brilliant`, and `great` all but matches the dark
+// square. Both are paid by the drop shadow in Board.tsx rather than by breaking
+// the replica. No rim: `BadgeDisc` in Board.tsx owns the circle so a rim is
+// unrepresentable at a call site.
 export const annotationColors: Record<MoveAnnotation, string> = {
   brilliant: '#1baca6',
   great: '#5c8bb0',
@@ -197,24 +130,10 @@ export const annotationColors: Record<MoveAnnotation, string> = {
   blunder: '#fa412d',
 };
 
-// The same marks as 13px/700 text in the move list. Chrome, not artifact — the
-// replica was asked for on the board, and a color chosen to sit on a cream
-// chess square has no reason to also govern body text on a dark panel.
-//
-// Spread from the board fills and overridden only where the panel forces it,
-// so "one mark, one color" stays the default and each exception costs a line
-// with a number attached. The floor is body AA against the *worst* backdrop a
-// mark renders on, which is a variation's inset (#31384c) — lighter than the
-// panel well, and the surface every earlier reading of this was taken on:
-//
-//   great     #5c8bb0 → 3.21    blunder   #fa412d → 3.25
-//   brilliant #1baca6 → 4.16, close enough to look right and still fail
-//
-// `mistake` clears it unchanged at 5.95 and stays the board value.
-//
-// The current row is the one place a mark drops its color entirely: its pill
-// is studio-steel-blue, where all four measure 1.20–1.72 and no lightening
-// rescues them. See `sanLabel` in MoveList.tsx.
+// The same marks as 13px/700 text in the move list. Spread from the board
+// fills and overridden only where body AA against a variation's inset
+// (#31384c), the worst backdrop a mark renders on, forces it. The current row
+// drops the color entirely; see `moveBtn` in MoveList.tsx.
 export const annotationMarkColors: Record<MoveAnnotation, string> = {
   ...annotationColors,
   brilliant: '#2cb9b3',
@@ -225,18 +144,10 @@ export const annotationMarkColors: Record<MoveAnnotation, string> = {
 // Ink for the badge marks on all four fills — white, as in the reference.
 export const annotationInk = '#ffffff';
 
-// The destination square's tint. An annotated move repaints its landing square
-// in the annotation's own color instead of the last-move amber; the origin
-// square keeps the amber, so a move still reads as a pair and now reads
-// directionally — where it came from, and what it was worth.
-//
-// Two systems were painting one square, and the tool's automatic mark was
-// sitting on top of the author's explicit judgment. Frequency decides who
-// yields, as always, and an annotation is the rarest thing an author writes.
-//
+// The destination square's tint: an annotated move's landing square takes the
+// annotation hue instead of last-move amber, and the origin keeps the amber.
 // Applied as `opacity` on a rect filled with the annotation color, so the hue
-// stays single-sourced above rather than respelled as eight rgba literals that
-// could drift from it.
+// stays single-sourced above rather than respelled as rgba literals.
 export const annotationSquareAlpha = { onLight: 0.42, onDark: 0.58 } as const;
 
 // Chrome UI font stack — mirrored by --font-ui in styles.css :root, because

@@ -1,9 +1,9 @@
 // Roving tabindex over the interactive controls inside a container — the
-// WAI-ARIA toolbar/composite pattern shared by the timeline pin row and the
-// Moves-view event list. The whole group costs one Tab stop; ←/→ (and
-// optionally ↑/↓) walk controls in DOM order, Home/End jump to the extremes,
-// and any focus landing inside (mouse click, programmatic) re-anchors the
-// stop so Tab-out/Tab-in returns there.
+// WAI-ARIA toolbar/composite pattern shared by the timeline pin row, the
+// Moves-view event list, and the insert menu. The whole group costs one Tab
+// stop; ←/→ (and optionally ↑/↓) walk controls in DOM order, Home/End jump to
+// the extremes, and any focus landing inside (mouse click, programmatic)
+// re-anchors the stop so Tab-out/Tab-in returns there.
 //
 // The cursor lives in a ref and tabIndex is written imperatively so an arrow
 // press never re-renders the container's subtree (the pin row is memoized
@@ -32,13 +32,9 @@ export function syncRovingTabStops<T extends { tabIndex: number }>(
   return current;
 }
 
-// `mirrorTo` is an *output*, not the handle you attach: the returned `ref`
-// callback writes the node into it, for callers that also need it (scrolling
-// the list, hit-testing a click against the panel). It sits in `opts` because
-// as a leading parameter it read as the container handle — and attaching that
-// instead of the returned `ref` typechecks (a MutableRefObject is a valid
-// `ref` prop) and silently no-ops, which is exactly the eight-Tab-stop bug
-// below. Callers that don't need the node pass nothing.
+// `mirrorTo` is an output the returned `ref` writes the node into, for callers
+// that need it. It sits in `opts` because attaching it instead of `ref`
+// typechecks (a MutableRefObject is a valid `ref` prop) and silently no-ops.
 export function useRovingTabIndex<T extends HTMLElement>(
   selector: string,
   opts?: {
@@ -61,15 +57,9 @@ export function useRovingTabIndex<T extends HTMLElement>(
     [containerRef, selector],
   );
 
-  // Attached as a callback ref rather than read out of `containerRef` in an
-  // effect. The effect form had a precondition nobody had written down: its
-  // deps are all stable, so it ran exactly once at mount, and a container that
-  // mounts *later* was never swept. The pin row and the move list are always
-  // mounted so it held there by luck; the insert menu's panel renders only
-  // while open, so all eight command rows kept `tabIndex=0` and the group cost
-  // eight Tab stops instead of the one this hook exists to provide. A hook that
-  // silently no-ops on an unmounted container is the wrong shape — this one
-  // observes whatever node it is given, whenever it arrives.
+  // A callback ref, not a mount effect: an effect with stable deps runs once
+  // and never sweeps a container that mounts later (the insert menu's panel
+  // renders only while open), which would leave every row tabbable.
   const observerRef = useRef<MutationObserver | null>(null);
   const attach = useCallback(
     (node: T | null) => {
@@ -96,7 +86,6 @@ export function useRovingTabIndex<T extends HTMLElement>(
       if (!(e.target instanceof HTMLElement) || !e.target.matches(selector)) return;
       const els = controls();
       const nextCursor = els.indexOf(e.target);
-      if (nextCursor < 0) return;
       cursorRef.current = syncRovingTabStops(els, nextCursor);
     },
     [controls, selector],

@@ -103,8 +103,23 @@ try {
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
   ]);
 
+  const standardSetup = setupFromFen(Chess.STARTING_FEN);
+  assert.equal(standardSetup.error, null);
+  // Never memoize this: assertions below depend on each build being genuinely
+  // independent.
+  const worldFrom = (text) => buildWorld(parseScript(text), standardSetup);
+  const mainlineFrom = (text) => {
+    const ev = parseScript(text);
+    const w = buildWorld(ev, standardSetup);
+    return buildMainline(ev, w.moveStates, w.rejectedEventIndexes);
+  };
+  const rowText = (r) => [r.num, r.white?.text ?? null, r.black?.text ?? null];
+
   const saturated = '[00:00.0] e4\n[00:00.1] e5';
-  const events = parseScript(saturated);
+  const planLine = (text, t, body) => planLineInsert(parseScript(text), text, t, body);
+  const planMove = (text, t, san, rejected = new Set(), isNext = () => false) =>
+    planMoveGesture(parseScript(text), text, t, san, isNext, rejected);
+  const noErrors = (text) => assert.deepEqual(parseScript(text).filter((e) => 'error' in e), []);
 
   const replayAliases = parseScript('[1] rp\n[2] replay\n[3] replay 1');
   assert.deepEqual(replayAliases.map((event) => event.kind), ['replay', 'replay', 'replay']);
@@ -193,15 +208,15 @@ try {
     'a script exactly at the limit reaches the line grammar',
   );
 
-  const linePlan = planLineInsert(events, saturated, 0.05, 'hl e4');
+  const linePlan = planLine(saturated, 0.05, 'hl e4');
   assert.equal(linePlan.kind, 'conflict');
   assert.match(linePlan.error, /no free 0\.1s slot/i);
 
-  const movePlan = planMoveGesture(events, saturated, 0.05, 'Nf3', () => false, new Set());
+  const movePlan = planMove(saturated, 0.05, 'Nf3');
   assert.equal(movePlan.kind, 'conflict');
 
   const roomy = '[00:00.0] e4\n[00:01.0] e5';
-  const roomyPlan = planLineInsert(parseScript(roomy), roomy, 0.05, 'hl e4');
+  const roomyPlan = planLine(roomy, 0.05, 'hl e4');
   assert.equal(roomyPlan.kind, 'edit');
   assert.equal(roomyPlan.t, 0.1);
   assert.equal(roomyPlan.nextT, 1, 'the paused landing stops short of the next scripted event');
@@ -211,7 +226,7 @@ try {
   // The clamp must step back to the free slot below — not report a spurious
   // conflict while room remains.
   const parked = '[00:00.0] e4\n[00:00.5] e5';
-  const parkedPlan = planLineInsert(parseScript(parked), parked, 0.45, 'hl e4');
+  const parkedPlan = planLine(parked, 0.45, 'hl e4');
   assert.equal(parkedPlan.kind, 'edit');
   assert.equal(
     parkedPlan.t,
@@ -224,7 +239,7 @@ try {
   // position the gesture never previewed), so a pinched interval is an
   // explicit conflict.
   const offGrid = '[0:05.16] Nf3\n[0:05.24] hl e4';
-  const offGridPlan = planLineInsert(parseScript(offGrid), offGrid, 5.2, 'hl d5');
+  const offGridPlan = planLine(offGrid, 5.2, 'hl d5');
   assert.equal(
     offGridPlan.kind,
     'conflict',
@@ -234,8 +249,7 @@ try {
   // Branch-aware policy: replaying the scripted next move only seeks —
   // nothing is written.
   const mainline = '[00:01.0] e4\n[00:03.0] Nc6';
-  const mainlineEvents = parseScript(mainline);
-  assert.deepEqual(planMoveGesture(mainlineEvents, mainline, 2, 'Nc6', (san) => san === 'Nc6', new Set()), {
+  assert.deepEqual(planMove(mainline, 2, 'Nc6', new Set(), (san) => san === 'Nc6'), {
     kind: 'seek',
     t: 3,
   });
@@ -243,41 +257,27 @@ try {
   // A different move wraps itself in a br/ml variation: exactly three new
   // lines, the move stamped on the playhead, and the result round-trips
   // through parseScript without errors.
-  const wrapPlan = planMoveGesture(mainlineEvents, mainline, 2, 'c5', () => false, new Set());
+  const wrapPlan = planMove(mainline, 2, 'c5');
   assert.equal(wrapPlan.kind, 'edit');
   assert.equal(wrapPlan.t, 2);
   assert.equal(wrapPlan.text.split('\n').length, mainline.split('\n').length + 3);
   assert.match(wrapPlan.text, /^\[00:01\.9\] br$/m);
   assert.match(wrapPlan.text, /^\[00:02\] c5$/m);
   assert.match(wrapPlan.text, /^\[00:02\.5\] ml$/m);
-  assert.deepEqual(parseScript(wrapPlan.text).filter((e) => 'error' in e), []);
+  noErrors(wrapPlan.text);
 
   // A different move before a future SAN must never degrade to a plain
   // mainline insert when there is no room for br/move/ml. The later SAN can
   // remain legal for the other side and silently change meaning.
   const pinchedMainline = '[1.95] e4\n[2.2] e5';
-  const pinchedPlan = planMoveGesture(
-    parseScript(pinchedMainline),
-    pinchedMainline,
-    2,
-    'c5',
-    () => false,
-    new Set(),
-  );
+  const pinchedPlan = planMove(pinchedMainline, 2, 'c5');
   assert.equal(pinchedPlan.kind, 'conflict');
 
   // A parsed-but-invalid FEN is not a continuity cut. Planner state scanning
   // receives the world's applied/rejected outcome and still protects the
   // different future move with a complete variation.
   const rejectedFenScript = '[1] e4\n[3] fen bad\n[4] e5';
-  const rejectedFenPlan = planMoveGesture(
-    parseScript(rejectedFenScript),
-    rejectedFenScript,
-    2,
-    'c5',
-    () => false,
-    new Set([1]),
-  );
+  const rejectedFenPlan = planMove(rejectedFenScript, 2, 'c5', new Set([1]));
   assert.equal(rejectedFenPlan.kind, 'edit');
   assert.match(rejectedFenPlan.text, /^\[00:02\] c5$/m);
   assert.match(rejectedFenPlan.text, /\bbr$/m);
@@ -289,22 +289,14 @@ try {
   // variation instead of silently reviving the author's bad line.
   const rejectedMoveScript = '[3] e5';
   const rejectedMoveEvents = parseScript(rejectedMoveScript);
-  const rejectedMoveSetup = setupFromFen(Chess.STARTING_FEN);
-  const rejectedMoveWorld = buildWorld(rejectedMoveEvents, rejectedMoveSetup);
+  const rejectedMoveWorld = buildWorld(rejectedMoveEvents, standardSetup);
   assert.deepEqual([...rejectedMoveWorld.rejectedEventIndexes], [0]);
-  const rejectedMovePlan = planMoveGesture(
-    rejectedMoveEvents,
-    rejectedMoveScript,
-    2,
-    'e4',
-    () => false,
-    rejectedMoveWorld.rejectedEventIndexes,
-  );
+  const rejectedMovePlan = planMove(rejectedMoveScript, 2, 'e4', rejectedMoveWorld.rejectedEventIndexes);
   assert.equal(rejectedMovePlan.kind, 'edit');
   assert.match(rejectedMovePlan.text, /\bbr$/m);
   assert.match(rejectedMovePlan.text, /\bml$/m);
   const rejectedMoveAfterEvents = parseScript(rejectedMovePlan.text);
-  const rejectedMoveAfterWorld = buildWorld(rejectedMoveAfterEvents, rejectedMoveSetup);
+  const rejectedMoveAfterWorld = buildWorld(rejectedMoveAfterEvents, standardSetup);
   const originalMoveIndex = rejectedMoveAfterEvents.findIndex(
     (event) => !('error' in event) && event.kind === 'move' && event.san === 'e5',
   );
@@ -317,25 +309,18 @@ try {
   // later when the new move would land on or past it — the one sanctioned
   // rewrite of an existing line.
   const variation = '[00:01.0] e4\n[00:02.0] br\n[00:03.0] Nf6\n[00:04.0] ml\n[00:06.0] Nc6';
-  const extendPlan = planMoveGesture(parseScript(variation), variation, 3.95, 'd4', () => false, new Set());
+  const extendPlan = planMove(variation, 3.95, 'd4');
   assert.equal(extendPlan.kind, 'edit');
   assert.equal(extendPlan.t, 4.1);
   assert.equal(extendPlan.nextT, 5.1, 'the paused landing must stop short of the pushed ml');
   assert.match(extendPlan.text, /^\[00:04\.1\] d4$/m);
   assert.match(extendPlan.text, /^\[00:05\.1\] ml$/m);
-  assert.deepEqual(parseScript(extendPlan.text).filter((e) => 'error' in e), []);
+  noErrors(extendPlan.text);
 
   const saturatedVariation =
     '[1.8] br\n[1.85] e4\n[2.0] hl a1\n[2.1] hl b1\n[2.2] ml\n[2.3] e5';
   assert.equal(
-    planMoveGesture(
-      parseScript(saturatedVariation),
-      saturatedVariation,
-      1.9,
-      'c5',
-      () => false,
-      new Set(),
-    ).kind,
+    planMove(saturatedVariation, 1.9, 'c5').kind,
     'conflict',
     'an open variation must not overflow its mainline restore boundary',
   );
@@ -374,7 +359,7 @@ try {
     mindEvents.map((e) => e.kind),
     ['mind', 'move', 'reveal'],
   );
-  const mindInsert = planLineInsert(mindEvents, mindScript, 3, 'hl e4');
+  const mindInsert = planLine(mindScript, 3, 'hl e4');
   assert.equal(mindInsert.kind, 'edit');
   assert.ok(
     mindInsert.t > 2 && mindInsert.t < 5,
@@ -397,9 +382,8 @@ try {
   assert.deepEqual(startingBoard[0][0], { type: 'r', side: 'w' });
   assert.deepEqual(startingBoard[7][0], { type: 'r', side: 'b' });
   {
-    const start = startingState;
     assert.equal(
-      Chess.explainNoMoves(start, 'e7'),
+      Chess.explainNoMoves(startingState, 'e7'),
       "it's White to move",
       'pressing the opponent\'s piece names whose turn it is',
     );
@@ -411,14 +395,14 @@ try {
       'a piece of the right colour with nowhere to go names the piece',
     );
     assert.equal(
-      Chess.explainNoMoves(start, 'e4'),
+      Chess.explainNoMoves(startingState, 'e4'),
       null,
       'an empty square warrants no message — nothing there offered a drag',
     );
     // The reason is re-derived, not taken on trust: a piece that *can* move
     // must never be handed a sentence saying it cannot.
     assert.equal(
-      Chess.explainNoMoves(start, 'e2'),
+      Chess.explainNoMoves(startingState, 'e2'),
       null,
       'a movable piece yields no explanation even if asked',
     );
@@ -566,27 +550,18 @@ try {
 
   // FEN validation and default fields follow chess.js. Gambit retains only a
   // frozen canonical FEN plus the two move-list readouts.
-  assert.throws(
-    () => Chess.stateFromFEN('7k/8/8/8/8/8/PP6/4K3 w - b3 0 1'),
-    /en[- ]passant/i,
-  );
+  for (const [fen, reason] of [
+    ['7k/8/8/8/8/8/PP6/4K3 w - b3 0 1', /en[- ]passant/i],
+    ['8/8/8/8/8/8/8/4K3 w - - 0 1', /king/i],
+    ['4k3/8/8/8/8/8/4K3/4K3 w - - 0 1', /king/i],
+    ['P3k3/8/8/8/8/8/8/4K3 w - - 0 1', /pawn/i],
+  ]) {
+    assert.throws(() => Chess.stateFromFEN(fen), reason);
+  }
   const partialFen = Chess.stateFromFEN('4k3/8/8/8/8/8/8/4K3 w');
   assert.equal(partialFen.fen, '4k3/8/8/8/8/8/8/4K3 w - - 0 1');
   const validEp = Chess.stateFromFEN('7k/8/8/3pP3/8/8/8/7K w - d6 0 1');
   assert.equal(Chess.parseSAN('exd6', validEp)?.enPassant, true);
-
-  assert.throws(
-    () => Chess.stateFromFEN('8/8/8/8/8/8/8/4K3 w - - 0 1'),
-    /king/i,
-  );
-  assert.throws(
-    () => Chess.stateFromFEN('4k3/8/8/8/8/8/4K3/4K3 w - - 0 1'),
-    /king/i,
-  );
-  assert.throws(
-    () => Chess.stateFromFEN('P3k3/8/8/8/8/8/8/4K3 w - - 0 1'),
-    /pawn/i,
-  );
 
   // Subtitle lookup keeps the latest-started active cue while still falling
   // back to an earlier long cue after a shorter overlap ends.
@@ -600,63 +575,65 @@ try {
   assert.equal(getActiveSubtitle(overlappingCues, 2.5)?.text, 'long');
   assert.equal(getActiveSubtitle(overlappingCues, 20), null);
 
-  const missingSeparatorSrt = `1
+  const missingBlank = 'missing blank line before subtitle cue';
+  for (const [srt, texts, errors] of [
+    [
+      `1
 00:00:00,000 --> 00:00:01,000
 First
 2
 00:00:01,000 --> 00:00:02,000
-Second`;
-  const recoveredSrt = parseSrt(missingSeparatorSrt);
-  assert.deepEqual(recoveredSrt.cues.map((cue) => cue.text), ['First', 'Second']);
-  assert.deepEqual(recoveredSrt.errors, [
-    { line: 4, error: 'missing blank line before subtitle cue' },
-  ]);
-
-  const malformedThenValidSrt = `1
+Second`,
+      ['First', 'Second'],
+      [{ line: 4, error: missingBlank }],
+    ],
+    [
+      `1
 not a timestamp
 broken
 2
 00:00:01,000 --> 00:00:02,000
-Recovered`;
-  const recoveredAfterMalformed = parseSrt(malformedThenValidSrt);
-  assert.deepEqual(recoveredAfterMalformed.cues.map((cue) => cue.text), ['Recovered']);
-  assert.equal(recoveredAfterMalformed.errors.length, 2);
-
-  const bareMissingSeparatorSrt = `00:00:00,000 --> 00:00:01,000
+Recovered`,
+      ['Recovered'],
+      [
+        { line: 1, error: 'invalid SRT timestamp' },
+        { line: 4, error: missingBlank },
+      ],
+    ],
+    [
+      `00:00:00,000 --> 00:00:01,000
 First
 00:00:01,000 --> 00:00:02,000
-Second`;
-  const recoveredBareSrt = parseSrt(bareMissingSeparatorSrt);
-  assert.deepEqual(recoveredBareSrt.cues.map((cue) => cue.text), ['First', 'Second']);
-  assert.deepEqual(recoveredBareSrt.errors, [
-    { line: 3, error: 'missing blank line before subtitle cue' },
-  ]);
-
-  const arrowTextSrt = `1
+Second`,
+      ['First', 'Second'],
+      [{ line: 3, error: missingBlank }],
+    ],
+    [
+      `1
 00:00:00,000 --> 00:00:02,000
 2024
-Look --> there`;
-  const arrowTextCue = parseSrt(arrowTextSrt);
-  assert.deepEqual(arrowTextCue.errors, []);
-  assert.equal(arrowTextCue.cues[0].text, '2024\nLook --> there');
-
-  // An index line only counts as a cue boundary when the line under it parses
-  // as a time range, so a backwards range leaves the playhead on the index line
-  // and the timestamp error names that line.
-  const backwardsRangeSrt = `1
+Look --> there`,
+      ['2024\nLook --> there'],
+      [],
+    ],
+    // An index line only counts as a cue boundary when the line under it parses
+    // as a time range, so a backwards range leaves the playhead on the index line
+    // and the timestamp error names that line.
+    [
+      `1
 00:00:02,000 --> 00:00:01,000
-text`;
-  assert.deepEqual(parseSrt(backwardsRangeSrt).errors, [
-    { line: 1, error: 'invalid SRT timestamp' },
-  ]);
+text`,
+      [],
+      [{ line: 1, error: 'invalid SRT timestamp' }],
+    ],
+  ]) {
+    const parsed = parseSrt(srt);
+    assert.deepEqual(parsed.cues.map((cue) => cue.text), texts);
+    assert.deepEqual(parsed.errors, errors);
+  }
 
   // World replay is the canonical applied/rejected outcome shared by the
   // renderer, presentation PGN, and gesture planner.
-  const standardSetup = setupFromFen(Chess.STARTING_FEN);
-  assert.equal(standardSetup.error, null);
-  // Never memoize this: assertions below depend on each build being genuinely
-  // independent.
-  const worldFrom = (text) => buildWorld(parseScript(text), standardSetup);
 
   // chess.js accepts null moves even in strict mode. They are not board
   // moves, and must reach the script error band rather than crash rendering.
@@ -755,17 +732,13 @@ text`;
       replayEvents,
       replayWorld.moveStates,
       replayWorld.rejectedEventIndexes,
-    ).rows.map((row) => [row.white?.text ?? null, row.black?.text ?? null]),
-    [['e4', 'c5']],
+    ).rows.map(rowText),
+    [[1, 'e4', 'c5']],
     'the replay directive never duplicates moves in the presentation PGN',
   );
 
-  // The walk has to continue from where the replay left the board. This was
-  // covered only indirectly: every replay script here ended on its `rp`, so the
-  // hand-off to the *next* event was never asserted. It used to be a destructure
-  // of the final frame back into the walk's locals — nine fields spelled out a
-  // third time, and the one copy TypeScript could not check, since an omitted
-  // field there typechecks clean and silently leaves the board stale.
+  // The event after a replay must build on the replay's end position, not on
+  // stale pre-replay walk state (an omitted field there typechecks clean).
   const afterReplay = worldFrom('[1] e4\n[2] hl e4 pin\n[3] rp\n[8] hl d4');
   assert.deepEqual(afterReplay.scriptErrors, []);
   const settled = worldFrameAt(afterReplay, 2, 4).snapshot;
@@ -785,13 +758,9 @@ text`;
     'and adds to the cleared overlay set rather than a stale one',
   );
 
-  const replayAcrossSetupEvents = parseScript(
-    '[1] e4\n[2] st\n[3] d4\n[5] replay',
-  );
-  const replayAcrossSetups = buildWorld(replayAcrossSetupEvents, standardSetup);
-  const setupReplayFrames = replayAcrossSetups.replayFrames;
-  assert.equal(setupReplayFrames.length, 2);
-  const afterResetMove = Chess.board(setupReplayFrames[1].state.chessState);
+  const replayAcrossSetups = worldFrom('[1] e4\n[2] st\n[3] d4\n[5] replay');
+  assert.equal(replayAcrossSetups.replayFrames.length, 2);
+  const afterResetMove = Chess.board(replayAcrossSetups.replayFrames[1].state.chessState);
   assert.equal(afterResetMove[1][4]?.side, 'w', 'st restores the e-pawn before the next replay move');
   assert.equal(afterResetMove[3][3]?.side, 'w', 'the post-setup d4 move is still replayed');
 
@@ -951,7 +920,7 @@ text`;
       runtimeEvents,
       runtimeWorld.moveStates,
       runtimeWorld.rejectedEventIndexes,
-    ).rows.map((row) => [row.num, row.white?.text ?? null, row.black?.text ?? null]),
+    ).rows.map(rowText),
     [[1, 'e4', 'e5']],
     'presentation follows the moves that actually changed the board',
   );
@@ -978,18 +947,12 @@ text`;
   // The mirror of the unclosed branch: an `ml` that closes nothing. Like it,
   // the line is reported but the event is not rejected, so presentation still
   // reads the depth the stream encodes.
-  const strayMainlineWorld = buildWorld(
-    parseScript('[00:01] e4\n[00:02] ml'),
-    standardSetup,
-  );
+  const strayMainlineWorld = worldFrom('[00:01] e4\n[00:02] ml');
   assert.equal(strayMainlineWorld.scriptErrors[0].line, 2);
   assert.match(strayMainlineWorld.scriptErrors[0].error, /without matching 'branch'/);
   assert.deepEqual([...strayMainlineWorld.rejectedEventIndexes], []);
 
-  const restoredOverlayEvents = parseScript(
-    '[0] hl e4 pin\n[1] br\n[2] hl d4 pin\n[3] ml',
-  );
-  const restoredOverlays = buildWorld(restoredOverlayEvents, standardSetup);
+  const restoredOverlays = worldFrom('[0] hl e4 pin\n[1] br\n[2] hl d4 pin\n[3] ml');
   assert.deepEqual(
     restoredOverlays.snapshots.at(-1).highlights.map((highlight) => highlight.sq),
     ['e4'],
@@ -1025,8 +988,7 @@ text`;
   );
   assert.equal(branchEntry.moveT, 1, 'glide rewrite must not mutate the shared branch-entry snapshot');
 
-  const expiredOverlayEvents = parseScript('[0] hl e4\n[3] Nf3');
-  const expiredOverlays = buildWorld(expiredOverlayEvents, standardSetup);
+  const expiredOverlays = worldFrom('[0] hl e4\n[3] Nf3');
   assert.deepEqual(expiredOverlays.snapshots[1].highlights.map((highlight) => highlight.sq), ['e4']);
   assert.deepEqual(expiredOverlays.snapshots.at(-1).highlights, []);
 
@@ -1126,7 +1088,7 @@ text`;
     new Set(),
   );
   assert.deepEqual(
-    presRows.map((r) => [r.num, r.white?.text ?? null, r.black?.text ?? null]),
+    presRows.map(rowText),
     [
       [1, 'e4', null],
       [1, null, 'Nc6'],
@@ -1135,27 +1097,15 @@ text`;
   );
   // The cursor index holds, per event, the mainline move the board represents
   // once the playhead has reached that event.
-  const presentationResetEvents = parseScript('[1] e4\n[2] rs\n[3] e4');
-  const presentationResetWorld = buildWorld(presentationResetEvents, standardSetup);
-  const { cursorByEvent: presentationResetCursors } = buildMainline(
-    presentationResetEvents,
-    presentationResetWorld.moveStates,
-    presentationResetWorld.rejectedEventIndexes,
-  );
+  const { cursorByEvent: presentationResetCursors } = mainlineFrom('[1] e4\n[2] rs\n[3] e4');
   assert.equal(
     presentationResetCursors[1],
     -1,
     'a setup event clears the current presentation move until the new line advances',
   );
   assert.equal(presentationResetCursors[2], 2);
-  const rejectedPresentationFen = parseScript('[1] e4\n[2] fen bad');
-  const rejectedPresentationWorld = buildWorld(rejectedPresentationFen, standardSetup);
   assert.equal(
-    buildMainline(
-      rejectedPresentationFen,
-      rejectedPresentationWorld.moveStates,
-      rejectedPresentationWorld.rejectedEventIndexes,
-    ).cursorByEvent[1],
+    mainlineFrom('[1] e4\n[2] fen bad').cursorByEvent[1],
     0,
     'a rejected FEN does not clear the presentation cursor',
   );
@@ -1169,13 +1119,12 @@ text`;
   );
 
   assert.deepEqual(timelineTicks(30), [0, 5, 10, 15, 20, 25, 30]);
-  const hugeTicks = timelineTicks(999_999_999);
-  assert.ok(hugeTicks.length <= 24, 'authored timestamps cannot create millions of DOM ticks');
-  assert.ok(hugeTicks.every(Number.isFinite));
-  const extremeTicks = timelineTicks(Number.MAX_VALUE);
-  assert.ok(extremeTicks.length <= 24);
-  assert.ok(extremeTicks.every(Number.isFinite));
-  assert.equal(new Set(extremeTicks).size, extremeTicks.length);
+  for (const max of [999_999_999, Number.MAX_VALUE]) {
+    const ticks = timelineTicks(max);
+    assert.ok(ticks.length <= 24, 'authored timestamps cannot create millions of DOM ticks');
+    assert.ok(ticks.every(Number.isFinite));
+    assert.equal(new Set(ticks).size, ticks.length);
+  }
   assert.doesNotMatch(fmtTime(Number.MAX_VALUE), /Infinity|NaN/);
   const pinchedLanding = landBetween(2, 2.1);
   assert.ok(pinchedLanding > 2 && pinchedLanding < 2.1);
@@ -1326,10 +1275,11 @@ text`;
   );
   // The loser's timer must be cleared, or a 15s handle would keep the process
   // (and, in the browser, the tab's timer queue) alive after every export.
-  const beforeTimers = process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+  const liveTimers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+  const beforeTimers = liveTimers();
   await withTimeout(Promise.resolve(1), 60_000, 'unused');
   assert.equal(
-    process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length,
+    liveTimers(),
     beforeTimers,
     'the timeout handle is cleared when the work wins the race',
   );
@@ -1339,26 +1289,25 @@ text`;
     const pending = withTimeout(new Promise(() => {}), 60_000, 'unused', controller.signal);
     controller.abort(new Error('unmounted'));
     await assert.rejects(pending, /unmounted/);
-    assert.equal(process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length, beforeTimers);
+    assert.equal(liveTimers(), beforeTimers);
 
-    for (const phase of ['load', 'rasterize']) {
+    {
       const abort = new AbortController();
       let finish;
       const delayed = new Promise((resolve) => { finish = resolve; });
       let rasterizes = 0;
-      const exporter = { toBlob: () => { rasterizes++; return phase === 'rasterize' ? delayed : Promise.resolve({}); } };
       const delivered = [];
       const work = downloadBoardPng({}, 0, {
         signal: abort.signal,
-        exporter: phase === 'load' ? delayed : Promise.resolve(exporter),
+        exporter: { toBlob: () => { rasterizes++; return delayed; } },
         deliver: (blob) => delivered.push(blob),
       });
       await Promise.resolve();
       abort.abort();
-      finish(phase === 'load' ? exporter : {});
+      finish({});
       await work;
-      assert.deepEqual(delivered, [], `abort during ${phase} prevents late delivery`);
-      assert.equal(rasterizes, phase === 'load' ? 0 : 1);
+      assert.deepEqual(delivered, [], 'abort during rasterize prevents late delivery');
+      assert.equal(rasterizes, 1);
     }
   }
 
@@ -1376,7 +1325,7 @@ text`;
       if (aborted) controller.abort();
       await downloadBoardPng({}, 12.5, {
         signal: controller.signal,
-        exporter: Promise.resolve({ toBlob: async () => fakeBlob }),
+        exporter: { toBlob: async () => fakeBlob },
         deliver: (blob, filename) => delivered.push({ blob, filename }),
       });
       return delivered;
@@ -1393,7 +1342,7 @@ text`;
     );
     await assert.rejects(
       downloadBoardPng({}, 0, {
-        exporter: Promise.resolve({ toBlob: async () => null }),
+        exporter: { toBlob: async () => null },
         deliver: () => {
           throw new Error('delivered an empty PNG');
         },
@@ -1506,24 +1455,9 @@ text`;
     assert.ok(c.via, `${c.token} tells the user where it is authored instead`);
   }
 
-  // The Text view's syntax line is the catalogue's second surface, and the
-  // chain above stopped at the menu — nothing asserted that the hint names
-  // every kind, which is precisely how it came to name ten of twelve.
-  //
-  // Asserted against the rendered element, not against SYNTAX_GROUPS. Two
-  // earlier forms compared the groups to COMMANDS — first by length, then by
-  // content and order — and *neither could fail*: the reduce that builds
-  // SYNTAX_GROUPS appends exactly one name per command on both of its
-  // branches, so both the length and the flattened list equal COMMANDS'
-  // by construction, for any COMMANDS. Swapping length for content changed
-  // nothing about which input could vary.
-  //
-  // Coverage is now structural — the groups are derived from the catalogue, so
-  // the hint cannot name ten of twelve again — and what is left to check is the
-  // rendering, which is not: `group.join(' / ')` written as `group[0]` drops
-  // `ml` and `reveal` from the string a reader actually sees, silently. That is
-  // the same hole, one layer down, and it is why `SYNTAX_HINT` is an importable
-  // module instead of a local in `App.tsx`.
+  // The Text view's syntax line must name every kind. SYNTAX_GROUPS derives
+  // from COMMANDS, so assert the rendered SYNTAX_HINT element instead: writing
+  // `group.join(' / ')` as `group[0]` would silently drop `ml` and `reveal`.
   const hintText = (node) => {
     if (node == null || typeof node === 'boolean') return '';
     if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -1553,15 +1487,11 @@ text`;
     'every group renders, joined as a pair or standing alone',
   );
   // A pair renders as one unwrappable unit, so `closes` has to name a real
-  // token — and the two halves have to stay adjacent. Reading the relation off
-  // array position (the earlier form) meant moving `rp` between `mind` and
-  // `reveal` silently rendered `rp / reveal` as a pair.
+  // token — and the two halves have to stay adjacent, or moving `rp` between
+  // `mind` and `reveal` would render `rp / reveal` as a pair.
   const tokens_ = COMMANDS.map((c) => c.token);
   for (const c of COMMANDS) {
     if (c.closes == null) continue;
-    // Adjacency alone; a preceding `includes(c.closes)` was a message alias for
-    // it, since `tokens_[i - 1] === c.closes` already implies membership and
-    // `tokens_[-1]` is undefined when the closer comes first.
     assert.equal(
       tokens_[tokens_.indexOf(c.token) - 1],
       c.closes,
@@ -1582,27 +1512,17 @@ text`;
   // would come from.
   const bareStyles = styles.replace(/\/\*[\s\S]*?\*\//g, '');
 
-  // Every rule for a selector, across all tiers. Escapes the selector itself,
-  // so callers write plain CSS: an earlier form took a regex fragment, and
-  // `cssRules('\\.subtitle-strip')` beside `cssRule('.subtitle-strip')` meant
-  // swapping one for the other failed silently in one direction, since an
-  // unescaped `.` matches any character. One spelling also fixed the stricter
-  // dialect's own hazard: a `.subtitle-strip{` written without the space
-  // dropped that tier out of the set, `smallest()` fell back to base padding,
-  // and the cue-fits-track assertion passed vacuously while staying green.
+  // Every rule for a selector, across all tiers. Escapes the selector itself so
+  // callers write plain CSS (an unescaped `.` matches anything and fails
+  // silently), and `\s*` keeps a `.subtitle-strip{` tier in the set.
   const cssRules = (selector, source = bareStyles) =>
     source.match(
       new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`, 'g'),
     ) ?? [];
 
-  // The one rule for a top-level selector. Built on `cssRules` rather than
-  // beside it: these were two readers for the same text with two matching
-  // dialects, and the divergence that mattered was invisible at the call site
-  // — `cssRules` read comment-stripped source while `cssRule` sliced the raw
-  // file to the next `}`, so the `[^}]*` hazard `bare` exists to prevent was
-  // unguarded in exactly the reader with thirteen call sites. The `\n` prefix
-  // is what keeps `cssRule('.marker')` from matching a `.timeline .marker`
-  // rule; `anchor` picks between same-selector tiers.
+  // The one rule for a top-level selector, read through `cssRules` so both see
+  // comment-stripped source. The `\n` prefix keeps `cssRule('.marker')` from
+  // matching `.timeline .marker`; `anchor` picks between same-selector tiers.
   const cssRule = (selector, anchor = '') => {
     const rule = cssRules(`\n${selector}`).find((r) => r.includes(anchor));
     assert.ok(rule, `${selector} exists`);
@@ -1629,19 +1549,10 @@ text`;
     bareStyles,
     /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
   );
-  // docs/design.md names this the enforcement of the 720px recording-frame
-  // invariant, so it asserts the property rather than one spelling of its
-  // violation. Banning the literal `100dvh` let `100vh` through — the reflex
-  // spelling of the very thing being banned — along with `90svh`,
-  // `clamp(400px, 90dvh, 720px)`, and any indirection through a second custom
-  // property that holds the formula. An allowlist has no such gaps: the
-  // artifact is the authored token or a literal size, full stop.
-  //
-  // Both tokens, not just the outer one. The allowlist blesses
-  // `var(--artifact-width)`, so checking only `--artifact-fit-width` closed
-  // every indirection *except* the one it depends on: redeclaring
-  // `--artifact-width: min(720px, calc(100dvh - 220px))` in a media query
-  // passed, and shrank the recording frame on every ordinary laptop.
+  // The 720px recording-frame invariant (docs/design.md), as an allowlist over
+  // both artifact tokens: a literal `100dvh` ban lets `100vh`, `90svh` and
+  // `clamp(…dvh…)` slip past, and checking only the outer token let a
+  // redeclared `--artifact-width: min(720px, calc(100dvh - 220px))` escape.
   const fitValues = [
     ...bareStyles.matchAll(/--artifact-(?:fit-)?width:\s*([^;]+);/g),
   ].map((m) => m[1].trim());
@@ -1664,15 +1575,13 @@ text`;
     'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
   );
 
-  const cssNum = (source, prop, label = prop) => {
+  const cssNum = (source, prop) => {
     const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
-    assert.ok(m, `${label} is declared as a number so the geometry stays derivable`);
+    assert.ok(m, `${prop} is declared as a number so the geometry stays derivable`);
     return Number(m[1]);
   };
-  // Asserts rather than indexing a null match: `padding` rewritten as the
-  // `padding-block`/`padding-inline` pair this stylesheet also uses is a legal
-  // edit, and it turned this helper into a TypeError — a stack trace where the
-  // suite's job is to name what broke.
+  // Asserts rather than indexing a null match, so a legal rewrite of the
+  // shorthand names what broke instead of throwing a TypeError.
   const cssLengths = (source, prop) => {
     const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+)[;}]`));
     assert.ok(m, `${prop} is declared as a length shorthand`);
@@ -1705,7 +1614,7 @@ text`;
     if (cursor < src.length) regions.push({ query: null, css: src.slice(cursor) });
     return regions;
   })();
-  const mediaBlocks = styleRegions.flatMap((r) => (r.query === null ? [] : [r.css]));
+  const mediaRegions = styleRegions.filter((r) => r.query !== null);
 
   // Media-query modelling, shared by the cascade guards below. `conditions`
   // returns null for a query it cannot express, so each caller decides what
@@ -1729,11 +1638,8 @@ text`;
   // Representative viewports: every breakpoint in the stylesheet and one pixel
   // either side, so both ladders are sampled on both sides of every step. Media
   // queries are step functions, so this finite grid covers every distinct
-  // combination the cascade can produce.
-  //
-  // Shared by the two guards that need to evaluate the cascade rather than read
-  // it — the subtitle fit below, and the 560px band's co-application check.
-  // They used to share it by nesting, which is not sharing.
+  // combination the cascade can produce. Shared by the subtitle fit and the
+  // 560px band's co-application check.
   const axis = (which) => {
     const seen = new Set([320, 4000]);
     for (const m of bareStyles.matchAll(new RegExp(`(?:min|max)-${which}:\\s*(\\d+)px`, 'g'))) {
@@ -1746,9 +1652,8 @@ text`;
   };
   const widths = axis('width');
   const heights = axis('height');
-  // Stated where it is knowable. A counter incremented inside the fit loop
-  // said the same thing later and could not fail: that loop has no `continue`
-  // and no early exit, so its trip count is fixed before it starts.
+  // Stated here because the fit loop's trip count is fixed before it starts,
+  // so a counter inside it could not fail.
   assert.ok(
     widths.length * heights.length > 100,
     'the breakpoint sample covers both ladders on both sides of every step',
@@ -1759,36 +1664,14 @@ text`;
   // is `auto`: a cue too big for the track's declared minimum grows the row,
   // and a *one-line* cue that grows the row shifts the transport the moment a
   // subtitle appears — exactly the layout stability the fixed track exists to
-  // provide. That shipped: the 761-840px band kept the base cue while dropping
-  // the track, because cue and track lived in different rules and nothing tied
-  // them together. They are now one colocated token pair, and this guard
-  // enforces the colocation rather than checking a single tier.
+  // provide. Cue and track are one colocated token pair per tier.
   {
-    // Evaluated at real viewports rather than by taking a minimum over the
-    // file. The previous form credited every tier with the *smallest* strip
-    // padding declared anywhere, and larger chrome is the harder constraint —
-    // so it leaned lenient in exactly the direction that matters. It could not
-    // do better in that shape: the strip's padding tiers sit on a different
-    // breakpoint ladder (1040/920/600) from the token tiers (920/760/600), so
-    // "the padding that applies at this tier" was not expressible at all.
-    //
-    // Verified escape: adding `@media (max-height: 700px) { .subtitle-strip {
-    // padding-top: 4px } }` and then dropping the 920 tier's track from 57px to
-    // 54px passed, while at any viewport 840 < h <= 920 the real chrome is 17px
-    // and a one-line 29px cue needs 56.44px — the row grows and the transport
-    // shifts the moment a subtitle appears.
-    //
-    // Media queries are step functions, so a finite set of representative
-    // viewports — every declared breakpoint, and one pixel either side of it —
-    // covers every distinct combination the cascade can produce. Both ladders
-    // are then resolved the way the browser resolves them, in source order, and
-    // the fit is checked where the numbers actually meet.
-    // A region is a tier iff it declares something the fit actually reads.
-    // Selecting on the substring "subtitle" instead meant any block merely
-    // mentioning the word had to be modellable, so adding the accessibility
-    // rule DESIGN.md asks for — `@media (prefers-reduced-motion: reduce) {
-    // .subtitle-strip p { transition: none } }`, which moves none of the five
-    // numbers — failed the suite with a message about width/height terms.
+    // Evaluated per viewport on the breakpoint grid, resolving both ladders
+    // (padding 1040/920/600, tokens 920/760/600) in source order. A file-wide
+    // minimum let a `max-height: 700px` padding tier plus a 54px 920 track pass
+    // while 840 < h <= 920 needs 56.44px.
+    // A region is a tier iff it declares something the fit reads, so an
+    // unrelated `prefers-reduced-motion` block need not be modellable.
     const READS =
       /(--subtitle-track-height|--subtitle-cue-size)\s*:|\.subtitle-strip[^{}]*\{[^}]*(padding[\w-]*|border-block|line-height)\s*:/;
     const tiers = [];
@@ -1803,12 +1686,9 @@ text`;
     }
     assert.ok(tiers.length >= 5, 'the subtitle ladders are found across the sheet');
 
-    // Declarations parsed once per tier, in source order, through the file's
-    // one rule scanner. The grid below asks ~400 questions; resolving each by
-    // re-scanning the stylesheet meant 8k regex compiles and ~35MB re-read per
-    // `npm test`, and — worse for a file whose subject is exactly this — it was
-    // a third and fourth spelling of `cssRules`, seventy lines under the
-    // comment explaining why there is only one.
+    // Declarations parsed once per tier, in source order, through `cssRules`:
+    // the grid asks ~400 questions, and re-scanning per question is slow and
+    // would be another spelling of the one rule scanner.
     const SELECTORS = [':root', '.subtitle-strip', '.subtitle-strip p'];
     const DECL = /(?:^|[;{])\s*([\w-]+)\s*:\s*([^;}]+)/g;
     for (const tier of tiers) {
@@ -1833,13 +1713,9 @@ text`;
       return value;
     };
 
-    // Block padding resolved per longhand, in declaration order — `padding`,
-    // `padding-block`, and the two sides all write the same two numbers, and
-    // which one wins is a question of order rather than of precedence. Reading
-    // only the `padding` shorthand is what made an earlier helper throw a
-    // TypeError when the base rule was restated as the `padding-block` /
-    // `padding-inline` pair this stylesheet also uses elsewhere: a legal,
-    // behavior-identical edit, answered with a stack trace instead of a verdict.
+    // Block padding resolved per longhand, in declaration order: `padding`,
+    // `padding-block` and the two sides all write the same two numbers, so a
+    // legal restatement as `padding-block` must resolve, not throw.
     const blockPadding = (w, h) => {
       let top = null;
       let bottom = null;
@@ -1867,9 +1743,7 @@ text`;
         const cue = px(resolve(w, h, ':root', '--subtitle-cue-size'));
         const lh = px(resolve(w, h, '.subtitle-strip p', 'line-height'));
         const [padTop, padBottom] = blockPadding(w, h);
-        // The 2px `border-block` is part of the border-box the track measures,
-        // and leaving it out is what made the base-tier comment claim a 46px
-        // content box where the browser has 44.
+        // The 2px `border-block` is part of the border-box the track measures.
         const border = px(resolve(w, h, '.subtitle-strip', 'border-block')) * 2;
         const needed = cue * lh + padTop + padBottom + border;
         assert.ok(
@@ -1886,13 +1760,10 @@ text`;
     const pairs = roots
       .filter((r) => /--subtitle-(track-height|cue-size)/.test(r))
       .map((r) => ({
-        track: cssNum(r, '--subtitle-track-height', 'the tier track'),
-        cue: cssNum(r, '--subtitle-cue-size', 'the tier cue'),
+        track: cssNum(r, '--subtitle-track-height'),
+        cue: cssNum(r, '--subtitle-cue-size'),
       }));
     assert.ok(pairs.length >= 4, 'every subtitle tier declares its pair');
-    // The fit itself is checked on the viewport grid above; colocation is what
-    // keeps a tier from moving one of the two numbers without the other, which
-    // the grid would then catch as a real overflow rather than as a drift.
 
     // Below ~3% of the composed frame the cue stops surviving the downscale
     // this tool exists to produce; the base was 21px (2.6%). Derive the frame
@@ -1918,33 +1789,17 @@ text`;
     );
     // Every viewport the 560 band matches also matches the taller height tiers,
     // and media queries add no specificity — being declared last is the only
-    // thing that lets its smaller pair win. Nothing in the block itself says so,
-    // and the first attempt at this patched around the ordering with a
-    // complement query rather than fixing it.
-    //
-    // Stated positionally over the real block list rather than as one pairwise
-    // `indexOf` comparison against a query string. That form was wrong twice
-    // over: it failed *open* (a needle that no longer matches returns -1, and
-    // `n > -1` is permanently true, so retuning `920px` to `900px` disarmed the
-    // guard silently), and it said nothing about tiers not yet written — a new
-    // `max-height: 800px` block appended after the 560 band passed it while
-    // handing the 560px board a 27px cue.
-    const regions = styleRegions.filter((r) => r.query !== null);
-    const bandAt = regions.findIndex((r) => /--artifact-fit-width:\s*560px/.test(r.css));
+    // thing that lets its smaller pair win. Stated positionally over the real
+    // block list, since an `indexOf` on query text failed open at -1 and missed
+    // tiers appended after the band.
+    const bandAt = mediaRegions.findIndex((r) => /--artifact-fit-width:\s*560px/.test(r.css));
     assert.notEqual(bandAt, -1, 'the 560px band is a top-level media block');
-    const bandConds = conditions(regions[bandAt].query);
+    const bandConds = conditions(mediaRegions[bandAt].query);
     assert.ok(bandConds, 'the 560px band states itself in width/height terms');
     const COUPLED = /--(artifact-fit-width|subtitle-cue-size|subtitle-track-height)\s*:/;
-    // "Can co-apply" is answered by the evaluator, not by reading the query
-    // text: a later block may redeclare the pair only if no viewport satisfies
-    // both it and the band. Two earlier forms each guessed at that from the
-    // header — first requiring a `max-height` (which let a plain
-    // `@media (min-width: 1081px)` block through, no `max-height`, skipped by
-    // the filter, overriding the band everywhere it matches), then requiring a
-    // `max-width` <= 1080 (which fails a later block gated only on height, one
-    // that can never co-apply, and invites the next reader to widen the regex
-    // rather than to use the model sitting in scope).
-    for (const [i, region] of regions.entries()) {
+    // "Can co-apply" is answered by the evaluator, not by reading query text:
+    // a later block may redeclare the pair only if no viewport satisfies both.
+    for (const [i, region] of mediaRegions.entries()) {
       if (i <= bandAt || !COUPLED.test(region.css)) continue;
       const conds = conditions(region.query);
       assert.ok(
@@ -1986,19 +1841,17 @@ text`;
     );
     // ...and gives it back wherever the bar is put in flow, or present mode
     // parks an empty 130px band under an in-flow console. Checked per query
-    // block, not as two global tallies: equal counts also pass when a tier
-    // un-floats the bar and a *different* tier drops the reserve, which is the
-    // pairing this is for. The earlier form also matched one exact single-line
-    // string, so reformatting the rule would have silently disarmed it.
-    const unfloated = mediaBlocks.filter((b) =>
-      /\.app--present \.controls \{[^}]*position:\s*static/.test(b),
+    // block: global tallies pass when one tier un-floats the bar and a
+    // *different* tier drops the reserve.
+    const unfloated = mediaRegions.filter((r) =>
+      /\.app--present \.controls \{[^}]*position:\s*static/.test(r.css),
     );
     assert.ok(unfloated.length >= 2, 'the bar goes in flow on narrow and on short viewports');
-    for (const block of unfloated) {
+    for (const region of unfloated) {
       assert.match(
-        block,
+        region.css,
         /\.app--present\s*\{[^}]*--present-bar-reserve:\s*0/,
-        `${block.slice(0, block.indexOf('{')).trim()} un-floats the bar without dropping its reserve`,
+        `${region.query} un-floats the bar without dropping its reserve`,
       );
     }
     // The artifact stays its authored size through all of it — the standing
@@ -2015,11 +1868,10 @@ text`;
   // this instead of silently sliding the thumb off the rail again.
   {
     const root = cssRule(':root');
-    const token = (name) => cssNum(root, `--${name}`, `--${name}`);
-    const pinRow = token('tl-pin-row');
-    const rail = token('tl-rail');
-    const gap = token('tl-row-gap');
-    const padTop = token('tl-pad-top');
+    const pinRow = cssNum(root, '--tl-pin-row');
+    const rail = cssNum(root, '--tl-rail');
+    const gap = cssNum(root, '--tl-row-gap');
+    const padTop = cssNum(root, '--tl-pad-top');
     const thumb = cssRule('.playhead-thumb');
     const thumbSize = cssNum(thumb, 'height');
     // Deliberately no `--tl-crown` term: marker geometry below is measured from
@@ -2085,53 +1937,32 @@ text`;
       /^#[0-9a-f]{6}$/i,
       'the `hl` ring is an opaque stroke, so it does not take on the square under it',
     );
-    // No assertion that the per-square-color variants are absent: `git log -S`
-    // over the whole history shows `boardHighlightRingOnLight`/`OnDark` were
-    // never committed under those or any names — the 0.72/0.88 pair was a
-    // considered and rejected design, so guarding it by spelling could only
-    // ever catch someone independently inventing those two exact strings. The
-    // opacity invariant is covered behaviorally two lines up (a six-digit hex
-    // has no alpha) and again where the rendered element's stroke is read.
-    // The board stop is tuned for the flood and is nearly cream's luminance;
-    // a ring drawn in it measured 1.15:1 there. The ring uses marker amber,
-    // which is also what this event's timeline pin and seek dot already use —
-    // asserted here as an equality until `tokens.ts` was changed to *define* it
-    // as `markerColors.highlight`. One highlight reading identically on the
-    // board, the pin, and the seek dot is now a fact about the source, not a
-    // coincidence this file re-checks after the fact.
     assert.equal(
       boardTokens.boardHighlight,
       undefined,
       'the old flood token is gone, so nothing can quietly re-flood `hl`',
     );
     // That the mark stays a flood is asserted by calling `LastMoveRect` and
-    // reading the element it returns, the way `HlRing` and `BadgeDisc` are
-    // checked below. The guard before it sliced Board.tsx between
-    // `{lastMove &&` and `litHighlights.map`, so renaming `litHighlights` — a
-    // purely local variable — put the end before the start, and the slice then
-    // ran to the end of the file and failed on some other layer's `stroke=`,
-    // in the name of last-move color.
-    const lastMoveRect = LastMoveRect({
+    // reading the element it returns (as with `HlRing` and `BadgeDisc` below),
+    // because slicing Board.tsx source text failed open on a local rename.
+    const { stroke, strokeWidth, fill, x, y, width, height, opacity } = LastMoveRect({
       view: { x: 3, y: 2 },
       fill: '#abcdef',
       opacity: 0.5,
     }).props;
-    assert.equal(lastMoveRect.stroke, undefined, 'the last move never takes a stroke');
-    assert.equal(lastMoveRect.strokeWidth, undefined, 'nor a ring by another name');
-    assert.equal(
-      lastMoveRect.fill,
-      '#abcdef',
-      'the last move stays a flood — a ring on every move is visual noise',
-    );
     assert.deepEqual(
-      [lastMoveRect.x, lastMoveRect.y, lastMoveRect.width, lastMoveRect.height],
-      [300, 200, 100, 100],
-      'and it floods the square it was handed, edge to edge',
-    );
-    assert.equal(
-      lastMoveRect.opacity,
-      0.5,
-      'and it carries the opacity it was handed — the mark ages out by fading',
+      { stroke, strokeWidth, fill, x, y, width, height, opacity },
+      {
+        stroke: undefined,
+        strokeWidth: undefined,
+        fill: '#abcdef',
+        x: 300,
+        y: 200,
+        width: 100,
+        height: 100,
+        opacity: 0.5,
+      },
+      'the last move takes no stroke or ring by any name — it stays a flood of the whole square it was handed (a ring on every move is visual noise) and ages out by fading at the opacity it was handed',
     );
     // Which fill each square gets is asserted by calling the rule as well:
     // `lastMoveSquares` returns the pair, so the guard can state the thing
@@ -2161,18 +1992,8 @@ text`;
       'the judgment is a tint over the square, not a repaint of it',
     );
     // Both `hl` surfaces — the live overlay and the in-flight gesture preview —
-    // go through one component, so a preview can never promise a mark the
-    // committed script would not draw. `HlRing` returns the element, so this
-    // reads the props it actually renders: calling it is cheap and needs no
-    // renderer, and unlike matching call-site text it survives a rename.
-    //
-    // Returning the element is what makes the geometry safe at all. As a props
-    // bag every call site spread it, and `{...hlRingCircle(v)} r={30}` won
-    // silently — a verified escape past three earlier versions of this guard,
-    // each of which policed a proxy: the count of call sites, then the count of
-    // token names, then where the color could be spelled. That last one also
-    // failed CI on a *comment* mentioning the token, which is how a guard gets
-    // deleted by whoever trips it first.
+    // go through `HlRing`, which returns the element so this reads the props it
+    // renders. A props bag let a call site's `r={30}` override the geometry.
     const ring = HlRing({ view: { x: 0, y: 0 } }).props;
     assert.equal(ring.fill, 'none', 'the ring is a stroke, never a flood');
     assert.equal(ring.stroke, boardTokens.boardHighlightRing);
@@ -2196,22 +2017,6 @@ text`;
       /^translate\(50 50\) scale\(2\) translate\(-50 -50\)$/,
       'growth pivots on the ring’s own center, not the square’s origin',
     );
-    // A fourth source census used to sit here, banning the amber's spelling
-    // anywhere outside this function. It was verified to fail in both
-    // directions at once: a hand-rolled `stroke={tokens['boardHighlightRing']}`
-    // — a genuine second pen in the exact highlight amber — passed, while
-    // hoisting `const HL_PEN = tokens.boardHighlightRing` inside the same file,
-    // a behavior-identical refactor, failed CI. Four versions, four proxies for
-    // "where may this color be written".
-    //
-    // It is gone rather than sharpened. The invariant it was reaching for is
-    // already closed one layer down: both `hl` surfaces call `HlRing`, which
-    // returns the element, so the geometry is unreachable from a call site and
-    // `tsc` says so. And the duplicated literal that made its sibling
-    // assertion (`boardHighlightRing === markerColors.highlight`) necessary is
-    // gone too — `tokens.ts` now defines the ring *as* `markerColors.highlight`
-    // rather than restating `#f0b429`, so the equality holds by construction
-    // and neither a runtime check nor a text scan has anything left to catch.
   }
 
   // Move-quality marks: chess.com's classification set, adopted deliberately
@@ -2287,19 +2092,27 @@ text`;
     // buy any of it back. Recorded rather than guarded — a floor this design
     // cannot meet is not a floor, it is a deleted test waiting to happen.
     //
-    // What *is* guarded is the rim's absence, because that is the drift this
-    // replica keeps inviting and the one thing a call site could reintroduce.
-    // Asserted by calling `BadgeDisc` and reading the element it returns, the
-    // way `HlRing` is checked above. The first version of this guard matched
-    // JSX source text between `r={BADGE_R}` and `<text` — and an earlier
-    // `<text` inside a comment put the end before the start, so it sliced the
-    // empty string and passed for a rim, a halo, or a disc that had been
-    // deleted outright.
-    const disc = BadgeDisc({ annotation: 'great', cx: 100, cy: 200 }).props;
-    assert.equal(disc.stroke, undefined, 'the disc has no rim');
-    assert.equal(disc.strokeWidth, undefined, 'nor a rim by another name');
-    assert.equal(disc.fill, annotationColors.great, 'the disc is its quality’s fill');
-    assert.deepEqual([disc.cx, disc.cy, disc.r], [100, 200, BADGE_R]);
+    // What *is* guarded is the rim's absence, by calling `BadgeDisc` and reading
+    // the element it returns; matching JSX source text failed open.
+    {
+      const { stroke, strokeWidth, fill, cx, cy, r } = BadgeDisc({
+        annotation: 'great',
+        cx: 100,
+        cy: 200,
+      }).props;
+      assert.deepEqual(
+        { stroke, strokeWidth, fill, cx, cy, r },
+        {
+          stroke: undefined,
+          strokeWidth: undefined,
+          fill: annotationColors.great,
+          cx: 100,
+          cy: 200,
+          r: BADGE_R,
+        },
+        'the disc has no rim by any name and is filled with its quality’s color',
+      );
+    }
     assert.equal(annotationInk, '#ffffff', 'the badge glyph is white, as in the reference');
 
     // The badge hangs off its square's top-right corner, which puts it outside
@@ -2347,15 +2160,8 @@ text`;
   // rather than as CSS source text. `markerColors` and `markerForms` are both
   // `Record<MarkerKind, …>`, so TypeScript already forces each exhaustive over
   // every event kind; what it cannot state is that two kinds sharing a color
-  // must not share a form. That is this.
-  //
-  // The previous version compared the two rules' declaration bodies, and it
-  // failed in both directions. Re-declaring `rp` with the base rule's own
-  // values — `border-radius: var(--radius-hairline); background: currentColor`,
-  // a pin pixel-identical to a move's in the same blue, the exact bug — read as
-  // "different text" and passed. Rewriting the real two-segment shape into
-  // `background-image`/`background-size` longhands, behavior-identical, read as
-  // changed and failed. Forms are data now, so neither is expressible.
+  // must not share a form. That is this. Comparing CSS declaration text failed
+  // in both directions; forms are data, so the relation compares data.
   // The reset family: three spellings of "put the board back" plus the error
   // pin, which wears vermillion because a broken line reads as a reset of the
   // author's expectations. They share a color because they share a meaning.
@@ -2366,24 +2172,24 @@ text`;
     peers.push(kind);
     sharedColor.set(color, peers);
   }
+  // Kinds that are two halves of one gesture (`br`/`ml`, `mind`/`reveal`) or
+  // one meaning with three spellings (`rs`/`st`/`fen`, plus `err`) are
+  // *supposed* to look alike, so sameness is only a bug when the kinds are
+  // independent. `closes` names the paired halves; the reset family shares a
+  // color because it shares a meaning. `rp` and `move` are neither, which is
+  // why they are the pair this rule exists for.
+  const paired = (a, b) =>
+    COMMANDS.some((c) => c.closes && COMMANDS.some((other) =>
+      other.token === c.closes &&
+      ((c.kind === a && other.kind === b) || (c.kind === b && other.kind === a)))) ||
+    (RESET_FAMILY.has(a) && RESET_FAMILY.has(b));
+  assert.equal(paired('clear', 'reveal'), false, 'a closer does not pair with unrelated commands');
+  assert.equal(paired('mind', 'reveal'), true);
   for (const peers of sharedColor.values()) {
     const forms = peers.map((k) => markerForms[k]);
     for (const kind of peers) {
       assert.ok(markerForms[kind], `${kind} declares a pin form`);
     }
-    // Kinds that are two halves of one gesture (`br`/`ml`, `mind`/`reveal`) or
-    // one meaning with three spellings (`rs`/`st`/`fen`, plus `err`) are
-    // *supposed* to look alike, so sameness is only a bug when the kinds are
-    // independent. `closes` names the paired halves; the reset family shares a
-    // color because it shares a meaning. `rp` and `move` are neither, which is
-    // why they are the pair this rule exists for.
-    const paired = (a, b) =>
-      COMMANDS.some((c) => c.closes && COMMANDS.some((other) =>
-        other.token === c.closes &&
-        ((c.kind === a && other.kind === b) || (c.kind === b && other.kind === a)))) ||
-      (RESET_FAMILY.has(a) && RESET_FAMILY.has(b));
-    assert.equal(paired('clear', 'reveal'), false, 'a closer does not pair with unrelated commands');
-    assert.equal(paired('mind', 'reveal'), true);
     for (let i = 0; i < peers.length; i += 1) {
       for (let j = i + 1; j < peers.length; j += 1) {
         if (paired(peers[i], peers[j])) continue;
@@ -2416,21 +2222,11 @@ text`;
   );
   // Editor controls keep the WCAG 2.5.8 24px floor via transparent ::before
   // extensions; the visible pills stay small so row rhythm is unchanged. Each
-  // of these measured just under 24 before the extension existed.
-  //
-  // This asserted only that an `inset:` declaration *existed*, which any value
-  // satisfies: rewriting both to `inset: 0 0` — deleting the entire hit area —
-  // was verified to leave the suite green. It also covered two of the four
-  // controls in the family. Now it checks the direction (an extension grows the
-  // box outward, so no component may be positive and at least one must be
-  // negative) across all four, and the true 24px arithmetic for the one control
-  // whose box is fully declared in CSS.
-  //
-  // Honest about its own reach: `.pgn-mv`, `.pgn-ret`, and `.pgn-time-edit` are
-  // sized by padding plus font metrics, so their real target height is a
-  // browser measurement this file cannot make. For those three the floor still
-  // rests on having been measured once — the guard pins the mechanism, not the
-  // number.
+  // of these measured just under 24 before the extension existed. All four
+  // must grow outward (no inset component positive, one negative), since
+  // `inset: 0 0` deletes the hit area; `.pgn-x` also gets the 24px arithmetic.
+  // The other three are sized by font metrics, so their floor rests on a
+  // one-time measurement — this pins the mechanism, not the number.
   const HIT_EXTENSIONS = ['.pgn-mv', '.pgn-ret', '.pgn-time-edit', '.pgn-x'];
   for (const sel of HIT_EXTENSIONS) {
     // `[^{]*` spans a grouped selector — .pgn-mv::before shares its rule.
@@ -2460,14 +2256,9 @@ text`;
     // The move-sound toggle's height is declared, so its vertical target is
     // arithmetic: 30 + 7 + 7. Its width is font metrics and out of reach here,
     // which is why the label is the wider axis and the height is the one that
-    // had to be extended.
-    //
-    // Pinned at 44, not `>= 24`: a 30px button already clears the 2.5.8 floor
-    // on its own, so the weaker assertion passes with the extension deleted
-    // outright — verified by rewriting the inset to `0 0` and watching the
-    // suite stay green. 44 is the convention the stylesheet states for every
-    // sub-44px control here (.ctrl-btn, .speed-btn, .present-toggle), so it is
-    // the number that can actually fail.
+    // had to be extended. Pinned at the transport's 44px convention, not
+    // `>= 24`: a 30px button clears 24 alone, so that passes with the
+    // extension deleted.
     const mute = cssRule('.mute-btn', 'height');
     const [padBlock, padInline] = cssLengths(cssRule('.mute-btn::before'), 'inset');
     assert.ok(
@@ -2505,13 +2296,13 @@ text`;
       /\.speed-group\s*\{[^}]*grid-(?:row|column|area)/,
       'no tier places the rate selector itself; the transport-prefs wrapper carries both',
     );
-    for (const block of mediaBlocks.filter((b) =>
-      /\.controls\s*\{[^}]*grid-template-columns/.test(b),
+    for (const region of mediaRegions.filter((r) =>
+      /\.controls\s*\{[^}]*grid-template-columns/.test(r.css),
     )) {
       assert.match(
-        block,
+        region.css,
         /\.transport-prefs\s*\{[^}]*grid-row/,
-        `${block.slice(0, block.indexOf('{')).trim()} re-places the console's children, so it must place the prefs wrapper too`,
+        `${region.query} re-places the console's children, so it must place the prefs wrapper too`,
       );
     }
   }

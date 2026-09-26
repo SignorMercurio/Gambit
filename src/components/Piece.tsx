@@ -19,7 +19,6 @@ const PIECE_STYLE: CSSProperties = {
   display: 'block',
   userSelect: 'none',
   filter: tokens.shadowPiece,
-  pointerEvents: 'none',
 };
 const ACTIVE_PIECE_STYLE: CSSProperties = {
   ...PIECE_STYLE,

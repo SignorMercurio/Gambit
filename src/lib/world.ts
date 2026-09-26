@@ -377,23 +377,27 @@ function glideRestoredPositions(departed: Positions, restored: Positions, t: num
 }
 
 export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): WorldBuild {
-  type BranchSnapshot = WorldSnapshot & { line: number; t: number; raw: string; setupEpoch: number };
+  type BranchSnapshot = { entry: WorldSnapshot; setupEpoch: number; t: number; line: number; raw: string };
 
   const checkAt = (state: Chess.GameState, t: number): BoardCheck | null => {
     const sq = Chess.checkedKingSquare(state);
     return sq ? { sq, t } : null;
   };
 
-  let positions = initialSetup.positions;
-  let chessState = initialSetup.chessState;
-  let lastMove: LastMove | null = null;
-  // Rebound rather than mutated so earlier snapshots keep their references.
-  let highlights: BoardHighlight[] = [];
-  let arrows: BoardArrow[] = [];
-  let lastCapture: CaptureFlash | null = null;
-  let check = checkAt(chessState, 0);
-  let mind: MindWorld | null = null;
-  let revealedAt = Number.NEGATIVE_INFINITY;
+  // The working snapshot. Every stored snapshot is a shallow copy of it, and
+  // its fields (highlights, arrows, mind, positions) are rebound rather than
+  // mutated so earlier snapshots keep their references.
+  let w: WorldSnapshot = {
+    positions: initialSetup.positions,
+    chessState: initialSetup.chessState,
+    lastMove: null,
+    highlights: [],
+    arrows: [],
+    lastCapture: null,
+    check: checkAt(initialSetup.chessState, 0),
+    mind: null,
+    revealedAt: Number.NEGATIVE_INFINITY,
+  };
   let setupEpoch = -1;
 
   const snapshots: WorldSnapshot[] = [];
@@ -404,7 +408,13 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   const hasReplay = events.some((event) => event.kind === 'replay');
   const replaySequences = new Map<number, ReplaySequence>();
   const replayFrames: ReplayFrame[] = [];
-  let replayState: ReplayState = { positions, chessState, lastMove, lastCapture, check };
+  let replayState: ReplayState = {
+    positions: w.positions,
+    chessState: w.chessState,
+    lastMove: w.lastMove,
+    lastCapture: w.lastCapture,
+    check: w.check,
+  };
   let visualEndTime = events[events.length - 1]?.t ?? 0;
 
   // Takes the source record rather than its fields so a `br` snapshot and a
@@ -423,37 +433,40 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   // Naming also releases a rehearsal: restamp held squares at the event that
   // releases them so they follow the forgetting curve instead of disappearing.
   const touch = (t: number, ...squares: (string | null | undefined)[]) => {
-    if (!mind) return;
-    const touches = new Map(mind.touches);
+    if (!w.mind) return;
+    const touches = new Map(w.mind.touches);
     for (const square of squares) if (square) touches.set(square, t);
-    mind = { since: mind.since, touches, held: mind.held };
+    w.mind = { since: w.mind.since, touches, held: w.mind.held };
   };
 
   const nameMove = (t: number, ...squares: (string | null | undefined)[]) => {
-    if (!mind) return;
-    touch(t, ...mind.held, ...squares);
+    if (!w.mind) return;
+    touch(t, ...w.mind.held, ...squares);
     const held = new Set<string>();
     for (const square of squares) if (square) held.add(square);
-    mind = { since: mind.since, touches: mind.touches, held };
+    w.mind = { since: w.mind.since, touches: w.mind.touches, held };
   };
 
   const applySetup = (setup: BoardSetup, event: ParsedEvent, eventIndex: number) => {
-    positions = setup.positions;
-    chessState = setup.chessState;
-    lastMove = null;
-    highlights = [];
-    arrows = [];
-    lastCapture = null;
-    check = checkAt(chessState, event.t);
+    w.positions = setup.positions;
+    w.chessState = setup.chessState;
+    w.lastMove = null;
+    w.highlights = [];
+    w.arrows = [];
+    w.lastCapture = null;
+    w.check = checkAt(w.chessState, event.t);
     setupEpoch = eventIndex;
     // Reset the sketch, not the mind phase clock.
-    if (mind) mind = { since: mind.since, touches: new Map(), held: new Set() };
+    if (w.mind) w.mind = { since: w.mind.since, touches: new Map(), held: new Set() };
     if (hasReplay && branchStack.length === 0) {
       // A setup changes the origin of subsequent moves, but adds no replay
       // frame: a trailing reset is an explanation pause, not the replay end.
       replayState = {
-        positions, chessState, lastMove, lastCapture,
-        check: check && { sq: check.sq, t: replayFrames.length },
+        positions: w.positions,
+        chessState: w.chessState,
+        lastMove: w.lastMove,
+        lastCapture: w.lastCapture,
+        check: w.check && { sq: w.check.sq, t: replayFrames.length },
       };
     }
   };
@@ -462,28 +475,16 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   // BOARD_OVERLAY_LIFETIME.captureFlash is deliberately absent: `lastCapture`
   // is a scalar renderer-only fade window, not a pinnable overlay list.
   const pruneOverlays = (t: number) => {
-    highlights = pruneExpired(highlights, t, BOARD_OVERLAY_LIFETIME.highlight);
-    arrows = pruneExpired(arrows, t, BOARD_OVERLAY_LIFETIME.arrow);
+    w.highlights = pruneExpired(w.highlights, t, BOARD_OVERLAY_LIFETIME.highlight);
+    w.arrows = pruneExpired(w.arrows, t, BOARD_OVERLAY_LIFETIME.arrow);
   };
-
-  const snapshot = (): WorldSnapshot => ({
-    positions,
-    chessState,
-    lastMove,
-    highlights,
-    arrows,
-    lastCapture,
-    check,
-    mind,
-    revealedAt,
-  });
 
   const applyReplay = (eventIndex: number, event: Extract<ParsedEvent, { kind: 'replay' }>) => {
     if (branchStack.length > 0) {
       reject(eventIndex, event, 'Replay is only available on the main line');
       return;
     }
-    if (mind) {
+    if (w.mind) {
       reject(eventIndex, event, 'Replay requires reveal before replaying the board');
       return;
     }
@@ -517,13 +518,12 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     };
     // Only the terminal frame becomes authored history. In-flight frames are
     // selected on demand; another rp never reruns chess or copies the prefix.
-    ({ positions, chessState, lastMove, highlights, arrows, lastCapture, check, mind, revealedAt } =
-      replaySnapshot(replayState, sequence));
+    w = replaySnapshot(replayState, sequence);
     replaySequences.set(eventIndex, sequence);
     visualEndTime = Math.max(visualEndTime, end);
   };
 
-  snapshots.push(snapshot());
+  snapshots.push({ ...w });
 
   for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
     const event = events[eventIndex];
@@ -531,14 +531,14 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     // entries whose fade window already ended. Prune before applying the event
     // so an expired full arrow budget cannot reject the first fresh arrow.
     pruneOverlays(event.t);
-    moveStates.push({ fullmove: chessState.fullmove, turn: chessState.turn });
+    moveStates.push({ fullmove: w.chessState.fullmove, turn: w.chessState.turn });
     if ('error' in event) {
       scriptErrors.push(event);
     } else {
       switch (event.kind) {
         case 'highlight':
-          highlights = mergeLatestByKey(
-            highlights,
+          w.highlights = mergeLatestByKey(
+            w.highlights,
             event.squares.map((sq) => ({ sq, t: event.t, pinned: event.pinned })),
             (highlight) => highlight.sq,
           );
@@ -546,8 +546,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           break;
         case 'arrow':
           if (
-            arrows.length >= MAX_LIVE_ARROWS &&
-            !arrows.some((arrow) => arrow.from === event.from && arrow.to === event.to)
+            w.arrows.length >= MAX_LIVE_ARROWS &&
+            !w.arrows.some((arrow) => arrow.from === event.from && arrow.to === event.to)
           ) {
             reject(
               eventIndex,
@@ -556,8 +556,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
             );
             break;
           }
-          arrows = mergeLatestByKey(
-            arrows,
+          w.arrows = mergeLatestByKey(
+            w.arrows,
             [{ from: event.from, to: event.to, t: event.t, pinned: event.pinned }],
             (arrow) => `${arrow.from}-${arrow.to}`,
           );
@@ -565,9 +565,9 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           break;
         case 'clear':
           // Only pinned highlights still hold a square at this event.
-          touch(event.t, ...highlights.filter((highlight) => highlight.pinned).map((highlight) => highlight.sq));
-          highlights = [];
-          arrows = [];
+          touch(event.t, ...w.highlights.filter((highlight) => highlight.pinned).map((highlight) => highlight.sq));
+          w.highlights = [];
+          w.arrows = [];
           break;
         case 'reset':
           applySetup(initialSetup, event, eventIndex);
@@ -585,28 +585,18 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           break;
         }
         case 'branch':
-          branchStack.push({ ...snapshot(), line: event.line, t: event.t, raw: event.raw, setupEpoch });
+          branchStack.push({ entry: { ...w }, setupEpoch, t: event.t, line: event.line, raw: event.raw });
           break;
         case 'mainline': {
           const branch = branchStack.pop();
           if (!branch) {
             noteError(event, `'mainline' without matching 'branch'`);
           } else {
-            const departed = positions;
+            const departed = w.positions;
             const sameSetup = setupEpoch === branch.setupEpoch;
-            ({
-              positions,
-              chessState,
-              lastMove,
-              highlights,
-              arrows,
-              lastCapture,
-              check,
-              mind,
-              revealedAt,
-              setupEpoch,
-            } = branch);
-            if (sameSetup) positions = glideRestoredPositions(departed, positions, event.t);
+            w = { ...branch.entry };
+            setupEpoch = branch.setupEpoch;
+            if (sameSetup) w.positions = glideRestoredPositions(departed, w.positions, event.t);
             // Restoring an older branch-entry snapshot can reintroduce
             // overlays already expired at this mainline event. Earlier
             // snapshots keep their history for backward scrubbing.
@@ -615,45 +605,45 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           break;
         }
         case 'mind':
-          mind = {
-            since: mind ? mind.since : event.t,
+          w.mind = {
+            since: w.mind ? w.mind.since : event.t,
             touches: new Map(),
             held: new Set(),
           };
           break;
         case 'reveal':
-          if (mind) {
-            mind = null;
-            revealedAt = event.t;
+          if (w.mind) {
+            w.mind = null;
+            w.revealedAt = event.t;
           }
           break;
         case 'replay':
           applyReplay(eventIndex, event);
           break;
         case 'move': {
-          const move = Chess.parseSAN(event.san, chessState);
+          const move = Chess.parseSAN(event.san, w.chessState);
           if (!move) {
             reject(eventIndex, event, `Invalid move: "${event.san}"`);
             break;
           }
 
-          const moved = movePosition(positions, move, event.t);
-          positions = moved.positions;
-          chessState = Chess.applyMove(chessState, move);
-          if (check) touch(event.t, check.sq);
-          check = checkAt(chessState, event.t);
-          lastMove = lastMoveAt(move, event.t, event.annotation);
+          const moved = movePosition(w.positions, move, event.t);
+          w.positions = moved.positions;
+          w.chessState = Chess.applyMove(w.chessState, move);
+          if (w.check) touch(event.t, w.check.sq);
+          w.check = checkAt(w.chessState, event.t);
+          w.lastMove = lastMoveAt(move, event.t, event.annotation);
           if (moved.captureFlash) {
-            lastCapture = { ...moved.captureFlash, id: String(event.line) };
+            w.lastCapture = { ...moved.captureFlash, id: String(event.line) };
           }
-          nameMove(event.t, ...moved.touched, check?.sq);
+          nameMove(event.t, ...moved.touched, w.check?.sq);
           if (hasReplay && branchStack.length === 0) {
             const ordinal = replayFrames.length;
             const replayMove = movePosition(replayState.positions, move, ordinal);
             replayState = {
               positions: replayMove.positions,
-              chessState,
-              check: check && { sq: check.sq, t: ordinal },
+              chessState: w.chessState,
+              check: w.check && { sq: w.check.sq, t: ordinal },
               lastMove: lastMoveAt(move, ordinal, event.annotation),
               lastCapture: replayMove.captureFlash
                 ? { ...replayMove.captureFlash, id: String(event.line) }
@@ -666,7 +656,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
       }
     }
 
-    snapshots.push(snapshot());
+    snapshots.push({ ...w });
   }
 
   for (const branch of branchStack) {
@@ -675,11 +665,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
 
   return {
     snapshots,
-    // Errors arrive in two passes — the parser's, then this walk's — so the
-    // natural order interleaves them by stage rather than by script: six broken
-    // lines came out L7, L3, L4, L5, L6, L8. The band is read top-to-bottom
-    // against the text the author is about to go fix, and `role="status"`
-    // announces it in exactly that order, so sort by line.
+    // Errors arrive by stage (parser, then this walk); sort by line so the
+    // band and its role="status" announcement read in script order.
     scriptErrors: scriptErrors.slice().sort((a, b) => a.line - b.line),
     moveStates,
     rejectedEventIndexes,
