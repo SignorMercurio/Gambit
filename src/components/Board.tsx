@@ -940,6 +940,7 @@ export function Board({
     <div className="board-wrap">
       <div
         ref={boardRef}
+        className="board"
         role="img"
         aria-label={`Chess board, ${orientation} perspective`}
         onPointerDown={onGesturePointerDown}
@@ -959,7 +960,6 @@ export function Board({
           position: 'relative',
           borderRadius: 'var(--board-radius)',
           overflow: 'hidden',
-          boxShadow: tokens.shadowBoard,
           cursor: gesture
             ? gesture.kind === 'move'
               ? 'grabbing'

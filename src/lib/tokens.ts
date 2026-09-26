@@ -1,5 +1,6 @@
-// Design tokens consumed by the JS/SVG layer (Board, Piece) where CSS custom
-// properties can't be used directly inside SVG attributes or React style props.
+// Design tokens consumed by the JS/SVG layer (Board, App, MoveList,
+// InsertMenu) where CSS custom properties can't be used directly inside SVG
+// attributes or React style props.
 // Mirrored by the :root rule in src/styles.css; if you change a value here,
 // update there as well.
 
@@ -108,12 +109,6 @@ export const tokens = {
   // Capture flash
   captureFlash:
     'radial-gradient(circle, rgba(255,180,90,0.7), rgba(255,180,90,0))',
-
-  // Shadows
-  shadowBoard:
-    '0 30px 80px -30px rgba(20, 30, 60, 0.55), 0 8px 24px -10px rgba(20, 30, 60, 0.3), inset 0 0 0 1px rgba(0, 0, 0, 0.05)',
-  shadowPiece: 'drop-shadow(0 2px 2px rgba(0, 0, 0, 0.18))',
-  shadowPieceMoving: 'drop-shadow(0 6px 5px rgba(15, 21, 37, 0.28))',
 } as const;
 
 // Move-quality annotation palette (DESIGN.md "Move-Quality Marks"):

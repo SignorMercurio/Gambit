@@ -243,6 +243,17 @@ body {
   overflow-x: hidden;
 }
 #root { min-height: 100vh; }
+/* Every button here is custom chrome, so none of the UA's bevel, fill,
+   padding, pointer or small-control font survives. The rules below state only
+   what differs from inherited type on a bare box. */
+button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
 
 :focus-visible {
   outline: 2px solid var(--focus-ring-color);
@@ -279,7 +290,6 @@ body {
 .present-btn,
 .present-toggle {
   position: relative;
-  border: 0; cursor: pointer;
   font-family: var(--font-ui);
   font-weight: 700; letter-spacing: 0;
   transition: background var(--duration-state), color var(--duration-state);
@@ -372,11 +382,8 @@ body {
   min-height: 40px;
   padding: 9px 12px;
   border-radius: var(--radius-sm);
-  border: 0;
-  background: transparent;
   color: var(--color-foley-pewter);
   font-weight: 700; font-size: 12.5px;
-  font-family: inherit; cursor: pointer;
   transition: color var(--duration-state), background var(--duration-state), box-shadow var(--duration-state);
 }
 .tab-btn:hover { color: var(--color-sodium-chalk); }
@@ -477,6 +484,7 @@ body {
   grid-row: 3;
   display: grid;
   grid-template-columns: auto auto auto 1fr auto;
+  grid-template-areas: 'play rewind time timeline prefs';
   gap: 16px; align-items: center;
   background: var(--surface-console);
   border: 1px solid var(--line-soft);
@@ -485,13 +493,21 @@ body {
   backdrop-filter: blur(6px);
   box-shadow: inset 0 1px 0 var(--rim-light);
 }
+/* Each console child names its cell once, here; a tier below redraws only the
+   map. A map that leaves a named cell out sends that child to an implicit
+   track — onto the timeline, at one viewport band only — so every map names
+   every cell (present's only in present mode), and the suite checks it. */
+.controls > .play-btn { grid-area: play; }
+.controls > .ctrl-btn { grid-area: rewind; }
+.controls > .time-readout { grid-area: time; }
+.controls > .timeline { grid-area: timeline; }
+.controls > .transport-prefs { grid-area: prefs; }
+.controls > .present-controls { grid-area: present; }
 
 .play-btn, .ctrl-btn {
   position: relative;
-  border: 0; cursor: pointer;
   border-radius: var(--radius-md);
   color: var(--color-studio-cream);
-  font-family: inherit;
   transition: transform var(--duration-chrome), background var(--duration-state);
   display: grid; place-items: center;
 }
@@ -667,11 +683,8 @@ body {
   transform: translate(-50%, -50%) scaleY(var(--marker-grow, 1));
   width: 5px;
   height: 16px;
-  border: 0;
-  padding: 0;
   background: currentColor;
   border-radius: var(--radius-hairline);
-  cursor: pointer;
   opacity: 0.85;
   transition: opacity var(--duration-state), transform var(--duration-state);
   color: var(--color-stage-mist);
@@ -766,11 +779,11 @@ body {
 }
 
 /* The transport's two recording preferences — playback rate and whether the
-   piece click sounds — share one grid child. Every tier below that re-places
-   the console's children places this wrapper, never `.speed-group` itself: the
-   grid restates its column list in four places and hand-places every child, so
-   a second bare child would auto-place into whatever cell each tier left
-   free — a control landing on the timeline at one viewport band only. */
+   piece click sounds — share one grid cell, `prefs`, which this wrapper names
+   and `.speed-group` never does: every tier redraws the console's area map, so
+   a second bare child would have no cell of its own and auto-place into
+   whatever cell each tier left free — a control landing on the timeline at one
+   viewport band only. */
 .transport-prefs {
   display: flex; align-items: center; gap: 8px;
   flex: 0 0 auto;
@@ -784,8 +797,6 @@ body {
 }
 .speed-btn {
   position: relative;
-  border: 0; cursor: pointer;
-  background: transparent;
   color: var(--color-foley-slate);
   padding: 5px 9px;
   border-radius: var(--radius-xs);
@@ -802,8 +813,6 @@ body {
    toggle's (30px on the sm radius), so no new size enters the system. */
 .mute-btn {
   position: relative;
-  border: 0; cursor: pointer;
-  background: transparent;
   color: var(--color-foley-slate);
   height: 30px; padding: 0 10px;
   border-radius: var(--radius-sm);
@@ -1063,12 +1072,10 @@ body {
   height: 28px;
   min-width: 58px;
   padding: 0 9px;
-  border: 0;
   border-radius: var(--radius-sm);
   background: var(--tonal-white-06);
   color: var(--color-sodium-chalk);
   box-shadow: inset 0 0 0 1px var(--line-faint);
-  cursor: pointer;
   white-space: nowrap;
   transition: background var(--duration-state), color var(--duration-state);
 }
@@ -1117,13 +1124,10 @@ body {
      target in the panel. */
   min-height: 44px;
   padding: 0 18px;
-  background: none;
-  border: 0;
   color: var(--color-foley-slate);
   font-family: var(--font-ui);
   font-size: 12.5px;
   text-align: left;
-  cursor: pointer;
   transition: color var(--duration-state), background var(--duration-state);
 }
 .insert-trigger:hover { background: var(--tonal-white-04); color: var(--color-sodium-chalk); }
@@ -1179,12 +1183,9 @@ body {
   gap: 10px;
   width: 100%;
   padding: 7px 10px;
-  border: 0;
   border-radius: var(--radius-sm);
-  background: none;
   text-align: left;
   font-family: var(--font-ui);
-  cursor: pointer;
   transition: background var(--duration-state);
 }
 button.insert-item:hover { background: var(--tonal-white-08); }
@@ -1217,10 +1218,6 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   color: var(--color-studio-steel-blue);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .insert-panel { animation: none; }
-}
-
 /* Collapsed by default to ERRORS_COLLAPSED_ROWS, so the band sizes itself
    instead of turning into a nested scroll region inside an already-scrolling
    panel — at the old fixed 140px, six errors scrolled the report out of sight.
@@ -1238,14 +1235,11 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .errors-toggle {
   margin: 2px 18px 0;
   padding: 3px 0;
-  background: none;
-  border: 0;
   color: var(--color-error-line);
   font-family: var(--font-mono);
   font-size: 11.5px;
   text-decoration: underline;
   text-underline-offset: 2px;
-  cursor: pointer;
 }
 /* Caption tier, not a 12px step of its own: the errors band is prose the
    author reads before going to fix a line, so it belongs to the same size as
@@ -1290,9 +1284,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   font-family: var(--font-mono); font-size: 12.5px;
   color: var(--color-foley-slate); padding-left: 11px;
 }
-/* Move-cell ink, shared with present mode's read-only list. The editor's
-   button resets stay below: .present-mv is a span, and cursor:pointer on it
-   would promise a click that does nothing. */
+/* Move-cell ink, shared with present mode's read-only list. .present-mv is a
+   span, so it never picks up the global button reset's pointer — which would
+   promise a click that does nothing. */
 .pgn-mv,
 .present-mv {
   font-family: var(--font-mono);
@@ -1302,7 +1296,6 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 .pgn-mv {
   position: relative;
-  border: 0; background: transparent; cursor: pointer;
   font-size: 13px;
   padding: 3px 7px;
   transition: background var(--duration-chrome), color var(--duration-chrome);
@@ -1347,9 +1340,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
    the timeline pins). Current state rings the dot instead of filling a pill
    so the Five Meanings hue stays legible. */
 .pgn-dot {
-  flex: 0 0 auto; width: 14px; height: 14px; padding: 0;
-  border: 0; border-radius: 50%; background: transparent;
-  cursor: pointer; position: relative; opacity: 0.5;
+  flex: 0 0 auto; width: 14px; height: 14px;
+  border-radius: 50%; position: relative; opacity: 0.5;
   transition: opacity var(--duration-chrome);
 }
 .pgn-dot.past { opacity: 0.95; }
@@ -1393,8 +1385,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 .pgn-var-mv {
   position: relative;
-  display: inline; border: 0; background: transparent; cursor: pointer;
-  font: inherit; font-weight: 600;
+  display: inline; font-weight: 600;
   color: var(--color-foley-slate);
   padding: 1px 4px; border-radius: var(--radius-xs);
   transition: background var(--duration-chrome), color var(--duration-chrome);
@@ -1404,8 +1395,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .pgn-paren { color: var(--color-foley-slate); opacity: 0.8; }
 .pgn-ret {
   position: relative;
-  border: 0; background: transparent; cursor: pointer;
-  font: inherit; color: var(--color-foley-slate);
+  color: var(--color-foley-slate);
   padding: 1px 5px; border-radius: var(--radius-xs); opacity: 0.7;
 }
 .pgn-ret::before {
@@ -1420,7 +1410,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .pgn-divider,
 .pgn-error {
   display: flex; gap: 8px; width: 100%;
-  border: 0; border-radius: var(--radius-xs); background: transparent;
+  border-radius: var(--radius-xs);
   font-family: var(--font-mono); font-size: 11.5px;
   cursor: pointer; text-align: left;
   transition: background var(--duration-chrome);
@@ -1450,13 +1440,12 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   min-height: 24px; padding: 2px 6px 2px 30px;
 }
 /* Seek affordances inside divider / error wrappers (the wrapper also hosts
-   the editable time chip and delete ×, so it can't be a button itself).
-   Same button reset; only the row's own alignment differs. */
+   the editable time chip and delete ×, so it can't be a button itself). The
+   global button reset hands them the row's type and ink; only the row's own
+   alignment differs. */
 .pgn-divider-seek,
 .pgn-err-seek {
-  display: flex; min-width: 0; flex: 1;
-  border: 0; background: transparent; padding: 0;
-  font: inherit; color: inherit; cursor: pointer; text-align: left;
+  display: flex; min-width: 0; flex: 1; text-align: left;
 }
 .pgn-divider-seek { align-items: center; }
 .pgn-err-seek { align-items: baseline; gap: 8px; }
@@ -1468,7 +1457,6 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 .view-btn {
   position: relative;
-  border: 0; background: transparent; cursor: pointer;
   padding: 3px 10px; border-radius: var(--radius-pill);
   font-family: var(--font-ui);
   font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: uppercase;
@@ -1490,7 +1478,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   font-family: var(--font-mono);
   /* Label-tier floor: 10.5px is the smallest type in the system. */
   font-size: 10.5px; color: var(--color-foley-slate);
-  border: 0; cursor: pointer;
+  /* Not the row's: a variation's 1.9 would grow the pill past its metadata
+     size. */
+  line-height: normal;
   background: var(--tonal-white-06);
   padding: 1px 4px; border-radius: var(--radius-pill);
 }
@@ -1529,9 +1519,11 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 .pgn-x {
   position: relative;
-  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
-  width: 16px; height: 16px; padding: 0; border-radius: var(--radius-xs);
-  /* Glyph size, not a type-ramp step — the `×` is an icon (see .insert-plus). */
+  flex: 0 0 auto;
+  width: 16px; height: 16px; border-radius: var(--radius-xs);
+  /* Glyph size, not a type-ramp step — the `×` is an icon (see .insert-plus),
+     drawn in the UA control face rather than whichever type its row sets. */
+  font-family: revert;
   color: var(--color-foley-slate); font-size: 12px; line-height: 1;
   opacity: 0;
   /* A hidden destructive control must not be a click target: while invisible
@@ -1686,6 +1678,28 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 
 /* =====================================================================
+   Board surface. The board floats on one ambient floor shadow (DESIGN.md
+   "Board ambient"); pieces carry a soft drop shadow that deepens while one
+   slides. Static, so CSS rather than JS tokens — the PNG export inlines
+   computed styles, so it reads a class exactly as it read an inline style.
+   ===================================================================== */
+
+.board {
+  box-shadow:
+    0 30px 80px -30px rgba(20, 30, 60, 0.55),
+    0 8px 24px -10px rgba(20, 30, 60, 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+.piece {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.18));
+}
+.piece.is-moving { filter: drop-shadow(0 6px 5px rgba(15, 21, 37, 0.28)); }
+
+/* =====================================================================
    Animations
    ===================================================================== */
 
@@ -1740,15 +1754,16 @@ button.insert-item:hover { background: var(--tonal-white-08); }
      below its natural width and overlaps the speed group. */
   .controls {
     grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      'play rewind time'
+      'timeline timeline timeline'
+      'prefs prefs prefs';
     column-gap: 12px;
     row-gap: 12px;
     padding: 12px 14px;
   }
-  .controls .play-btn { grid-row: 1; grid-column: 1; }
-  .controls .ctrl-btn { grid-row: 1; grid-column: 2; }
-  .controls .time-readout { grid-row: 1; grid-column: 3; justify-self: end; }
-  .controls .timeline { grid-row: 2; grid-column: 1 / -1; }
-  .controls .transport-prefs { grid-row: 3; grid-column: 1 / -1; justify-self: center; }
+  .controls .time-readout { justify-self: end; }
+  .controls .transport-prefs { justify-self: center; }
 }
 
 /* =====================================================================
@@ -1898,30 +1913,20 @@ button.insert-item:hover { background: var(--tonal-white-08); }
     width: 100%;
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      'play rewind time'
+      'timeline timeline timeline'
+      'prefs prefs prefs'
+      'present present present';
     column-gap: 10px;
     row-gap: 10px;
     padding: 12px 14px;
   }
-  .app--present .play-btn { grid-row: 1; grid-column: 1; }
-  .app--present .ctrl-btn { grid-row: 1; grid-column: 2; }
-  .app--present .time-readout {
-    grid-row: 1;
-    grid-column: 3;
-    justify-self: end;
-  }
-  .app--present .timeline { grid-row: 2; grid-column: 1 / -1; }
-  .app--present .transport-prefs {
-    grid-row: 3;
-    grid-column: 1 / -1;
-    justify-self: center;
-  }
+  .app--present .time-readout { justify-self: end; }
+  .app--present .transport-prefs,
+  .app--present .present-controls { justify-self: center; }
   .app--present .speed-btn { padding-inline: 8px; }
   .app--present .mute-btn { padding-inline: 8px; }
-  .app--present .present-controls {
-    grid-row: 4;
-    grid-column: 1 / -1;
-    justify-self: center;
-  }
 
   /* The optional PGN is useful on a phone, but it cannot share a row with the
      board: the fixed 220px panel used to crush the recording artifact to 105px
@@ -1981,15 +1986,13 @@ button.insert-item:hover { background: var(--tonal-white-08); }
     width: 100%;
     display: grid;
     grid-template-columns: auto auto auto 1fr auto;
+    grid-template-areas:
+      'play rewind time prefs present'
+      'timeline timeline timeline timeline timeline';
     column-gap: 12px;
     row-gap: 10px;
   }
-  .app--present .play-btn { grid-row: 1; grid-column: 1; }
-  .app--present .ctrl-btn { grid-row: 1; grid-column: 2; }
-  .app--present .time-readout { grid-row: 1; grid-column: 3; }
-  .app--present .transport-prefs { grid-row: 1; grid-column: 4; justify-self: end; }
-  .app--present .present-controls { grid-row: 1; grid-column: 5; }
-  .app--present .timeline { grid-row: 2; grid-column: 1 / -1; }
+  .app--present .transport-prefs { justify-self: end; }
 }
 
 /* Reduced motion: cut decorative animation, keep functional motion (piece
@@ -1999,6 +2002,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   .play-btn:hover, .play-btn:active { transform: none; }
   .marker:hover, .marker:focus-visible { --marker-grow: 1; }
   .app--present .controls { transition: none; }
+  .insert-panel { animation: none; }
   .capture-flash {
     opacity: min(var(--capture-opacity, 0), 0.42);
     transform: scale(1);

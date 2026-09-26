@@ -7,26 +7,14 @@
 // `role="img"` (see its aria-label); empty alt prevents 32 piece announcements
 // from drowning the page.
 
-import { memo, type CSSProperties } from 'react';
+import { memo } from 'react';
 import type { PieceType, Side } from '../lib/chess';
-import { tokens } from '../lib/tokens';
 
 type PieceProps = { type: PieceType; side: Side; active: boolean };
 
-const PIECE_STYLE: CSSProperties = {
-  width: '100%',
-  height: '100%',
-  display: 'block',
-  userSelect: 'none',
-  filter: tokens.shadowPiece,
-};
-const ACTIVE_PIECE_STYLE: CSSProperties = {
-  ...PIECE_STYLE,
-  filter: tokens.shadowPieceMoving,
-};
-
 // Board repaints on every animation frame; only the moving piece's `active`
-// flag changes, so steady pieces can reuse the same image subtree and style.
+// flag changes, so steady pieces can reuse the same image subtree. Box and
+// shadows live on `.piece` in styles.css.
 export const Piece = memo(function Piece({ type, side, active }: PieceProps) {
   const code = type + (side === 'w' ? 'l' : 'd');
   return (
@@ -35,7 +23,7 @@ export const Piece = memo(function Piece({ type, side, active }: PieceProps) {
       alt=""
       role="presentation"
       draggable={false}
-      style={active ? ACTIVE_PIECE_STYLE : PIECE_STYLE}
+      className={active ? 'piece is-moving' : 'piece'}
     />
   );
 });

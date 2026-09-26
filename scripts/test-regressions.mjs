@@ -107,11 +107,14 @@ try {
   assert.equal(standardSetup.error, null);
   // Never memoize this: assertions below depend on each build being genuinely
   // independent.
-  const worldFrom = (text) => buildWorld(parseScript(text), standardSetup);
+  const worldWithEvents = (text) => {
+    const events = parseScript(text);
+    return { events, world: buildWorld(events, standardSetup) };
+  };
+  const worldFrom = (text) => worldWithEvents(text).world;
   const mainlineFrom = (text) => {
-    const ev = parseScript(text);
-    const w = buildWorld(ev, standardSetup);
-    return buildMainline(ev, w.snapshots, w.rejectedEventIndexes);
+    const { events, world } = worldWithEvents(text);
+    return buildMainline(events, world.snapshots, world.rejectedEventIndexes);
   };
   const rowText = (r) => [r.num, r.white?.text ?? null, r.black?.text ?? null];
 
@@ -288,15 +291,14 @@ try {
   // keep it as a future continuity boundary and isolate the gesture in a
   // variation instead of silently reviving the author's bad line.
   const rejectedMoveScript = '[3] e5';
-  const rejectedMoveEvents = parseScript(rejectedMoveScript);
-  const rejectedMoveWorld = buildWorld(rejectedMoveEvents, standardSetup);
+  const rejectedMoveWorld = worldFrom(rejectedMoveScript);
   assert.deepEqual([...rejectedMoveWorld.rejectedEventIndexes], [0]);
   const rejectedMovePlan = planMove(rejectedMoveScript, 2, 'e4', rejectedMoveWorld.rejectedEventIndexes);
   assert.equal(rejectedMovePlan.kind, 'edit');
   assert.match(rejectedMovePlan.text, /\bbr$/m);
   assert.match(rejectedMovePlan.text, /\bml$/m);
-  const rejectedMoveAfterEvents = parseScript(rejectedMovePlan.text);
-  const rejectedMoveAfterWorld = buildWorld(rejectedMoveAfterEvents, standardSetup);
+  const { events: rejectedMoveAfterEvents, world: rejectedMoveAfterWorld } =
+    worldWithEvents(rejectedMovePlan.text);
   const originalMoveIndex = rejectedMoveAfterEvents.findIndex(
     (event) => !('error' in event) && event.kind === 'move' && event.san === 'e5',
   );
@@ -701,10 +703,9 @@ text`,
     .find((p) => p.side === 'w' && p.f === 4 && p.r === 1);
   assert.deepEqual([restoredPawn.moveFromF, restoredPawn.moveFromR, restoredPawn.moveT], [4, 3, 6]);
 
-  const replayEvents = parseScript(
+  const { events: replayEvents, world: replayWorld } = worldWithEvents(
     '[1] e4\n[2] br\n[3] e5\n[4] ml\n[5] c5\n[10] rp',
   );
-  const replayWorld = buildWorld(replayEvents, standardSetup);
   assert.equal(REPLAY_STEP_SECONDS, 0.5);
   assert.deepEqual(replayWorld.scriptErrors, []);
   assert.equal(replayWorld.visualEndTime, 11);
@@ -784,11 +785,10 @@ text`,
   // times in integer deciseconds: five 0.8s steps must land on exactly 4.0s,
   // where float arithmetic (0.8 * 5 = 4.000000000000001) would falsely reject
   // a replay ending exactly on the next event's timestamp.
-  const steppedReplayEvents = parseScript(
+  const { events: steppedReplayEvents, world: steppedReplay } = worldWithEvents(
     '[1] e4\n[2] e5\n[3] Nf3\n[4] Nc6\n[5] Bb5\n[10] rp 0.8\n[14] cl',
   );
   assert.equal(steppedReplayEvents.find((e) => e.kind === 'replay').step, 0.8);
-  const steppedReplay = buildWorld(steppedReplayEvents, standardSetup);
   assert.deepEqual(
     steppedReplay.scriptErrors,
     [],
@@ -899,10 +899,9 @@ text`,
     );
     assert.equal(sequence.moveCount, 100);
   }
-  const runtimeEvents = parseScript(
+  const { events: runtimeEvents, world: runtimeWorld } = worldWithEvents(
     '[00:01] e5\n[00:02] e4\n[00:03] fen bad\n[00:04] e5',
   );
-  const runtimeWorld = buildWorld(runtimeEvents, standardSetup);
   assert.deepEqual([...runtimeWorld.rejectedEventIndexes], [0, 2]);
   assert.deepEqual(runtimeWorld.scriptErrors.map((error) => error.line), [1, 3]);
   // snapshots[i] is the position before event i, rejected events included.
@@ -933,8 +932,8 @@ text`,
   assert.deepEqual([...prototypeWorld.rejectedEventIndexes], [0, 1]);
   assert.equal(prototypeWorld.scriptErrors.length, 2);
 
-  const unclosedBranchEvents = parseScript('[00:01] br\n[00:02] e4');
-  const unclosedBranchWorld = buildWorld(unclosedBranchEvents, standardSetup);
+  const { events: unclosedBranchEvents, world: unclosedBranchWorld } =
+    worldWithEvents('[00:01] br\n[00:02] e4');
   assert.equal(unclosedBranchWorld.scriptErrors[0].line, 1);
   assert.match(unclosedBranchWorld.scriptErrors[0].error, /without matching 'mainline'/);
   assert.deepEqual([...unclosedBranchWorld.rejectedEventIndexes], []);
@@ -1150,69 +1149,64 @@ text`,
   // The piece click is derived from the frame the board draws, never fired by
   // the event that produced it — so the key it watches has to hold three
   // relations at once, and none of them is visible from the audio side.
-  const soundEvents = parseScript('[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3');
-  const soundWorld = buildWorld(soundEvents, standardSetup);
-  const soundKeyAt = (build, t) =>
-    moveSoundKey(worldFrameAt(build, lastEventIndexAt(soundEvents, t), t).snapshot.lastMove);
-  assert.equal(soundKeyAt(soundWorld, 0), null, 'a board before its first move names no move');
+  const soundScript = '[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3';
+  const sound = worldWithEvents(soundScript);
+  const soundKeyAt = ({ events, world }, t) =>
+    moveSoundKey(worldFrameAt(world, lastEventIndexAt(events, t), t).snapshot.lastMove);
+  assert.equal(soundKeyAt(sound, 0), null, 'a board before its first move names no move');
   assert.equal(
-    shouldPlayMoveSound(null, soundKeyAt(soundWorld, 0), true),
+    shouldPlayMoveSound(null, soundKeyAt(sound, 0), true),
     false,
     'loading the app is not a move landing',
   );
   assert.equal(
-    soundKeyAt(soundWorld, 1.2),
-    soundKeyAt(soundWorld, 1.9),
+    soundKeyAt(sound, 1.2),
+    soundKeyAt(sound, 1.9),
     'two frames inside one move are the same move',
   );
   assert.equal(
-    soundKeyAt(soundWorld, 2.5),
-    soundKeyAt(soundWorld, 3.5),
+    soundKeyAt(sound, 2.5),
+    soundKeyAt(sound, 3.5),
     'an annotation event does not re-land the move under it',
   );
   assert.equal(
-    shouldPlayMoveSound(soundKeyAt(soundWorld, 1.5), soundKeyAt(soundWorld, 2.5), true),
+    shouldPlayMoveSound(soundKeyAt(sound, 1.5), soundKeyAt(sound, 2.5), true),
     true,
     'crossing into the next move clicks',
   );
   assert.equal(
-    soundKeyAt(soundWorld, 4.5),
+    soundKeyAt(sound, 4.5),
     null,
     'a reset leaves no move to name, so the rewound board stays silent',
   );
   // A scrub is one comparison between where the playhead left and where it
   // landed, so ten crossed moves are one click rather than ten.
-  const scrubbed = soundKeyAt(soundWorld, 5.5);
-  assert.equal(shouldPlayMoveSound(soundKeyAt(soundWorld, 0), scrubbed, true), true);
+  const scrubbed = soundKeyAt(sound, 5.5);
+  assert.equal(shouldPlayMoveSound(soundKeyAt(sound, 0), scrubbed, true), true);
   assert.equal(
-    shouldPlayMoveSound(scrubbed, soundKeyAt(soundWorld, 5.9), true),
+    shouldPlayMoveSound(scrubbed, soundKeyAt(sound, 5.9), true),
     false,
     'the frames after a scrub landing must not re-fire it',
   );
   // Editing the script rebuilds every snapshot. Comparing object identity here
   // would click at every keystroke; the key is a value for exactly that reason.
-  // Spelled out rather than routed through worldFrom on purpose: this assertion
-  // is about the rebuild itself, so the pipeline has to be visible.
+  // A second, independent parse and build of the same text — never `sound`
+  // itself: this assertion is about the rebuild.
   assert.equal(
-    soundKeyAt(buildWorld(parseScript('[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3'), standardSetup), 2.5),
-    soundKeyAt(soundWorld, 2.5),
+    soundKeyAt(worldWithEvents(soundScript), 2.5),
+    soundKeyAt(sound, 2.5),
     'rebuilding the same script re-derives the same move key',
   );
   // `rp` re-lands moves the script already played. Keying on squares alone
   // would make every replayed move after the first one silent.
-  const replaySoundEvents = parseScript('[1] e4\n[2] e5\n[3] rp');
-  const replaySoundWorld = buildWorld(replaySoundEvents, standardSetup);
-  const replaySoundKeyAt = (t) =>
-    moveSoundKey(
-      worldFrameAt(replaySoundWorld, lastEventIndexAt(replaySoundEvents, t), t).snapshot.lastMove,
-    );
+  const replaySound = worldWithEvents('[1] e4\n[2] e5\n[3] rp');
   assert.equal(
-    shouldPlayMoveSound(replaySoundKeyAt(1.5), replaySoundKeyAt(3), true),
+    shouldPlayMoveSound(soundKeyAt(replaySound, 1.5), soundKeyAt(replaySound, 3), true),
     true,
     'a replayed move is a new landing, not the same one held',
   );
   assert.equal(
-    shouldPlayMoveSound(replaySoundKeyAt(3), replaySoundKeyAt(3.5 + 0.1), true),
+    shouldPlayMoveSound(soundKeyAt(replaySound, 3), soundKeyAt(replaySound, 3.5 + 0.1), true),
     true,
     'each replay step lands its own move — the exact boundary still holds the outgoing one',
   );
@@ -1222,7 +1216,7 @@ text`,
   // belongs inside this predicate rather than around its call: wrapping the
   // call instead would freeze the latch, and unmuting would then click for the
   // move the playhead had been parked on for a minute.
-  const mutedLanding = [soundKeyAt(soundWorld, 1.5), soundKeyAt(soundWorld, 2.5)];
+  const mutedLanding = [soundKeyAt(sound, 1.5), soundKeyAt(sound, 2.5)];
   assert.equal(
     shouldPlayMoveSound(...mutedLanding, true),
     true,
@@ -1462,13 +1456,10 @@ text`,
   // The Text view's syntax line must name every kind. SYNTAX_GROUPS derives
   // from COMMANDS, so assert the rendered SYNTAX_HINT element instead: writing
   // `group.join(' / ')` as `group[0]` would silently drop `ml` and `reveal`.
-  const hintText = (node) => {
-    if (node == null || typeof node === 'boolean') return '';
-    if (typeof node === 'string' || typeof node === 'number') return String(node);
-    if (Array.isArray(node)) return node.map(hintText).join('');
-    return hintText(node.props?.children);
-  };
-  const hint = hintText(SYNTAX_HINT);
+  const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#x27': "'" };
+  const hint = renderToStaticMarkup(SYNTAX_HINT)
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(amp|lt|gt|quot|#x27);/g, (_, name) => ENTITIES[name]);
   for (const c of COMMANDS) {
     const name = c.token === '->' ? c.syntax : c.token;
     assert.ok(name, `${c.kind} has a name to print`);
@@ -2289,25 +2280,44 @@ text`,
       /\.speed-btn\[aria-pressed='true'\],[^{]*\.mute-btn\[aria-pressed='true'\]\s*\{[^}]*background:\s*var\(--tonal-white-12\)/,
       'it shares the segmented pressed treatment rather than declaring its own fill',
     );
-    // The console grid restates its column list in four tiers and hand-places
-    // every child. Rate and sound therefore ride one wrapper: a tier that
-    // places `.speed-group` directly would leave the sound toggle to
-    // auto-place into whatever cell that tier left free — a control landing on
-    // the timeline at one viewport band only, which is exactly the class of
-    // bug no single-viewport check finds.
+    // Each console child names its cell once and every tier redraws only the
+    // area map, in four tiers. A map that leaves a named cell out sends that
+    // child to an implicit track — a control landing on the timeline at one
+    // viewport band only, which is exactly the class of bug no single-viewport
+    // check finds. Rate and sound therefore ride one wrapper, one cell: a
+    // second bare child would have no cell and auto-place into whatever a tier
+    // left free.
     assert.doesNotMatch(
       bareStyles,
       /\.speed-group\s*\{[^}]*grid-(?:row|column|area)/,
       'no tier places the rate selector itself; the transport-prefs wrapper carries both',
     );
-    for (const region of mediaRegions.filter((r) =>
-      /\.controls\s*\{[^}]*grid-template-columns/.test(r.css),
-    )) {
-      assert.match(
-        region.css,
-        /\.transport-prefs\s*\{[^}]*grid-row/,
-        `${region.query} re-places the console's children, so it must place the prefs wrapper too`,
-      );
+    const consoleCells = new Map(
+      [...bareStyles.matchAll(/\.controls > \.([\w-]+)\s*\{\s*grid-area:\s*([\w-]+);\s*\}/g)]
+        .map(([, child, area]) => [child, area]),
+    );
+    assert.equal(consoleCells.get('transport-prefs'), 'prefs', 'the prefs wrapper names its console cell');
+    // Placing by line anywhere would route around the map this guard reads.
+    assert.doesNotMatch(
+      bareStyles,
+      /\.(?:play-btn|ctrl-btn|time-readout|timeline|transport-prefs|present-controls)\s*\{[^}]*grid-(?:row|column)/,
+      'console children are placed only by their named cell',
+    );
+    const consoleMaps = [...bareStyles.matchAll(/([^{}]*\.controls)\s*\{([^}]*)\}/g)]
+      .filter(([, , body]) => /grid-template-(?:columns|areas)/.test(body));
+    assert.ok(consoleMaps.length >= 4, 'every tier that lays out the console is found');
+    for (const [, selector, body] of consoleMaps) {
+      const map = body.match(/grid-template-areas:\s*([^;]+);/);
+      assert.ok(map, `${selector.trim()} lays out the console, so it must redraw the area map`);
+      const named = new Set(map[1].match(/[\w-]+/g));
+      for (const [child, area] of consoleCells) {
+        // Present's own controls render only in present mode.
+        if (child === 'present-controls' && !selector.includes('.app--present')) continue;
+        assert.ok(
+          named.has(area),
+          `${selector.trim()} lays out the console, so its map must name the ${child} cell`,
+        );
+      }
     }
   }
   // Undo appears the instant a board gesture lands. Anchoring the toggle left

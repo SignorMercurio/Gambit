@@ -914,9 +914,10 @@ export default function App() {
     ),
     [duration],
   );
-  // Rate and SFX ride one wrapper: the transport grid places every child by
-  // hand per tier, so a second bare child would auto-place into whatever cell
-  // a tier left free. Memoized because neither depends on the clock.
+  // Rate and SFX ride one wrapper: the transport grid gives each child one
+  // named cell and every tier redraws the map, so a second bare child would
+  // auto-place into whatever cell a tier left free. Memoized because neither
+  // depends on the clock.
   const transportPrefs = useMemo(
     () => (
       <div className="transport-prefs">
