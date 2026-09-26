@@ -80,10 +80,10 @@ type WorldSnapshot = {
 };
 
 type WorldBuild = {
+  // snapshots[i] is the world before event i and snapshots[i + 1] the world
+  // after it, so snapshots[i].chessState also numbers event i's move row.
   snapshots: WorldSnapshot[];
   scriptErrors: ErrorEvent[];
-  // Position context before each event, aligned one-for-one with events.
-  moveStates: Chess.MoveState[];
   // Parsed events that could not be applied to the world (for example an
   // illegal SAN, malformed FEN, or exhausted overlay budget). Structural
   // errors are deliberately excluded so presentation readers still honor the
@@ -377,7 +377,7 @@ function glideRestoredPositions(departed: Positions, restored: Positions, t: num
 }
 
 export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): WorldBuild {
-  type BranchSnapshot = { entry: WorldSnapshot; setupEpoch: number; t: number; line: number; raw: string };
+  type BranchSnapshot = { entry: WorldSnapshot; setupEpoch: number; event: ParsedEvent };
 
   const checkAt = (state: Chess.GameState, t: number): BoardCheck | null => {
     const sq = Chess.checkedKingSquare(state);
@@ -402,7 +402,6 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
 
   const snapshots: WorldSnapshot[] = [];
   const scriptErrors: ErrorEvent[] = [];
-  const moveStates: Chess.MoveState[] = [];
   const rejectedEventIndexes = new Set<number>();
   const branchStack: BranchSnapshot[] = [];
   const hasReplay = events.some((event) => event.kind === 'replay');
@@ -417,12 +416,12 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   };
   let visualEndTime = events[events.length - 1]?.t ?? 0;
 
-  // Takes the source record rather than its fields so a `br` snapshot and a
-  // parsed event report the same way and no pair of arguments can be swapped.
-  // A caller that also invalidates the event uses `reject`; the structural
-  // br/ml mismatches deliberately do not — see `WorldBuild.rejectedEventIndexes`.
-  const noteError = (source: { t: number; line: number; raw: string }, error: string) => {
-    scriptErrors.push({ t: source.t, error, line: source.line, raw: source.raw });
+  // Takes the event rather than its fields so no pair of arguments can be
+  // swapped. A caller that also invalidates the event uses `reject`; the
+  // structural br/ml mismatches deliberately do not — see
+  // `WorldBuild.rejectedEventIndexes`.
+  const noteError = (event: ParsedEvent, error: string) => {
+    scriptErrors.push({ t: event.t, error, line: event.line, raw: event.raw });
   };
 
   const reject = (eventIndex: number, event: ParsedEvent, error: string) => {
@@ -531,7 +530,6 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     // entries whose fade window already ended. Prune before applying the event
     // so an expired full arrow budget cannot reject the first fresh arrow.
     pruneOverlays(event.t);
-    moveStates.push({ fullmove: w.chessState.fullmove, turn: w.chessState.turn });
     if ('error' in event) {
       scriptErrors.push(event);
     } else {
@@ -585,7 +583,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           break;
         }
         case 'branch':
-          branchStack.push({ entry: { ...w }, setupEpoch, t: event.t, line: event.line, raw: event.raw });
+          branchStack.push({ entry: { ...w }, setupEpoch, event });
           break;
         case 'mainline': {
           const branch = branchStack.pop();
@@ -660,7 +658,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   }
 
   for (const branch of branchStack) {
-    noteError(branch, `'branch' without matching 'mainline'`);
+    noteError(branch.event, `'branch' without matching 'mainline'`);
   }
 
   return {
@@ -668,7 +666,6 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     // Errors arrive by stage (parser, then this walk); sort by line so the
     // band and its role="status" announcement read in script order.
     scriptErrors: scriptErrors.slice().sort((a, b) => a.line - b.line),
-    moveStates,
     rejectedEventIndexes,
     replayFrames,
     replaySequences,

@@ -12,7 +12,7 @@
 // to board state directly.
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import type { MoveState, Side } from '../lib/chess';
+import type { GameState, Side } from '../lib/chess';
 import {
   eventBody,
   fmtDeci,
@@ -70,7 +70,10 @@ type Block =
 // accumulate into rows; a top-level `br` opens a variation flow that closes
 // at its matching `ml`; annotations attach as dots to the move they follow,
 // or to an orphan marks block when no move precedes them.
-function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
+function buildBlocks(
+  events: TimelineEvent[],
+  snapshots: readonly { chessState: GameState }[],
+): Block[] {
   const blocks: Block[] = [];
   let rowAcc: Row[] = [];
   let markAcc: Mark[] = [];
@@ -131,7 +134,7 @@ function buildBlocks(events: TimelineEvent[], states: MoveState[]): Block[] {
     }
     switch (e.kind) {
       case 'move': {
-        const st = states[i];
+        const st = snapshots[i].chessState;
         if (varNodes) {
           varNodes.push({
             type: 'mv',
@@ -320,7 +323,7 @@ function TimeChip({
 
 type MoveListProps = {
   events: TimelineEvent[];
-  states: MoveState[];
+  snapshots: readonly { chessState: GameState }[];
   reachedEventIndex: number;
   // Lines the snapshot builder rejected (illegal SAN, bad FEN, resource cap): their move
   // cells get inline error styling so the errors band isn't the only flag.
@@ -338,7 +341,7 @@ type MoveListProps = {
 // events are time-sorted, so `i <= reachedEventIndex` is exactly "fired".
 export const MoveList = memo(function MoveList({
   events,
-  states,
+  snapshots,
   reachedEventIndex,
   errorLines,
   onSeek,
@@ -347,7 +350,7 @@ export const MoveList = memo(function MoveList({
   onRetime,
   onDelete,
 }: MoveListProps) {
-  const blocks = useMemo(() => buildBlocks(events, states), [events, states]);
+  const blocks = useMemo(() => buildBlocks(events, snapshots), [events, snapshots]);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 

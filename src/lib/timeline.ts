@@ -67,19 +67,13 @@ function matchScriptLine(line: string): ScriptLineMatch | null {
   };
 }
 
-// Public consumers only receive valid event lines. parseScript uses the
-// internal structural match below to keep its missing-vs-invalid error split.
+// Public consumers only receive valid event lines — null for blanks, comments,
+// and lines the parser would reject, including a bare `[00:05]` (a parse
+// error), which is not a timed anchor either. parseScript uses the internal
+// structural match below to keep its missing-vs-invalid error split.
 export function parseScriptLine(line: string): ScriptLine | null {
   const match = matchScriptLine(line);
   return match && Number.isFinite(match.t) ? { t: match.t, body: match.body } : null;
-}
-
-// Timestamp of a script line, or null for blanks, comments, and lines the
-// parser would reject — including a bare `[00:05]` (a parse error), which
-// is not a timed anchor either.
-export function scriptLineTime(line: string): number | null {
-  const parsed = parseScriptLine(line);
-  return parsed?.t ?? null;
 }
 
 // Rewrites only a valid event line and preserves everything after its closing

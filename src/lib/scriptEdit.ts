@@ -11,7 +11,6 @@ import {
   lastEventIndexAt,
   parseScriptLine,
   rewriteScriptLineTime,
-  scriptLineTime as lineTime,
   type ParsedEvent,
   type TimelineEvent,
 } from './timeline';
@@ -34,71 +33,45 @@ function firstDeciAbove(t: number): number {
   return deci / 10 > t ? deci : deci + 1;
 }
 
-// Timestamps already used by script lines, on the decisecond grid.
+// Timestamps already used by script lines, on the decisecond grid. A plan
+// computes it once from the text it started from and hands it to every
+// scanner below.
 function takenDeciseconds(text: string): Set<number> {
   const taken = new Set<number>();
   for (const line of text.split('\n')) {
-    const lt = lineTime(line);
+    const lt = parseScriptLine(line)?.t;
     if (lt != null) taken.add(Math.round(lt * 10));
   }
   return taken;
 }
 
-// Smallest timestamp >= t (on the decisecond grid) not already used by a
-// script line, stepping 0.5s at a time: successive gestures at a paused
-// playhead spread out instead of stacking on one instant. `limit` caps the
-// stamp strictly below the next scripted event — when the roomy stepping
-// would cross it, retry with tight 0.1s steps so the line stays on the
-// position the gesture previewed. `floor` keeps the stamp strictly above the
-// previous event: grid rounding (and the cap-1 fallback below) may otherwise
-// slip an off-grid timestamp's decisecond back across it, re-ordering the
-// gesture onto a position it never previewed. A pinched or saturated
-// interval returns null rather than crossing either boundary.
-function nextFreeTime(
-  text: string,
-  t: number,
-  limit: number,
-  floor: number,
-): number | null {
-  if (!isValidScriptTimestamp(t)) return null;
-  const taken = takenDeciseconds(text);
-  const limitDeci = capDeci(limit);
-  const scan = (step: number, cap: number): number | null => {
-    let deci = Math.max(0, Math.round(t * 10));
-    // The paused playhead often rests 0.05s before the next event (the
-    // landing convention), and rounding half-up then puts the scan start on
-    // the cap itself even though t is below it. Any stamp strictly between
-    // the neighboring events executes against the same position the gesture
-    // previewed, so start one tick under the cap instead; if that slot is
-    // taken the grid truly is saturated and the caller reports a conflict.
-    if (deci >= cap) deci = Math.max(0, cap - 1);
-    deci = Math.max(deci, firstDeciAbove(floor));
-    while (taken.has(deci)) deci += step;
-    return deci < cap ? deci / 10 : null;
-  };
-  return scan(5, limitDeci) ?? scan(1, limitDeci);
-}
-
 // `gaps.length + 1` free timestamps starting at/after `from`, each at least
-// the given gap after the previous, all strictly below `limit`. Used to lay
-// out multi-line structures (br / move / ml). When the preferred spacing
-// does not fit under the limit, retries with tight 0.1s gaps; returns null
-// when even that fails — the caller reports an explicit conflict.
+// the given gap after the previous, all strictly below `limit` — the one slot
+// scanner behind every gesture layout. `step` is how far the preferred layout
+// jumps past a taken stamp: a plain insert passes 0.5s so successive gestures
+// at a paused playhead spread out instead of stacking on one instant. When
+// the preferred layout does not fit under the limit, retries with 0.1s steps
+// and halved gaps, then with 0.1s gaps too, so the line stays on the
+// position the gesture previewed; returns null when even that fails — the
+// caller reports an explicit conflict. `floor` keeps every stamp strictly
+// above the previous event: grid rounding (and planLineInsert's parked
+// clamp) may otherwise slip an off-grid timestamp's decisecond back across
+// it, re-ordering the gesture onto a position it never previewed.
 function findSlots(
-  text: string,
+  taken: ReadonlySet<number>,
   from: number,
   gaps: number[],
   limit: number,
   floor: number,
+  step = 0.1,
 ): number[] | null {
   if (!isValidScriptTimestamp(from)) return null;
-  const taken = takenDeciseconds(text);
   const limitDeci = capDeci(limit);
-  const layout = (gapsDeci: number[]): number[] | null => {
+  const layout = (gapsDeci: number[], stepDeci: number): number[] | null => {
     const slots: number[] = [];
     let t = Math.max(Math.round(from * 10), firstDeciAbove(floor));
     for (let i = 0; i <= gapsDeci.length; i++) {
-      while (taken.has(t)) t += 1;
+      while (taken.has(t)) t += stepDeci;
       if (t >= limitDeci) return null;
       slots.push(t);
       t += gapsDeci[i] ?? 0;
@@ -107,9 +80,9 @@ function findSlots(
   };
   const deciGaps = gaps.map((g) => Math.max(1, Math.round(g * 10)));
   const slots =
-    layout(deciGaps) ??
-    layout(deciGaps.map((g) => Math.max(1, Math.round(g / 2)))) ??
-    layout(gaps.map(() => 1));
+    layout(deciGaps, Math.max(1, Math.round(step * 10))) ??
+    layout(deciGaps.map((g) => Math.max(1, Math.round(g / 2))), 1) ??
+    layout(gaps.map(() => 1), 1);
   return slots ? slots.map((d) => d / 10) : null;
 }
 
@@ -117,8 +90,7 @@ function findSlots(
 // A `br` timestamp is ordering-only (anything between the previous event and
 // the variation's first move renders identically), so gesture wraps tuck it
 // into whatever slot is free just before the move.
-function nearestFreeTimeBelow(text: string, t: number, floor: number): number | null {
-  const taken = takenDeciseconds(text);
+function nearestFreeTimeBelow(taken: ReadonlySet<number>, t: number, floor: number): number | null {
   const lowest = firstDeciAbove(floor);
   const start = Math.min(MAX_SCRIPT_DECI + 1, Math.round(t * 10)) - 1;
   for (let d = start; d >= lowest; d--) {
@@ -157,9 +129,11 @@ export function setLineTime(text: string, line: number, t: number): LineTimeEdit
   const idx = line - 1;
   if (idx < 0 || idx >= lines.length) return { text, line: null };
   let prev: number | null = null;
-  for (let i = idx - 1; i >= 0 && prev == null; i--) prev = lineTime(lines[i]);
+  for (let i = idx - 1; i >= 0 && prev == null; i--) prev = parseScriptLine(lines[i])?.t ?? null;
   let next: number | null = null;
-  for (let i = idx + 1; i < lines.length && next == null; i++) next = lineTime(lines[i]);
+  for (let i = idx + 1; i < lines.length && next == null; i++) {
+    next = parseScriptLine(lines[i])?.t ?? null;
+  }
   if ((prev == null || prev <= roundedT) && (next == null || roundedT <= next)) {
     const retimed = retimeLine(text, line, roundedT);
     return retimed == null ? { text, line: null } : { text: retimed, line };
@@ -188,7 +162,7 @@ function insertScriptLineInto(lines: string[], t: number, body: string): LineTim
   let insertAt = -1;
   let blockStart = 0;
   for (let i = 0; i < lines.length; i++) {
-    const lt = lineTime(lines[i]);
+    const lt = parseScriptLine(lines[i])?.t;
     if (lt == null) continue;
     if (lt > t) {
       insertAt = blockStart > 0 ? blockStart : i;
@@ -202,10 +176,6 @@ function insertScriptLineInto(lines: string[], t: number, body: string): LineTim
   }
   lines.splice(insertAt, 0, entry);
   return { text: lines.join('\n'), line: insertAt + 1 };
-}
-
-function insertScriptLine(text: string, t: number, body: string): string {
-  return insertScriptLineInto(text.split('\n'), t, body).text;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,13 +209,31 @@ export function planLineInsert(
 ): ScriptEditPlan {
   const idx = lastEventIndexAt(events, time);
   const bound = events[idx + 1];
-  const t = nextFreeTime(scriptText, time, bound ? bound.t : Infinity, events[idx]?.t ?? -Infinity);
-  if (t == null) return { kind: 'conflict', error: NO_FREE_SLOT_ERROR };
+  // The paused playhead often rests 0.05s before the next event (the landing
+  // convention), and rounding half-up then puts the scan start on the cap
+  // itself even though the playhead is below it. Any stamp strictly between
+  // the neighboring events executes against the same position the gesture
+  // previewed, so start one tick under the cap instead; if that slot is taken
+  // the grid truly is saturated and the scanner reports a conflict. The clamp
+  // stays with the plain insert rather than in `findSlots`: there it would
+  // also reach the variation-extend layout, whose cap is not the playhead's
+  // next event, and turn that layout's conflicts into recorded moves.
+  const from = bound ? Math.min(time, (capDeci(bound.t) - 1) / 10) : time;
+  const slot = findSlots(
+    takenDeciseconds(scriptText),
+    from,
+    [],
+    bound ? bound.t : Infinity,
+    events[idx]?.t ?? -Infinity,
+    0.5,
+  );
+  if (!slot) return { kind: 'conflict', error: NO_FREE_SLOT_ERROR };
+  const [t] = slot;
   return {
     kind: 'edit',
-    text: insertScriptLine(scriptText, t, body),
+    text: insertScriptLineInto(scriptText.split('\n'), t, body).text,
     t,
-    // `nextFreeTime` returns a stamp strictly inside (events[idx].t, bound.t)
+    // `findSlots` returns a stamp strictly inside (events[idx].t, bound.t)
     // or null, so the event after the playhead is also the event after the
     // written line — no need to locate it a second time.
     nextT: bound?.t,
@@ -309,9 +297,12 @@ export function planMoveGesture(
     return { kind: 'seek', t: stateEv.t };
   }
 
+  // Both layouts below scan the text as it was before this gesture.
+  const taken = takenDeciseconds(scriptText);
+
   if (stateEv.kind === 'mainline') {
     const mlCap = (events[stateIdx + 1]?.t ?? Infinity) - 0.1;
-    const slot = findSlots(scriptText, time, [], mlCap, prevT);
+    const slot = findSlots(taken, time, [], mlCap, prevT);
     if (!slot) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
     const [mvT] = slot;
     let text = scriptText;
@@ -321,7 +312,7 @@ export function planMoveGesture(
       // would tie-break by textual order and silently decide another
       // line's variation membership.
       const pushed = Math.min(mvT + 1, mlCap);
-      const free = nearestFreeTimeBelow(text, pushed + 0.1, mvT);
+      const free = nearestFreeTimeBelow(taken, pushed + 0.1, mvT);
       if (free == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
       mlT = free;
       const retimed = retimeLine(text, stateEv.line, mlT);
@@ -335,7 +326,8 @@ export function planMoveGesture(
     // its (possibly pushed) new time.
     const afterMv = events[lastEventIndexAt(events, mvT) + 1];
     const nextT = afterMv && afterMv !== stateEv ? Math.min(afterMv.t, mlT) : mlT;
-    return { kind: 'edit', text: insertScriptLine(text, mvT, san), t: mvT, nextT };
+    const { text: extended } = insertScriptLineInto(text.split('\n'), mvT, san);
+    return { kind: 'edit', text: extended, t: mvT, nextT };
   }
 
   // A different move (or an explicit br): wrap. The move lands on the
@@ -348,18 +340,19 @@ export function planMoveGesture(
   // reverted by the mainline restore.
   const boundT = events[prevIdx + 1]?.t ?? Infinity;
   let placed: { brT: number; mvT: number; mlT: number } | null = null;
-  const pair = findSlots(scriptText, time, [1], boundT, prevT);
+  const pair = findSlots(taken, time, [1], boundT, prevT);
   if (pair) {
-    const brT = nearestFreeTimeBelow(scriptText, pair[0], prevT);
+    const brT = nearestFreeTimeBelow(taken, pair[0], prevT);
     if (brT != null) placed = { brT, mvT: pair[0], mlT: pair[1] };
   }
   if (!placed) {
-    const slots = findSlots(scriptText, time, [0.5, 1], boundT, prevT);
+    const slots = findSlots(taken, time, [0.5, 1], boundT, prevT);
     if (slots) placed = { brT: slots[0], mvT: slots[1], mlT: slots[2] };
   }
   if (!placed) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
-  let text = insertScriptLine(scriptText, placed.brT, 'br');
-  text = insertScriptLine(text, placed.mvT, san);
-  text = insertScriptLine(text, placed.mlT, 'ml');
+  const lines = scriptText.split('\n');
+  insertScriptLineInto(lines, placed.brT, 'br');
+  insertScriptLineInto(lines, placed.mvT, san);
+  const { text } = insertScriptLineInto(lines, placed.mlT, 'ml');
   return { kind: 'edit', text, t: placed.mvT, nextT: placed.mlT };
 }

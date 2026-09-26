@@ -11,7 +11,7 @@
 // off reachedEventIndex, memoized so the 60Hz clock doesn't re-render it.
 
 import { memo, useEffect, useMemo, useRef } from 'react';
-import type { MoveState } from '../lib/chess';
+import type { GameState } from '../lib/chess';
 import {
   splitSanAnnotation,
   type TimelineEvent,
@@ -27,7 +27,7 @@ type PresRow = { num: number; white: PresMove | null; black: PresMove | null };
 // rejected events and events inside variations change neither.
 export function buildMainline(
   events: TimelineEvent[],
-  states: MoveState[],
+  snapshots: readonly { chessState: GameState }[],
   rejectedEventIndexes: ReadonlySet<number>,
 ): { rows: PresRow[]; cursorByEvent: number[] } {
   const rows: PresRow[] = [];
@@ -48,7 +48,7 @@ export function buildMainline(
           row = null;
           cursor = -1;
         } else if (event.kind === 'move') {
-          const st = states[i];
+          const st = snapshots[i].chessState;
           const { text } = splitSanAnnotation(event.san);
           const mv: PresMove = { i, text };
           if (st.turn === 'w') {
@@ -72,14 +72,14 @@ export function buildMainline(
 
 type PresentationMovesProps = {
   events: TimelineEvent[];
-  states: MoveState[];
+  snapshots: readonly { chessState: GameState }[];
   reachedEventIndex: number;
   rejectedEventIndexes: ReadonlySet<number>;
 };
 
 export const PresentationMoves = memo(function PresentationMoves({
   events,
-  states,
+  snapshots,
   reachedEventIndex,
   rejectedEventIndexes,
 }: PresentationMovesProps) {
@@ -87,8 +87,8 @@ export const PresentationMoves = memo(function PresentationMoves({
   // Depends only on the script, not the playhead: without this the whole list
   // is rebuilt on every move as `reachedEventIndex` advances.
   const { rows, cursorByEvent } = useMemo(
-    () => buildMainline(events, states, rejectedEventIndexes),
-    [events, states, rejectedEventIndexes],
+    () => buildMainline(events, snapshots, rejectedEventIndexes),
+    [events, snapshots, rejectedEventIndexes],
   );
 
   // This list renders only mainline moves, so it needs its own cursor: the

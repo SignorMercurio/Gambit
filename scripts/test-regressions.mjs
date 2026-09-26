@@ -111,7 +111,7 @@ try {
   const mainlineFrom = (text) => {
     const ev = parseScript(text);
     const w = buildWorld(ev, standardSetup);
-    return buildMainline(ev, w.moveStates, w.rejectedEventIndexes);
+    return buildMainline(ev, w.snapshots, w.rejectedEventIndexes);
   };
   const rowText = (r) => [r.num, r.white?.text ?? null, r.black?.text ?? null];
 
@@ -730,7 +730,7 @@ text`,
   assert.deepEqual(
     buildMainline(
       replayEvents,
-      replayWorld.moveStates,
+      replayWorld.snapshots,
       replayWorld.rejectedEventIndexes,
     ).rows.map(rowText),
     [[1, 'e4', 'c5']],
@@ -905,7 +905,11 @@ text`,
   const runtimeWorld = buildWorld(runtimeEvents, standardSetup);
   assert.deepEqual([...runtimeWorld.rejectedEventIndexes], [0, 2]);
   assert.deepEqual(runtimeWorld.scriptErrors.map((error) => error.line), [1, 3]);
-  assert.deepEqual(runtimeWorld.moveStates, [
+  // snapshots[i] is the position before event i, rejected events included.
+  assert.deepEqual(runtimeWorld.snapshots.slice(0, -1).map(({ chessState }) => ({
+    fullmove: chessState.fullmove,
+    turn: chessState.turn,
+  })), [
     { fullmove: 1, turn: 'w' },
     { fullmove: 1, turn: 'w' },
     { fullmove: 1, turn: 'b' },
@@ -918,7 +922,7 @@ text`,
   assert.deepEqual(
     buildMainline(
       runtimeEvents,
-      runtimeWorld.moveStates,
+      runtimeWorld.snapshots,
       runtimeWorld.rejectedEventIndexes,
     ).rows.map(rowText),
     [[1, 'e4', 'e5']],
@@ -937,7 +941,7 @@ text`,
   assert.deepEqual(
     buildMainline(
       unclosedBranchEvents,
-      unclosedBranchWorld.moveStates,
+      unclosedBranchWorld.snapshots,
       new Set([0]),
     ).rows,
     [],
@@ -1081,9 +1085,9 @@ text`,
       { kind: 'move', san: 'Nc6', t: 3, line: 3 },
     ],
     [
-      { turn: 'w', fullmove: 1 },
-      { turn: 'w', fullmove: 1 },
-      { turn: 'b', fullmove: 1 },
+      { chessState: { turn: 'w', fullmove: 1 } },
+      { chessState: { turn: 'w', fullmove: 1 } },
+      { chessState: { turn: 'b', fullmove: 1 } },
     ],
     new Set(),
   );

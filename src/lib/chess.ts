@@ -13,8 +13,6 @@ export type GameState = Readonly<{
   fullmove: number;
 }>;
 
-export type MoveState = Pick<GameState, 'fullmove' | 'turn'>;
-
 export type Move = {
   from: [number, number];
   to: [number, number];

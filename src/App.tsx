@@ -611,7 +611,7 @@ export default function App() {
     }
   }, [narrationDriftTick, narration, playing]);
 
-  const { scriptErrors, moveStates, rejectedEventIndexes } = worldBuild;
+  const { scriptErrors, snapshots, rejectedEventIndexes } = worldBuild;
 
   const reachedEventIndex = lastEventIndexAt(events, time);
 
@@ -1303,7 +1303,7 @@ export default function App() {
         {present && presentPgn && (
           <PresentationMoves
             events={events}
-            states={moveStates}
+            snapshots={snapshots}
             reachedEventIndex={presentationEventIndex}
             rejectedEventIndexes={rejectedEventIndexes}
           />
@@ -1421,7 +1421,7 @@ export default function App() {
                   <>
                   <MoveList
                     events={events}
-                    states={moveStates}
+                    snapshots={snapshots}
                     reachedEventIndex={reachedEventIndex}
                     errorLines={errorLines}
                     onSeek={seekEvent}
