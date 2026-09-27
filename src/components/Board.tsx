@@ -362,12 +362,32 @@ export const BADGE_EDGE_MARGIN = 4;
 // the right face only if that face is loaded and embeddable. Both board fonts
 // are self-hosted and preloaded, so the export has them.
 const GLYPH_WEIGHT = 700;
-// `!` / `?` are tall and narrow; `!!` / `??` are a pair of them side by side.
-// One size cannot set both, and the doubled pair also needs its tracking
-// pulled in — at the default it runs wider than the disc's usable width.
-const GLYPH_SIZE_SINGLE = 44;
-const GLYPH_SIZE_DOUBLE = 30;
-const GLYPH_TRACKING_DOUBLE = -1.5;
+// Size and tracking per mark, in board units, measured in Schibsted 700 rather
+// than shared by "single" and "double". The two doubled marks fail in opposite
+// directions, so one doubled setting cannot serve both:
+//   - `!!` is two narrow stems. One shared -1.5 tracking left ~1 unit of air
+//     between them, under a pixel once a 720px board is downscaled to 1080p, so
+//     the pair fused into one thick bar. It opens instead, and being narrow it
+//     can stand almost as tall as a single mark (ink 28.6 against 30).
+//   - `??` is the one wide mark: at single size it is 48 units of ink in a
+//     46-unit disc, so it stays smaller. `?` has almost no sidebearing, so it
+//     still needs a little tracking to keep its hooks apart; any negative value
+//     lets the second hook touch the first.
+// The singles step down from 44 to 42 so the set reads as one family: the old
+// 44/30 split put the doubled marks at 68% of a single's height, which read as
+// a lesser grade of the same judgment. Now `!!` is 95% and `??` 79%.
+const BADGE_GLYPHS: Record<MoveAnnotation, { size: number; tracking: number }> = {
+  brilliant: { size: 40, tracking: 2.5 },
+  great: { size: 42, tracking: 0 },
+  mistake: { size: 42, tracking: 0 },
+  blunder: { size: 33, tracking: 0.5 },
+};
+// Cap height as a share of the em in Schibsted Grotesk (31.5 units of ink at
+// 44). `!` and `?` are cap-height marks sitting on the baseline, so dropping
+// the baseline half a cap below the disc's centre centres the ink itself —
+// `dominant-baseline="central"` centres the em box instead, which put the
+// marks 1–1.5 units low and needed a hand-tuned nudge per size.
+const GLYPH_CAP_HEIGHT = 0.716;
 
 export function badgeCenter(view: BoardViewPosition): [number, number] {
   const limit = BOARD_SIZE - BADGE_R - BADGE_EDGE_MARGIN;
@@ -1129,7 +1149,7 @@ export function Board({
               const [cx, cy] = badgeCenter(
                 boardViewPosition(lastMove.toF, lastMove.toR, orientation),
               );
-              const isWide = mark.length === 2;
+              const glyph = BADGE_GLYPHS[annotation];
               const badgeProgress = timedProgress(time - lastMove.t - BADGE_DELAY, BADGE_IN_DURATION);
               if (badgeProgress <= 0) return null;
               const badgeScale = 0.9 + badgeProgress * 0.1;
@@ -1140,16 +1160,17 @@ export function Board({
                   transform={`translate(${cx} ${cy}) scale(${badgeScale}) translate(${-cx} ${-cy})`}
                 >
                   <BadgeDisc annotation={annotation} cx={cx} cy={cy} />
+                  {/* Tracking is added after every glyph, the last one included, so
+                     a middle-anchored run sits half a step off; x takes it back. */}
                   <text
-                    x={cx}
-                    y={cy + 1}
+                    x={cx + glyph.tracking / 2}
+                    y={cy + (glyph.size * GLYPH_CAP_HEIGHT) / 2}
                     fontFamily={fontUi}
-                    fontSize={isWide ? GLYPH_SIZE_DOUBLE : GLYPH_SIZE_SINGLE}
+                    fontSize={glyph.size}
                     fontWeight={GLYPH_WEIGHT}
-                    letterSpacing={isWide ? GLYPH_TRACKING_DOUBLE : 0}
+                    letterSpacing={glyph.tracking}
                     fill={annotationInk}
                     textAnchor="middle"
-                    dominantBaseline="central"
                   >
                     {mark}
                   </text>
