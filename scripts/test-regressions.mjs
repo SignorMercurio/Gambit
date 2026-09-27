@@ -17,6 +17,8 @@ try {
   // dedupes shared deps), and read the stylesheet in the same batch.
   const [
     {
+      activeAskAt,
+      ASK_MAX_SECONDS,
       parseScript,
       parseScriptLine,
       parseTime,
@@ -80,6 +82,7 @@ try {
       timelineTicks,
     },
     { moveSoundEnabled, moveSoundKey, shouldPlayMoveSound },
+    { AskCard },
     Chess,
     styles,
   ] = await Promise.all([
@@ -99,6 +102,7 @@ try {
     vite.ssrLoadModule('/src/lib/world.ts'),
     vite.ssrLoadModule('/src/lib/playback.ts'),
     vite.ssrLoadModule('/src/lib/moveSound.ts'),
+    vite.ssrLoadModule('/src/components/AskCard.tsx'),
     vite.ssrLoadModule('/src/lib/chess.ts'),
     readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
   ]);
@@ -823,6 +827,47 @@ text`,
   assert.match(parseScript('[1] mind x')[0].error, /mind takes no arguments/i);
   assert.equal(parseScript('[1] fen 8/8/8/8/8/8/8/8 w - - 0 1')[0].kind, 'fen');
 
+  // `ask <seconds> <question>`: seconds first, so a question may itself start
+  // with a number, and every malformed shape names the ask rather than falling
+  // through to SAN.
+  const [ask] = parseScript('[1:13.9] ask 3 怎样让黑方走不出 Bh5？');
+  assert.equal(ask.kind, 'ask');
+  assert.equal(ask.seconds, 3);
+  assert.equal(ask.text, '怎样让黑方走不出 Bh5？');
+  assert.equal(parseScript('[1] ask 3 3 步之内怎么杀？')[0].text, '3 步之内怎么杀？');
+  assert.equal(parseScript(`[1] ASK ${ASK_MAX_SECONDS} Why?`)[0].seconds, ASK_MAX_SECONDS);
+  for (const bad of ['ask', 'ask 3', 'ask Why?', 'ask 3s Why?']) {
+    assert.match(parseScript(`[1] ${bad}`)[0].error ?? '', /ask needs seconds and a question/i, bad);
+  }
+  for (const bad of ['ask 0 Why?', `ask ${ASK_MAX_SECONDS + 1} Why?`]) {
+    assert.match(parseScript(`[1] ${bad}`)[0].error ?? '', /ask countdown must be/i, bad);
+  }
+
+  // The card is read off the events and the clock: live for its countdown,
+  // gone at the boundary, and replaced — not stacked — by a later ask, even
+  // one that ends while the earlier window would still be open.
+  const askEvents = parseScript('[10] ask 5 First?\n[11] e4\n[12] ask 1 Second?\n[20] ask 2 Third?');
+  assert.equal(activeAskAt(askEvents, 9.9), null);
+  assert.equal(activeAskAt(askEvents, 10)?.text, 'First?');
+  assert.equal(activeAskAt(askEvents, 11.5)?.text, 'First?', 'other events do not end the card');
+  assert.equal(activeAskAt(askEvents, 12.5)?.text, 'Second?');
+  assert.equal(activeAskAt(askEvents, 13.5), null, 'an expired later ask does not revive the earlier one');
+  assert.equal(activeAskAt(askEvents, 21.99)?.text, 'Third?');
+  assert.equal(activeAskAt(askEvents, 22), null);
+  // A countdown that outlasts the last event holds the playback tail.
+  assert.equal(worldFrom('[1] e4\n[2] ask 30 Why?').visualEndTime, 32);
+  assert.equal(worldFrom('[1] ask 1 Why?\n[5] e4').visualEndTime, 5);
+
+  // Digit is the whole seconds left; the ring is the spent share of it.
+  const askCardAt = (time) => renderToStaticMarkup(createElement(AskCard, { ask, time }));
+  const digitAt = (time) => askCardAt(time).match(/class="ask-digit">(\d+)</)?.[1];
+  assert.equal(digitAt(ask.t), '3');
+  assert.equal(digitAt(ask.t + 0.01), '3');
+  assert.equal(digitAt(ask.t + 1), '2');
+  assert.equal(digitAt(ask.t + 2.99), '1');
+  assert.match(askCardAt(ask.t + 1.5), /stroke-dashoffset="50"/);
+  assert.match(askCardAt(ask.t), /aria-hidden="true"/, 'the countdown stays out of the live region');
+
   const branchReplay = worldFrom('[1] e4\n[2] br\n[3] e5\n[4] rp\n[5] ml');
   assert.match(branchReplay.scriptErrors.find((error) => error.line === 4).error, /main line/i);
 
@@ -1432,7 +1477,8 @@ text`,
   }
 
   // The split is the menu's whole shape: the argument-free kinds insert, and
-  // the ones needing a square or a position route to the board and to Setup.
+  // the ones needing a square, a position, or free text route to the board,
+  // to Setup, and to Text.
   assert.equal(INSERTABLE_COMMANDS.length, 8);
   // Asserted through AUTHORED_ELSEWHERE_COMMANDS rather than by re-deriving
   // `c.via != null` here: that array is what the menu's second section
@@ -1441,7 +1487,7 @@ text`,
   // suite.
   assert.deepEqual(
     AUTHORED_ELSEWHERE_COMMANDS.map((c) => c.kind).sort(),
-    ['arrow', 'fen', 'highlight', 'move'],
+    ['arrow', 'ask', 'fen', 'highlight', 'move'],
     'only the kinds with another authoring path opt out of one-click insert',
   );
   assert.equal(

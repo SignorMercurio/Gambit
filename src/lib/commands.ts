@@ -3,8 +3,8 @@
 // insert menu's rows and the Text view's hint via SYNTAX_GROUPS), and the
 // regression suite chains it to `markerColors` and checks the hint and every
 // one-click token, so a new parser kind cannot stay invisible in the UI.
-// The eight argument-free kinds insert with one click. The four that need
-// arguments point at their board gesture or at Setup (`via`) instead of
+// The eight argument-free kinds insert with one click. The five that need
+// arguments point at their board gesture, Setup, or Text (`via`) instead of
 // inserting a template that would parse as an error the moment it lands.
 
 import type { MarkerKind } from './tokens';
@@ -101,6 +101,13 @@ export const COMMANDS: readonly CommandEntry[] = [
     kind: 'reveal',
     closes: 'mind',
     hint: "End mind's eye and fade the full position back in.",
+  },
+  {
+    token: 'ask',
+    kind: 'ask',
+    syntax: 'ask 3 …',
+    hint: 'Pose a question under the board with a countdown of the given seconds (1–30).',
+    via: 'Type it in Text',
   },
 ];
 

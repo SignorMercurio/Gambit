@@ -618,6 +618,11 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
         case 'replay':
           applyReplay(eventIndex, event);
           break;
+        case 'ask':
+          // Not board state: the card is read off the events by activeAskAt.
+          // Its countdown still belongs to the recording, so it holds the tail.
+          visualEndTime = Math.max(visualEndTime, event.t + event.seconds);
+          break;
         case 'move': {
           const move = Chess.parseSAN(event.san, w.chessState);
           if (!move) {

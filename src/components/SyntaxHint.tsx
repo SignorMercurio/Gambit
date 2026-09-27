@@ -6,7 +6,7 @@ import { SYNTAX_GROUPS } from '../lib/commands';
 // nothing, and the panel it sits in re-renders on every animation frame.
 //
 // Its own module rather than a local in `App.tsx` so the suite can load it.
-// Coverage of the twelve kinds is structural — SYNTAX_GROUPS is derived from
+// Coverage of the thirteen kinds is structural — SYNTAX_GROUPS is derived from
 // COMMANDS, so the hint cannot name ten of them again — but the *rendering* is
 // not: `group.join(' / ')` written as `group[0]` drops `ml` and `reveal`
 // silently, and that is the same hole one layer down. Asserting the string a

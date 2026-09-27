@@ -10,6 +10,8 @@
 //   [mm:ss] ml                      (or mainline; exits current variation)
 //   [mm:ss] rp [seconds]            (or replay; replays prior mainline moves,
 //                                    0.5s per move unless a step is given)
+//   [mm:ss] ask <seconds> <question> (question card under the board with a
+//                                    countdown; a later ask replaces it)
 // Branches nest: every `br` must be paired with a later `ml`.
 // `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, `st`, or `fen`;
 // without it they auto-fade after their lifetime window.
@@ -125,6 +127,7 @@ export type ParsedEvent = EventSource & (
   | { kind: 'replay'; step?: number }
   | { kind: 'mind' }
   | { kind: 'reveal' }
+  | { kind: 'ask'; seconds: number; text: string }
 );
 
 export type ErrorEvent = EventSource & { error: string; kind?: undefined };
@@ -227,8 +230,16 @@ export function eventBody(e: ParsedEvent): string {
       return "mind's eye";
     case 'reveal':
       return 'reveal board';
+    case 'ask':
+      return `${e.text} · ${e.seconds}s`;
   }
 }
+
+// Whole seconds keep the countdown's digit and its ring on the same beat; the
+// ceiling is a thinking pause, not a chapter, and bounds how long one line can
+// cover the subtitle track.
+export const ASK_MIN_SECONDS = 1;
+export const ASK_MAX_SECONDS = 30;
 
 export function parseScript(text: string): TimelineEvent[] {
   if (text.length > MAX_SCRIPT_CHARACTERS) {
@@ -330,6 +341,23 @@ export function parseScript(text: string): TimelineEvent[] {
       fail(t, `${firstWord} takes no arguments`);
       continue;
     }
+    // The seconds come first so the question can be any text, digits included:
+    // `ask 3 3 步之内怎么杀？` is a 3s card, never an argument-order guess.
+    const askMatch = body.match(/^ask(?:\s+(.*))?$/i);
+    if (askMatch) {
+      const argument = askMatch[1]?.match(/^(\d+)\s+(\S.*)$/);
+      if (!argument) {
+        fail(t, 'ask needs seconds and a question, like: ask 3 Which move wins?');
+        continue;
+      }
+      const seconds = Number(argument[1]);
+      if (seconds < ASK_MIN_SECONDS || seconds > ASK_MAX_SECONDS) {
+        fail(t, `ask countdown must be ${ASK_MIN_SECONDS}–${ASK_MAX_SECONDS} whole seconds`);
+      } else {
+        events.push({ ...at, kind: 'ask', seconds, text: argument[2] });
+      }
+      continue;
+    }
     const fenMatch = body.match(/^(?:fen|setfen)\s+(.+)$/i);
     if (fenMatch) {
       events.push({ ...at, kind: 'fen', fen: fenMatch[1].trim() });
@@ -346,6 +374,21 @@ export function parseScript(text: string): TimelineEvent[] {
   }
   events.sort((a, b) => a.t - b.t);
   return events;
+}
+
+// The question card on screen at `time`: the latest reached `ask`, while its
+// countdown runs. A later ask replaces an earlier one outright, so only the
+// latest can be live — an expired latest means no card, even when an earlier
+// ask's window would still be open. Script + time decide it; nothing latches.
+export function activeAskAt(
+  events: TimelineEvent[],
+  time: number,
+): Extract<ParsedEvent, { kind: 'ask' }> | null {
+  for (let i = lastEventIndexAt(events, time); i >= 0; i--) {
+    const event = events[i];
+    if (event.kind === 'ask') return time < event.t + event.seconds ? event : null;
+  }
+  return null;
 }
 
 // Largest index i such that events[i].t <= time, or -1 when none. Events

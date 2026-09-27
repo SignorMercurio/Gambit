@@ -10,9 +10,11 @@
 // semantically distinct from reset even while both wear vermillion today.
 import type { MoveAnnotation, ParsedEvent } from './timeline';
 export type MarkerKind = ParsedEvent['kind'] | 'err';
+// Markup Amber: `hl`'s stop, shared with `ask` (same meaning, not a new hue).
+const MARKUP_AMBER = '#f0b429';
 export const markerColors: Record<MarkerKind, string> = {
   move: '#5d8fc9',
-  highlight: '#f0b429',
+  highlight: MARKUP_AMBER,
   arrow: '#f08c2e',
   clear: '#9b9b9b',
   reset: '#cf5d5d',
@@ -24,6 +26,9 @@ export const markerColors: Record<MarkerKind, string> = {
   replay: '#5d8fc9',
   mind: '#9b9b9b',
   reveal: '#9b9b9b',
+  // The question card is the teacher pointing at the whole position, so it
+  // takes the teacher's-mark amber; its hollow form keeps it apart from `hl`.
+  ask: MARKUP_AMBER,
 };
 
 // A line the snapshot builder rejected keeps its parsed kind — an illegal SAN
@@ -65,6 +70,7 @@ export const markerForms: Record<MarkerKind, PinForm> = {
   fen: 'pennant',
   err: 'pennant',
   replay: 'stack',
+  ask: 'hollow',
 };
 
 export const tokens = {

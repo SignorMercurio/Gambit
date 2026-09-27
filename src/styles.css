@@ -475,6 +475,59 @@ button {
   text-rendering: optimizeLegibility;
   text-shadow: 0 1px 2px rgba(15, 21, 37, 0.42);
 }
+/* The `ask` question card. It borrows the cue's type and the strip's reserved
+   height, so a card never resizes the track; what marks it as a question is
+   the amber countdown ring and an amber border in place of the cue's hairline.
+   The ring is sized in em against the cue so every tier's cue size carries it:
+   1.36em is the cue's own line box, the tallest thing a one-line cue puts in
+   the track. The amber is `--ask-ink`, set inline from `markerColors.ask`. */
+.subtitle-strip.is-ask {
+  border-color: color-mix(in srgb, var(--ask-ink) 45%, transparent);
+}
+.ask-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  max-width: 100%;
+  font-size: var(--subtitle-cue-size);
+}
+.ask-card p {
+  min-width: 0;
+  text-align: start;
+}
+.ask-countdown {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.36em;
+  height: 1.36em;
+}
+.ask-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Start the unspent arc at twelve o'clock, like a clock face. */
+  transform: rotate(-90deg);
+}
+.ask-ring circle {
+  fill: none;
+  stroke-width: 3.5;
+}
+.ask-ring-track { stroke: var(--ask-ink); stroke-opacity: 0.22; }
+.ask-ring-left {
+  stroke: var(--ask-ink);
+  stroke-linecap: round;
+}
+.ask-digit {
+  font-family: var(--font-mono);
+  font-size: 0.58em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--ask-ink);
+}
 /* =====================================================================
    Controls strip (transport)
    ===================================================================== */
@@ -1367,11 +1420,11 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   border-radius: 0;
   clip-path: polygon(12% 8%, 96% 50%, 12% 92%);
 }
-.pgn-dot[data-kind='clear']::before {
+.pgn-dot[data-form='hollow']::before {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px currentColor;
 }
-.pgn-dot[data-kind='clear'].current::before {
+.pgn-dot[data-form='hollow'].current::before {
   box-shadow: inset 0 0 0 1.5px currentColor, 0 0 0 1.5px currentColor;
 }
 .pgn-var {

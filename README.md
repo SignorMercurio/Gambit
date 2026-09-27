@@ -30,6 +30,7 @@ Open the URL Vite prints (typically http://localhost:5173).
 [mm:ss] rp [seconds]        # replay prior mainline moves, 0.5s each by default (also accepts "replay")
 [mm:ss] mind                # enter the deterministic mind's-eye view
 [mm:ss] reveal              # reveal the full board again
+[mm:ss] ask 3 Which move?   # question card under the board with a 3s countdown (1–30s)
 ```
 
 `rp` replays every successfully applied move before it that is outside all

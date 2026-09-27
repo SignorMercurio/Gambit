@@ -24,6 +24,7 @@ import {
 import {
   annotationMarkColors,
   markerColors,
+  markerForms,
   markerKindFor,
   type MarkerKind,
 } from '../lib/tokens';
@@ -275,6 +276,7 @@ export const MoveList = memo(function MoveList({
         type="button"
         className={`pgn-dot ${stateClass(i)}`}
         data-kind={kind}
+        data-form={markerForms[kind]}
         data-evi={i}
         aria-current={i === reachedEventIndex ? 'step' : undefined}
         style={{ color: markerColors[kind] }}
@@ -477,7 +479,8 @@ export const MoveList = memo(function MoveList({
       case 'clear':
       case 'replay':
       case 'mind':
-      case 'reveal': {
+      case 'reveal':
+      case 'ask': {
         const dot = markDot(i, e.kind, e, eventBody(e));
         const lastCell = row && (row.black ?? row.white);
         (lastCell ?? marks).push(dot);

@@ -1,7 +1,7 @@
 // Main app: orchestrates state from a script, drives playback,
 // renders the board, the timeline scrubber, and the editor panel.
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { Board } from './components/Board';
 import {
   BOARD_EXPORT_SIZE,
@@ -24,6 +24,7 @@ import { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt } from 
 import { InsertMenu, TEXT_ENTRY_SELECTOR } from './components/InsertMenu';
 import { MoveList } from './components/MoveList';
 import { SYNTAX_HINT } from './components/SyntaxHint';
+import { AskCard } from './components/AskCard';
 import { PresentationMoves } from './components/PresentationMoves';
 import {
   planLineInsert,
@@ -33,6 +34,7 @@ import {
   type ScriptEditPlan,
 } from './lib/scriptEdit';
 import {
+  activeAskAt,
   fmtTime,
   lastEventIndexAt,
   parseScript,
@@ -269,6 +271,8 @@ export default function App() {
   const [orientationRaw, setOrientation] = useDraftText(DRAFT_KEYS.orientation, 'white');
   const orientation: BoardOrientation = orientationRaw === 'black' ? 'black' : 'white';
   const events = useMemo(() => parseScript(scriptText), [scriptText]);
+  // A script with questions needs the subtitle track even without an SRT.
+  const hasAsk = useMemo(() => events.some((e) => e.kind === 'ask'), [events]);
   const subtitleResult = useMemo(() => parseSrt(subtitleText), [subtitleText]);
   const subtitleCues = subtitleResult.cues;
   const initialSetup = useMemo(() => setupFromFen(fenText), [fenText]);
@@ -900,6 +904,9 @@ export default function App() {
 
   const activeSubtitle = getActiveSubtitle(subtitleCues, time);
   const activeSubtitleText = activeSubtitle ? formatSubtitleText(activeSubtitle.text) : '';
+  // A question card takes the subtitle track while its countdown runs; an
+  // overlapping cue yields, since the card is written for narration's silence.
+  const activeAsk = activeAskAt(events, time);
 
   // The ruler's ticks depend only on the duration; memoized like
   // `timelinePins` so per-frame renders of `.controls` reuse the row.
@@ -1120,13 +1127,15 @@ export default function App() {
           />
 
           <div
-            className={`subtitle-strip ${activeSubtitle ? '' : 'is-empty'} ${
-              subtitleCues.length === 0 ? 'no-track' : ''
+            className={`subtitle-strip ${activeAsk ? 'is-ask' : activeSubtitle ? '' : 'is-empty'} ${
+              subtitleCues.length === 0 && !hasAsk ? 'no-track' : ''
             }`}
+            // The card's amber arrives from `markerColors`, like every marker's.
+            style={activeAsk ? ({ '--ask-ink': markerColors.ask } as CSSProperties) : undefined}
             aria-live="polite"
             aria-atomic="true"
           >
-            <p>{activeSubtitleText}</p>
+            {activeAsk ? <AskCard ask={activeAsk} time={time} /> : <p>{activeSubtitleText}</p>}
           </div>
 
           <div className="controls" role="group" aria-label="Playback controls">

@@ -51,7 +51,7 @@ type InsertMenuProps = {
   timeLabel: string;
 };
 
-// The four kinds authored on another surface; a module constant because it
+// The five kinds authored on another surface; a module constant because it
 // closes over nothing.
 const ELSEWHERE_ROWS = AUTHORED_ELSEWHERE_COMMANDS.map((c) => (
   <li key={c.token} className="insert-row insert-row--ref">
