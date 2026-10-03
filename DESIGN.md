@@ -18,7 +18,6 @@ colors:
   sodium-chalk: "#e8ecf5"
   rim-light-pewter: "#c8d0e6"
   foley-pewter: "#aab3cf"
-  chip-text-blue: "#b8d0ec"
   foley-slate: "#8d97b3"
   stage-mist: "#6b7596"
   clear-marker: "#9b9b9b"
