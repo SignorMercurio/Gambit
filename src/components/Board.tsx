@@ -1044,6 +1044,10 @@ export function Board({
               : revealStrength;
             if (strength <= 0) return null;
             const visual = pieceVisual(p, time);
+            // A captured piece stays in `positions` (an `ml` can fade it back
+            // in), but once its fade is over it has nothing to draw: dropping
+            // it keeps a middlegame's dead pieces off the per-frame path.
+            if (visual.opacity <= 0) return null;
             const view = boardViewPosition(visual.f, visual.r, orientation);
             const tx = view.x * 100;
             const ty = view.y * 100;

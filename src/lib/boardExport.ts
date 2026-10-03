@@ -16,7 +16,7 @@ export const BOARD_GESTURE_CLASS = 'board-gesture-overlay';
 // The ceiling is applied once, by the caller, around the whole operation.
 // Guarding only the rasterize would leave the earlier awaits unbounded while
 // making the code look protected — and the hang observed here was in fact in
-// `App`'s frame wait, above this function entirely.
+// the caller's frame wait (now `useBoardExport`), above this function entirely.
 export const BOARD_EXPORT_TIMEOUT_MS = 15000;
 
 // Templated off the ceiling rather than restating it: the test uses the

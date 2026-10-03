@@ -58,7 +58,7 @@ export async function loadNarration(): Promise<StoredNarration | null> {
       store.get(KEY),
     );
     // Written by an older build, or hand-edited: treat anything that is not the
-    // current shape as absent rather than handing `App` a track with no bytes.
+    // current shape as absent rather than handing `useNarration` a track with no bytes.
     if (!stored || !(stored.blob instanceof Blob) || typeof stored.name !== 'string') {
       return null;
     }

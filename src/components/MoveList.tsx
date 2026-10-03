@@ -11,7 +11,7 @@
 // through ml). Edits are reported as script-text transforms, never applied
 // to board state directly.
 
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { GameState } from '../lib/chess';
 import {
   eventBody,
@@ -41,7 +41,9 @@ const ROVING_SELECTOR = 'button, .pgn-time-input';
 // runs on the integer decisecond grid: raw ±0.1 float steps stick or skip a
 // tenth (0.7 + 0.1 floors back to 0.7), and a floor-based prefill on an
 // off-grid authored time would make a no-edit blur rewrite the line.
-function TimeChip({
+// Memoized: every event crossing rebuilds the whole list, and a long script's
+// hundreds of chips take only scalars and stable callbacks.
+const TimeChip = memo(function TimeChip({
   t,
   line,
   label,
@@ -131,7 +133,7 @@ function TimeChip({
       }}
     />
   );
-}
+});
 
 type MoveListProps = {
   events: TimelineEvent[];
@@ -219,8 +221,10 @@ export const MoveList = memo(function MoveList({
     if (i === reachedEventIndex) return 'past current';
     return i < reachedEventIndex ? 'past' : '';
   };
-  const restoreLineFocus = (line: number) =>
-    setFocusRequest({ kind: 'line', line });
+  const restoreLineFocus = useCallback(
+    (line: number) => setFocusRequest({ kind: 'line', line }),
+    [],
+  );
 
   const deleteX = (lines: number[], label: string) => (
     <button
