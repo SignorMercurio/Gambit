@@ -10,10 +10,13 @@ npm run build
 `npm run build` typechecks (`tsc -b`, including `vite.config.ts`) before bundling, so
 there is no separate typecheck gate.
 
-`npm test` is `node scripts/test-regressions.mjs` — one hand-written assert script, not
-a test framework. It spins up an in-process Vite server and imports the real modules, so
-it tests source rather than a build, and it additionally asserts against `src/styles.css`
-as source text and against rendered elements.
+`npm test` is `node scripts/test-regressions.mjs` — one file of `node:test` tests, no
+third-party framework. It spins up an in-process Vite server and imports the real modules,
+so it tests source rather than a build, and it additionally asserts against
+`src/styles.css` as source text and against rendered elements. Fixtures and helpers shared
+across tests sit at module scope; everything else lives inside its `test()`, so one failing
+assertion stops only its own test and the summary names every failing test. Run a subset
+with `node --test-name-pattern=<regex> scripts/test-regressions.mjs`.
 
 ## What The Suite Guards
 

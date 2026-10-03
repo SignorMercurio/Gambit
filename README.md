@@ -72,7 +72,7 @@ Central control is established.
 ## Development
 
 ```sh
-npm test          # node scripts/test-regressions.mjs — not a test framework
+npm test          # node scripts/test-regressions.mjs — one node:test file
 npm run build
 ```
 

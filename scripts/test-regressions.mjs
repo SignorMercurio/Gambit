@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { after, test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -12,121 +13,245 @@ const vite = await createServer({
   server: { middlewareMode: true },
 });
 
-try {
-  // Independent entry points: load them concurrently (the module graph
-  // dedupes shared deps), and read the stylesheet in the same batch.
-  const [
-    {
-      activeAskAt,
-      ASK_MAX_SECONDS,
-      parseScript,
-      parseScriptLine,
-      parseTime,
-      fmtTime,
-      formatScriptTime,
-      rewriteScriptLineTime,
-      splitSanAnnotation,
-      ANNOTATION_MARKS,
-      lastEventIndexAt,
-      MAX_SCRIPT_LINES,
-    },
-    { planLineInsert, planMoveGesture, removeLines, setLineTime },
-    { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
-    { boardViewPosition, squareFromBoardView },
-    {
-      BOARD_EXPORT_SIZE,
-      BOARD_EXPORT_TIMEOUT_MESSAGE,
-      BOARD_GESTURE_CLASS,
-      boardPngFilename,
-      downloadBoardPng,
-      withTimeout,
-    },
-    { syncRovingTabStops },
-    { buildMainline },
-    {
-      BADGE_EDGE_MARGIN,
-      BADGE_R,
-      BOARD_SIZE,
-      BadgeDisc,
-      GestureOverlay,
-      HlRing,
-      LastMoveRect,
-      badgeCenter,
-      lastMoveSquares,
-    },
-    { AUTHORED_ELSEWHERE_COMMANDS, COMMANDS, INSERTABLE_COMMANDS, SYNTAX_GROUPS },
-    { SYNTAX_HINT },
-    {
-      annotationColors,
-      annotationInk,
-      annotationMarkColors,
-      markerColors,
-      markerForms,
-      tokens: boardTokens,
-    },
-    { mindPieceStrength, mindRevealStrength, mindSink },
-    { getActiveSubtitle, getSubtitleEnd, parseSrt },
-    {
-      BOARD_OVERLAY_LIFETIME,
-      MAX_LIVE_ARROWS,
-      REPLAY_STEP_SECONDS,
-      buildWorld,
-      setupFromFen,
-      worldFrameAt,
-    },
-    {
-      landBetween,
-      MAX_SAFE_PLAYBACK_SECONDS,
-      MAX_SCRIPT_TIMESTAMP_SECONDS,
-      playbackDuration,
-      timelineTicks,
-    },
-    { moveSoundEnabled, moveSoundKey, shouldPlayMoveSound },
-    { AskCard },
-    Chess,
-    styles,
-  ] = await Promise.all([
-    vite.ssrLoadModule('/src/lib/timeline.ts'),
-    vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
-    vite.ssrLoadModule('/src/lib/boardGesture.ts'),
-    vite.ssrLoadModule('/src/lib/boardOrientation.ts'),
-    vite.ssrLoadModule('/src/lib/boardExport.ts'),
-    vite.ssrLoadModule('/src/components/useRovingTabIndex.ts'),
-    vite.ssrLoadModule('/src/components/PresentationMoves.tsx'),
-    vite.ssrLoadModule('/src/components/Board.tsx'),
-    vite.ssrLoadModule('/src/lib/commands.ts'),
-    vite.ssrLoadModule('/src/components/SyntaxHint.tsx'),
-    vite.ssrLoadModule('/src/lib/tokens.ts'),
-    vite.ssrLoadModule('/src/lib/mind.ts'),
-    vite.ssrLoadModule('/src/lib/subtitles.ts'),
-    vite.ssrLoadModule('/src/lib/world.ts'),
-    vite.ssrLoadModule('/src/lib/playback.ts'),
-    vite.ssrLoadModule('/src/lib/moveSound.ts'),
-    vite.ssrLoadModule('/src/components/AskCard.tsx'),
-    vite.ssrLoadModule('/src/lib/chess.ts'),
-    readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
-  ]);
+// One shared server for every test: it loads the real source modules
+// (not a build), and closes once the whole file has run.
+after(() => vite.close());
 
-  const standardSetup = setupFromFen(Chess.STARTING_FEN);
+// Independent entry points: load them concurrently (the module graph
+// dedupes shared deps), and read the stylesheet in the same batch.
+const [
+  {
+    activeAskAt,
+    ASK_MAX_SECONDS,
+    parseScript,
+    parseScriptLine,
+    parseTime,
+    fmtTime,
+    formatScriptTime,
+    rewriteScriptLineTime,
+    splitSanAnnotation,
+    ANNOTATION_MARKS,
+    lastEventIndexAt,
+    MAX_SCRIPT_LINES,
+  },
+  { planLineInsert, planMoveGesture, removeLines, setLineTime },
+  { beginAnnotationGesture, beginMoveGesture, finishBoardGesture },
+  { boardViewPosition, squareFromBoardView },
+  {
+    BOARD_EXPORT_SIZE,
+    BOARD_EXPORT_TIMEOUT_MESSAGE,
+    BOARD_GESTURE_CLASS,
+    boardPngFilename,
+    downloadBoardPng,
+    withTimeout,
+  },
+  { syncRovingTabStops },
+  { buildMainline },
+  {
+    BADGE_EDGE_MARGIN,
+    BADGE_R,
+    BOARD_SIZE,
+    BadgeDisc,
+    GestureOverlay,
+    HlRing,
+    LastMoveRect,
+    badgeCenter,
+    lastMoveSquares,
+  },
+  { AUTHORED_ELSEWHERE_COMMANDS, COMMANDS, INSERTABLE_COMMANDS, SYNTAX_GROUPS },
+  { SYNTAX_HINT },
+  {
+    annotationColors,
+    annotationInk,
+    annotationMarkColors,
+    markerColors,
+    markerForms,
+    tokens: boardTokens,
+  },
+  { mindPieceStrength, mindRevealStrength, mindSink },
+  { formatSubtitleText, getActiveSubtitle, getSubtitleEnd, parseSrt },
+  {
+    BOARD_OVERLAY_LIFETIME,
+    MAX_LIVE_ARROWS,
+    REPLAY_STEP_SECONDS,
+    buildWorld,
+    setupFromFen,
+    worldFrameAt,
+  },
+  {
+    landBetween,
+    MAX_SAFE_PLAYBACK_SECONDS,
+    MAX_SCRIPT_TIMESTAMP_SECONDS,
+    playbackDuration,
+    timelineTicks,
+  },
+  { moveSoundEnabled, moveSoundKey, shouldPlayMoveSound },
+  { AskCard },
+  Chess,
+  styles,
+] = await Promise.all([
+  vite.ssrLoadModule('/src/lib/timeline.ts'),
+  vite.ssrLoadModule('/src/lib/scriptEdit.ts'),
+  vite.ssrLoadModule('/src/lib/boardGesture.ts'),
+  vite.ssrLoadModule('/src/lib/boardOrientation.ts'),
+  vite.ssrLoadModule('/src/lib/boardExport.ts'),
+  vite.ssrLoadModule('/src/components/useRovingTabIndex.ts'),
+  vite.ssrLoadModule('/src/components/PresentationMoves.tsx'),
+  vite.ssrLoadModule('/src/components/Board.tsx'),
+  vite.ssrLoadModule('/src/lib/commands.ts'),
+  vite.ssrLoadModule('/src/components/SyntaxHint.tsx'),
+  vite.ssrLoadModule('/src/lib/tokens.ts'),
+  vite.ssrLoadModule('/src/lib/mind.ts'),
+  vite.ssrLoadModule('/src/lib/subtitles.ts'),
+  vite.ssrLoadModule('/src/lib/world.ts'),
+  vite.ssrLoadModule('/src/lib/playback.ts'),
+  vite.ssrLoadModule('/src/lib/moveSound.ts'),
+  vite.ssrLoadModule('/src/components/AskCard.tsx'),
+  vite.ssrLoadModule('/src/lib/chess.ts'),
+  readFile(new URL('../src/styles.css', import.meta.url), 'utf8'),
+]);
+
+// Fixtures and helpers shared across tests. Each test below is otherwise
+// self-contained, so one failing assertion stops only its own test.
+const standardSetup = setupFromFen(Chess.STARTING_FEN);
+// Never memoize this: assertions below depend on each build being genuinely
+// independent.
+const worldWithEvents = (text) => {
+  const events = parseScript(text);
+  return { events, world: buildWorld(events, standardSetup) };
+};
+const worldFrom = (text) => worldWithEvents(text).world;
+const mainlineFrom = (text) => {
+  const { events, world } = worldWithEvents(text);
+  return buildMainline(events, world.snapshots, world.rejectedEventIndexes);
+};
+const rowText = (r) => [r.num, r.white?.text ?? null, r.black?.text ?? null];
+
+const saturated = '[00:00.0] e4\n[00:00.1] e5';
+const planLine = (text, t, body) => planLineInsert(parseScript(text), text, t, body);
+const planMove = (text, t, san, rejected = new Set(), isNext = () => false) =>
+  planMoveGesture(parseScript(text), text, t, san, isNext, rejected);
+const noErrors = (text) => assert.deepEqual(parseScript(text).filter((e) => 'error' in e), []);
+
+// Command dispatch must be own-key based. Object-prototype names are SAN
+// candidates and therefore fail visibly at world replay; they must never
+// become function/object-valued event kinds that every switch drops.
+const prototypeNames = parseScript('[00:01] constructor\n[00:02] __proto__');
+
+// Branch-aware policy: replaying the scripted next move only seeks —
+// nothing is written.
+const mainline = '[00:01.0] e4\n[00:03.0] Nc6';
+
+// A move while a variation is open extends it, pushing the variation's ml
+// later when the new move would land on or past it — the one sanctioned
+// rewrite of an existing line.
+const variation = '[00:01.0] e4\n[00:02.0] br\n[00:03.0] Nf6\n[00:04.0] ml\n[00:06.0] Nc6';
+
+// SAN is conservative: ambiguous or coordinate-like input must surface as
+// a script error instead of silently choosing a legal move, and promotions
+// must name the promoted piece explicitly.
+// A left-press that can't start a move returns silently, which reads as a
+// dead board. The two cases worth naming look identical on screen — a piece
+// sits there and refuses to move — so the reason has to distinguish them.
+const startingState = Chess.stateFromFEN(Chess.STARTING_FEN);
+
+// `ask <seconds> <question>`: seconds first, so a question may itself start
+// with a number, and every malformed shape names the ask rather than falling
+// through to SAN.
+const [ask] = parseScript('[1:13.9] ask 3 怎样让黑方走不出 Bh5？');
+
+// The piece click is derived from the frame the board draws, never fired by
+// the event that produced it — so the key it watches has to hold three
+// relations at once, and none of them is visible from the audio side.
+const soundScript = '[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3';
+const sound = worldWithEvents(soundScript);
+const soundKeyAt = ({ events, world }, t) =>
+  moveSoundKey(worldFrameAt(world, lastEventIndexAt(events, t), t).snapshot.lastMove);
+
+// Comments are stripped before any CSS reader below pulls a value: these
+// rules carry long prose that mentions the very properties being read
+// ('.playhead-thumb' explains its own `top:` in words), and a bare regex
+// happily matches the explanation instead of the declaration. It also keeps
+// `[^}]*` rule scans honest, since prose is the only place a stray brace
+// would come from.
+const bareStyles = styles.replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Every rule for a selector, across all tiers. Escapes the selector itself so
+// callers write plain CSS (an unescaped `.` matches anything and fails
+// silently), and `\s*` keeps a `.subtitle-strip{` tier in the set.
+const cssRules = (selector, source = bareStyles) =>
+  source.match(
+    new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`, 'g'),
+  ) ?? [];
+
+// The one rule for a top-level selector, read through `cssRules` so both see
+// comment-stripped source. The `\n` prefix keeps `cssRule('.marker')` from
+// matching `.timeline .marker`; `anchor` picks between same-selector tiers.
+const cssRule = (selector, anchor = '') => {
+  const rule = cssRules(`\n${selector}`).find((r) => r.includes(anchor));
+  assert.ok(rule, `${selector} exists`);
+  return rule;
+};
+
+const cssNum = (source, prop) => {
+  const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
+  assert.ok(m, `${prop} is declared as a number so the geometry stays derivable`);
+  return Number(m[1]);
+};
+// Asserts rather than indexing a null match, so a legal rewrite of the
+// shorthand names what broke instead of throwing a TypeError.
+const cssLengths = (source, prop) => {
+  const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+)[;}]`));
+  assert.ok(m, `${prop} is declared as a length shorthand`);
+  return m[1].trim().split(/\s+/).map((v) => Number.parseFloat(v));
+};
+// Top-level `@media` blocks, brace-balanced. Splitting on `@media` would be
+// shorter and wrong: the text after a query's closing brace belongs to no
+// query, and the reserve guard below asks whether one *specific* block holds
+// both halves of a pair.
+const styleRegions = (() => {
+  const src = bareStyles;
+  const regions = [];
+  let cursor = 0;
+  for (let at = src.indexOf('\n@media'); at !== -1; at = src.indexOf('\n@media', at + 1)) {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}' && --depth === 0) {
+        if (at > cursor) regions.push({ query: null, css: src.slice(cursor, at) });
+        regions.push({
+          query: src.slice(at, src.indexOf('{', at)).trim(),
+          css: src.slice(at, i + 1),
+        });
+        cursor = i + 1;
+        at = i;
+        break;
+      }
+    }
+  }
+  if (cursor < src.length) regions.push({ query: null, css: src.slice(cursor) });
+  return regions;
+})();
+const mediaRegions = styleRegions.filter((r) => r.query !== null);
+
+// Representative viewports: every breakpoint in the stylesheet and one pixel
+// either side, so both ladders are sampled on both sides of every step. Media
+// queries are step functions, so this finite grid covers every distinct
+// combination the cascade can produce. Shared by the subtitle fit and the
+// 560px band's co-application check.
+const axis = (which) => {
+  const seen = new Set([320, 4000]);
+  for (const m of bareStyles.matchAll(new RegExp(`(?:min|max)-${which}:\\s*(\\d+)px`, 'g'))) {
+    const n = Number(m[1]);
+    seen.add(n - 1);
+    seen.add(n);
+    seen.add(n + 1);
+  }
+  return [...seen].filter((n) => n >= 320);
+};
+
+test('script parsing, board orientation, and line insertion', async () => {
   assert.equal(standardSetup.error, null);
-  // Never memoize this: assertions below depend on each build being genuinely
-  // independent.
-  const worldWithEvents = (text) => {
-    const events = parseScript(text);
-    return { events, world: buildWorld(events, standardSetup) };
-  };
-  const worldFrom = (text) => worldWithEvents(text).world;
-  const mainlineFrom = (text) => {
-    const { events, world } = worldWithEvents(text);
-    return buildMainline(events, world.snapshots, world.rejectedEventIndexes);
-  };
-  const rowText = (r) => [r.num, r.white?.text ?? null, r.black?.text ?? null];
-
-  const saturated = '[00:00.0] e4\n[00:00.1] e5';
-  const planLine = (text, t, body) => planLineInsert(parseScript(text), text, t, body);
-  const planMove = (text, t, san, rejected = new Set(), isNext = () => false) =>
-    planMoveGesture(parseScript(text), text, t, san, isNext, rejected);
-  const noErrors = (text) => assert.deepEqual(parseScript(text).filter((e) => 'error' in e), []);
 
   const replayAliases = parseScript('[1] rp\n[2] replay\n[3] replay 1');
   assert.deepEqual(replayAliases.map((event) => event.kind), ['replay', 'replay', 'replay']);
@@ -182,11 +307,6 @@ try {
     MAX_SCRIPT_TIMESTAMP_SECONDS,
   );
   assert.ok(Number.isNaN(parseTime(String(MAX_SCRIPT_TIMESTAMP_SECONDS + 1))));
-
-  // Command dispatch must be own-key based. Object-prototype names are SAN
-  // candidates and therefore fail visibly at world replay; they must never
-  // become function/object-valued event kinds that every switch drops.
-  const prototypeNames = parseScript('[00:01] constructor\n[00:02] __proto__');
   assert.deepEqual(prototypeNames.map((event) => event.kind), ['move', 'move']);
 
   // One highlight line can name at most the 64 board squares. Repetition is
@@ -218,7 +338,9 @@ try {
   const linePlan = planLine(saturated, 0.05, 'hl e4');
   assert.equal(linePlan.kind, 'conflict');
   assert.match(linePlan.error, /no free 0\.1s slot/i);
+});
 
+test('move gesture planning', async () => {
   const movePlan = planMove(saturated, 0.05, 'Nf3');
   assert.equal(movePlan.kind, 'conflict');
 
@@ -252,10 +374,6 @@ try {
     'conflict',
     'a stamp must never sort before the previous scripted event',
   );
-
-  // Branch-aware policy: replaying the scripted next move only seeks —
-  // nothing is written.
-  const mainline = '[00:01.0] e4\n[00:03.0] Nc6';
   assert.deepEqual(planMove(mainline, 2, 'Nc6', new Set(), (san) => san === 'Nc6'), {
     kind: 'seek',
     t: 3,
@@ -310,11 +428,6 @@ try {
     rejectedMoveAfterWorld.rejectedEventIndexes.has(originalMoveIndex),
     'the originally rejected SAN must remain rejected after the gesture edit',
   );
-
-  // A move while a variation is open extends it, pushing the variation's ml
-  // later when the new move would land on or past it — the one sanctioned
-  // rewrite of an existing line.
-  const variation = '[00:01.0] e4\n[00:02.0] br\n[00:03.0] Nf6\n[00:04.0] ml\n[00:06.0] Nc6';
   const extendPlan = planMove(variation, 3.95, 'd4');
   assert.equal(extendPlan.kind, 'edit');
   assert.equal(extendPlan.t, 4.1);
@@ -330,7 +443,9 @@ try {
     'conflict',
     'an open variation must not overflow its mainline restore boundary',
   );
+});
 
+test('board gesture routing and chess adapter basics', async () => {
   // finishBoardGesture commit routing: a move commits only onto a legal
   // target square, and an annotation resolves to a highlight on its own
   // square, an arrow elsewhere, nothing off-board.
@@ -371,14 +486,6 @@ try {
     mindInsert.t > 2 && mindInsert.t < 5,
     'a gesture stamp stays strictly between the move and the reveal',
   );
-
-  // SAN is conservative: ambiguous or coordinate-like input must surface as
-  // a script error instead of silently choosing a legal move, and promotions
-  // must name the promoted piece explicitly.
-  // A left-press that can't start a move returns silently, which reads as a
-  // dead board. The two cases worth naming look identical on screen — a piece
-  // sits there and refuses to move — so the reason has to distinguish them.
-  const startingState = Chess.stateFromFEN(Chess.STARTING_FEN);
   assert.ok(Object.isFrozen(startingState), 'chess snapshots are immutable values');
   assert.deepEqual(Object.keys(startingState).sort(), ['check', 'fen', 'fullmove', 'turn']);
   assert.equal(startingState.check, null);
@@ -452,7 +559,9 @@ try {
       'two promotions on the same squares are not the same move',
     );
   }
+});
 
+test('SAN suffixes, FEN validation, and playSAN', async () => {
   const ambiguous = Chess.stateFromFEN('4k3/8/8/8/8/1N3N2/8/4K3 w - - 0 1');
   assert.equal(Chess.parseSAN('Nd2', ambiguous), null, 'ambiguous SAN must be rejected');
   assert.deepEqual(Chess.parseSAN('Nbd2', ambiguous)?.from, [1, 2]);
@@ -594,7 +703,9 @@ try {
     assert.ok(Object.isFrozen(played) && Object.isFrozen(played.move.from));
     assert.equal(Chess.playSAN('e5', startingState), null);
   }
+});
 
+test('subtitle lookup and world replay', async () => {
   // Subtitle lookup keeps the latest-started active cue while still falling
   // back to an earlier long cue after a shorter overlap ends.
   const overlappingCues = [
@@ -664,6 +775,44 @@ text`,
     assert.deepEqual(parsed.errors, errors);
   }
 
+  // Windows exports: a BOM and CRLF line ends parse like the plain file, and
+  // cue lines still count from the top of the file.
+  assert.deepEqual(
+    parseSrt('\ufeff1\r\n00:00:01,5 --> 00:00:02,500\r\nHello\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\nWorld\r\n'),
+    {
+      cues: [
+        { start: 1.5, end: 2.5, text: 'Hello', line: 1 },
+        { start: 3, end: 4, text: 'World', line: 5 },
+      ],
+      errors: [],
+    },
+  );
+  // Each malformed cue names its own problem, and parsing carries on past it.
+  assert.deepEqual(parseSrt('00:00:02,000 --> 00:00:01,000\ntext').errors, [
+    { line: 1, error: 'invalid SRT time range' },
+  ]);
+  const emptyCue = parseSrt('1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:03,000 --> 00:00:04,000\nok');
+  assert.deepEqual(emptyCue.errors, [{ line: 1, error: 'empty subtitle cue' }]);
+  assert.deepEqual(emptyCue.cues.map((cue) => cue.text), ['ok']);
+  // Size ceilings refuse the whole text up front instead of parsing a paste
+  // that would stall every keystroke.
+  assert.match(parseSrt('x'.repeat(1_000_001)).errors[0].error, /1,000,000-character limit/);
+  assert.deepEqual(parseSrt('\n'.repeat(10_000)).errors, [
+    { line: 10_001, error: 'subtitle text exceeds the 10,000-line limit' },
+  ]);
+
+  // Lesson subtitles mix Chinese with SAN: the strip spaces the two scripts
+  // apart, check/mate marks included, and leaves already-spaced or
+  // single-script text alone.
+  for (const [raw, shown] of [
+    ['用Nf3控制e5', '用 Nf3 控制 e5'],
+    ['Qxf7#将杀', 'Qxf7# 将杀'],
+    ['e4 开局', 'e4 开局'],
+    ['Nf3, e5.', 'Nf3, e5.'],
+  ]) {
+    assert.equal(formatSubtitleText(raw), shown, raw);
+  }
+
   // World replay is the canonical applied/rejected outcome shared by the
   // renderer, presentation PGN, and gesture planner.
 
@@ -712,7 +861,9 @@ text`,
     worldFrom('[1] e4\n[3.04] rp\n[3.52] cl').scriptErrors[0].error,
     /needs 0\.5s/i,
   );
+});
 
+test('setups and replay continuation', async () => {
   for (const [start, step, end] of [[0.1, 0.2, 0.3], [0.01, 0.1, 0.11]]) {
     const exact = worldFrom(`[0] e4\n[${start}] rp ${step}\n[${end}] cl`);
     assert.deepEqual(exact.scriptErrors, [], 'decimal rounding does not invent an overlap');
@@ -844,7 +995,9 @@ text`,
       `'${bad}' must be rejected as an invalid replay step`,
     );
   }
+});
 
+test('command arguments and question cards', async () => {
   // Replay is the only argument-free command that takes an argument. The rest
   // must name their own problem rather than falling through to SAN and being
   // reported as bad chess, and the shared dispatch must not swallow `fen`,
@@ -861,13 +1014,17 @@ text`,
   for (const bare of ['fen', 'setfen', 'FEN']) {
     assert.equal(parseScript(`[1] ${bare}`)[0].error, 'missing FEN', bare);
   }
+  // The live card is looked up over the asks alone; any time-sorted event
+  // list answers the same, so the per-frame lookup never walks the moves.
+  {
+    const withMoves = parseScript('[1] ask 3 Which move?\n[2] e4\n[3] e5\n[10] ask 2 And now?\n[11] Nf3');
+    const asksOnly = withMoves.filter((e) => e.kind === 'ask');
+    for (const t of [0, 1, 3.9, 4, 10, 11.5, 12]) {
+      assert.equal(activeAskAt(asksOnly, t), activeAskAt(withMoves, t), `t=${t}`);
+    }
+  }
   assert.match(parseScript('[1] mind x')[0].error, /mind takes no arguments/i);
   assert.equal(parseScript('[1] fen 8/8/8/8/8/8/8/8 w - - 0 1')[0].kind, 'fen');
-
-  // `ask <seconds> <question>`: seconds first, so a question may itself start
-  // with a number, and every malformed shape names the ask rather than falling
-  // through to SAN.
-  const [ask] = parseScript('[1:13.9] ask 3 怎样让黑方走不出 Bh5？');
   assert.equal(ask.kind, 'ask');
   assert.equal(ask.seconds, 3);
   assert.equal(ask.text, '怎样让黑方走不出 Bh5？');
@@ -1009,7 +1166,9 @@ text`,
     [[1, 'e4', 'e5']],
     'presentation follows the moves that actually changed the board',
   );
+});
 
+test('branch structure and move numbering', async () => {
   const prototypeWorld = buildWorld(prototypeNames, standardSetup);
   assert.deepEqual([...prototypeWorld.rejectedEventIndexes], [0, 1]);
   assert.equal(prototypeWorld.scriptErrors.length, 2);
@@ -1121,7 +1280,9 @@ text`,
     ['h8-a1'],
     'expired arrows release the live-overlay budget before a new event applies',
   );
+});
 
+test('structured edits and overlay restatement', async () => {
   const restatedOverlayScript = Array.from(
     { length: 500 },
     () => '[1] hl e4',
@@ -1227,14 +1388,6 @@ text`,
     MAX_SAFE_PLAYBACK_SECONDS,
     'the authored ceiling reserves the full three-second script tail',
   );
-
-  // The piece click is derived from the frame the board draws, never fired by
-  // the event that produced it — so the key it watches has to hold three
-  // relations at once, and none of them is visible from the audio side.
-  const soundScript = '[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3';
-  const sound = worldWithEvents(soundScript);
-  const soundKeyAt = ({ events, world }, t) =>
-    moveSoundKey(worldFrameAt(world, lastEventIndexAt(events, t), t).snapshot.lastMove);
   assert.equal(soundKeyAt(sound, 0), null, 'a board before its first move names no move');
   assert.equal(
     shouldPlayMoveSound(null, soundKeyAt(sound, 0), true),
@@ -1292,7 +1445,9 @@ text`,
     true,
     'each replay step lands its own move — the exact boundary still holds the outgoing one',
   );
+});
 
+test('move sound', async () => {
   // Muting gates the speaking, and only the speaking. The hook keeps calling
   // the same comparison and advancing the same latch while muted, so the flag
   // belongs inside this predicate rather than around its call: wrapping the
@@ -1431,7 +1586,9 @@ text`,
       'an empty rasterize is an error, not a silent no-op',
     );
   }
+});
 
+test('board export and rendered geometry', async () => {
   // The export's one hook on the in-flight preview is a class on its wrapper,
   // and the block above hands `downloadBoardPng` a stand-in node, so nothing
   // there ever runs the filter over real markup: a wrapper that lost
@@ -1581,32 +1738,9 @@ text`,
     [['br', 'ml'], ['mind', 'reveal']],
     'the two paired kinds group, and nothing else does',
   );
+});
 
-  // Comments are stripped before any CSS reader below pulls a value: these
-  // rules carry long prose that mentions the very properties being read
-  // ('.playhead-thumb' explains its own `top:` in words), and a bare regex
-  // happily matches the explanation instead of the declaration. It also keeps
-  // `[^}]*` rule scans honest, since prose is the only place a stray brace
-  // would come from.
-  const bareStyles = styles.replace(/\/\*[\s\S]*?\*\//g, '');
-
-  // Every rule for a selector, across all tiers. Escapes the selector itself so
-  // callers write plain CSS (an unescaped `.` matches anything and fails
-  // silently), and `\s*` keeps a `.subtitle-strip{` tier in the set.
-  const cssRules = (selector, source = bareStyles) =>
-    source.match(
-      new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`, 'g'),
-    ) ?? [];
-
-  // The one rule for a top-level selector, read through `cssRules` so both see
-  // comment-stripped source. The `\n` prefix keeps `cssRule('.marker')` from
-  // matching `.timeline .marker`; `anchor` picks between same-selector tiers.
-  const cssRule = (selector, anchor = '') => {
-    const rule = cssRules(`\n${selector}`).find((r) => r.includes(anchor));
-    assert.ok(rule, `${selector} exists`);
-    return rule;
-  };
-
+test('stylesheet: recording frame and media blocks', async () => {
   // Recording layout is an authored invariant: normal laptop heights keep
   // the 720px artifact, while only genuinely short desktop viewports use the
   // 560px fallback. Guard the real CSS surface so the old dvh formulas cannot
@@ -1628,47 +1762,6 @@ text`,
       'the recording frame is an authored size, never derived from the viewport',
     );
   }
-
-  const cssNum = (source, prop) => {
-    const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
-    assert.ok(m, `${prop} is declared as a number so the geometry stays derivable`);
-    return Number(m[1]);
-  };
-  // Asserts rather than indexing a null match, so a legal rewrite of the
-  // shorthand names what broke instead of throwing a TypeError.
-  const cssLengths = (source, prop) => {
-    const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+)[;}]`));
-    assert.ok(m, `${prop} is declared as a length shorthand`);
-    return m[1].trim().split(/\s+/).map((v) => Number.parseFloat(v));
-  };
-  // Top-level `@media` blocks, brace-balanced. Splitting on `@media` would be
-  // shorter and wrong: the text after a query's closing brace belongs to no
-  // query, and the reserve guard below asks whether one *specific* block holds
-  // both halves of a pair.
-  const styleRegions = (() => {
-    const src = bareStyles;
-    const regions = [];
-    let cursor = 0;
-    for (let at = src.indexOf('\n@media'); at !== -1; at = src.indexOf('\n@media', at + 1)) {
-      let depth = 0;
-      for (let i = at; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) {
-          if (at > cursor) regions.push({ query: null, css: src.slice(cursor, at) });
-          regions.push({
-            query: src.slice(at, src.indexOf('{', at)).trim(),
-            css: src.slice(at, i + 1),
-          });
-          cursor = i + 1;
-          at = i;
-          break;
-        }
-      }
-    }
-    if (cursor < src.length) regions.push({ query: null, css: src.slice(cursor) });
-    return regions;
-  })();
-  const mediaRegions = styleRegions.filter((r) => r.query !== null);
   // The one block with exactly this query. A `@media …[\s\S]*?X` regex runs
   // past the block's closing brace and passes on a later tier's X, so these
   // guards read one brace-balanced block and only the rules inside it.
@@ -1708,7 +1801,9 @@ text`,
     /grid-template-columns:\s*minmax\(0,\s*var\(--artifact-fit-width\)\)/,
     'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
   );
+});
 
+test('stylesheet: media-query cascade', async () => {
   // Media-query modelling, shared by the cascade guards below. `conditions`
   // returns null for a query it cannot express, so each caller decides what
   // that means rather than silently reading it as "matches everywhere".
@@ -1727,22 +1822,6 @@ text`,
       const v = axis === 'width' ? w : h;
       return bound === 'min' ? v >= px : v <= px;
     });
-
-  // Representative viewports: every breakpoint in the stylesheet and one pixel
-  // either side, so both ladders are sampled on both sides of every step. Media
-  // queries are step functions, so this finite grid covers every distinct
-  // combination the cascade can produce. Shared by the subtitle fit and the
-  // 560px band's co-application check.
-  const axis = (which) => {
-    const seen = new Set([320, 4000]);
-    for (const m of bareStyles.matchAll(new RegExp(`(?:min|max)-${which}:\\s*(\\d+)px`, 'g'))) {
-      const n = Number(m[1]);
-      seen.add(n - 1);
-      seen.add(n);
-      seen.add(n + 1);
-    }
-    return [...seen].filter((n) => n >= 320);
-  };
   const widths = axis('width');
   const heights = axis('height');
   // Stated here because the fit loop's trip count is fixed before it starts,
@@ -1908,7 +1987,9 @@ text`,
       );
     }
   }
+});
 
+test('present mode layout', async () => {
   // Present hides the header, panel, and footer and fixes the transport, so
   // the artifact is `.app`'s only in-flow child. Un-centered it pinned to the
   // top of a viewport-tall #root and left a 258px void above the floating bar
@@ -2111,7 +2192,9 @@ text`,
       'growth pivots on the ring’s own center, not the square’s origin',
     );
   }
+});
 
+test('move-quality marks', async () => {
   // Move-quality marks: chess.com's classification set, adopted deliberately
   // against PRODUCT.md's original anti-reference. Two tables, because the
   // board and the panel are two different grounds; both are
@@ -2248,7 +2331,9 @@ text`,
       'a corner badge sits as close to its corner as the viewBox allows',
     );
   }
+});
 
+test('marker kinds and colors', async () => {
   // Kind is never color alone, asserted as a relation between two tables
   // rather than as CSS source text. `markerColors` and `markerForms` are both
   // `Record<MarkerKind, …>`, so TypeScript already forces each exhaustive over
@@ -2427,7 +2512,9 @@ text`,
     /\.panel-title-row \.import-btn\s*\{[^}]*margin-left:\s*auto/,
     'Import stays pinned right so a transient Undo cannot shove the row',
   );
+});
 
+test("mind's-eye void", async () => {
   // The mind's-eye void is derived from the playback clock, never animated by
   // CSS: a transition runs on wall time, so a paused scrub across `mind` would
   // render a frame that depends on how the playhead arrived rather than on
@@ -2471,8 +2558,4 @@ text`,
     /\.board--mind/,
     'mind mode must not re-grow a CSS fill swap — the void is derived from the clock',
   );
-} finally {
-  await vite.close();
-}
-
-console.log('regression tests passed');
+});

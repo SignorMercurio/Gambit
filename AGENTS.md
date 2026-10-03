@@ -7,7 +7,7 @@ Requires Node 22.12+. npm, no workspaces.
 
 ```sh
 npm run dev        # Vite, usually http://127.0.0.1:5173/
-npm test           # node scripts/test-regressions.mjs — not a test framework
+npm test           # node scripts/test-regressions.mjs — one node:test file
 npm run build
 ```
 
