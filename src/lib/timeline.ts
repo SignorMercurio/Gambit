@@ -265,7 +265,7 @@ export function parseScript(text: string): TimelineEvent[] {
     if (isSkippedLine(raw)) continue;
     const line = i + 1;
     const fail = (t: number, error: string) => {
-      events.push({ t, error: `Line ${line}: ${error}`, line, raw });
+      events.push({ t, error, line, raw });
     };
     const matched = matchScriptLine(raw);
     if (!matched) {
@@ -279,18 +279,22 @@ export function parseScript(text: string): TimelineEvent[] {
     }
     const at = { t, line, raw };
 
-    const hm = body.match(/^(?:hl|highlight)\s+(.+)$/i);
+    // A bare `hl` is still a highlight with no squares, not a move called "hl".
+    const hm = body.match(/^(?:hl|highlight)(?:\s+(.+))?$/i);
     if (hm) {
-      const tokens = hm[1].split(/[,\s]+/).filter(Boolean);
+      const tokens = (hm[1] ?? '').split(/[,\s]+/).filter(Boolean);
       let pinned = false;
       if (tokens[tokens.length - 1]?.toLowerCase() === 'pin') {
         pinned = true;
         tokens.pop();
       }
       const invalid = tokens.filter((sq) => !SQUARE_RE.test(sq));
-      if (tokens.length === 0 || invalid.length > 0) {
-        const detail = invalid.length > 0 ? `: ${invalid.join(', ')}` : '';
-        fail(t, `invalid highlight square${detail}`);
+      if (tokens.length === 0) {
+        fail(t, 'hl needs at least one square, like: hl e4 d5');
+        continue;
+      }
+      if (invalid.length > 0) {
+        fail(t, `invalid highlight square: ${invalid.join(', ')}`);
         continue;
       }
       const squares = [...new Set(tokens.map((sq) => sq.toLowerCase()))];
@@ -358,13 +362,10 @@ export function parseScript(text: string): TimelineEvent[] {
       }
       continue;
     }
-    const fenMatch = body.match(/^(?:fen|setfen)\s+(.+)$/i);
+    const fenMatch = body.match(/^(?:fen|setfen)(?:\s+(.+))?$/i);
     if (fenMatch) {
-      events.push({ ...at, kind: 'fen', fen: fenMatch[1].trim() });
-      continue;
-    }
-    if (/^(?:fen|setfen)$/i.test(body)) {
-      fail(t, 'missing FEN');
+      if (fenMatch[1]) events.push({ ...at, kind: 'fen', fen: fenMatch[1].trim() });
+      else fail(t, 'missing FEN');
       continue;
     }
     // The chess parser owns the strict SAN suffix grammar; the timeline only

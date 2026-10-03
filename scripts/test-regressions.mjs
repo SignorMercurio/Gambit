@@ -380,7 +380,8 @@ try {
   // sits there and refuses to move — so the reason has to distinguish them.
   const startingState = Chess.stateFromFEN(Chess.STARTING_FEN);
   assert.ok(Object.isFrozen(startingState), 'chess snapshots are immutable values');
-  assert.deepEqual(Object.keys(startingState).sort(), ['fen', 'fullmove', 'turn']);
+  assert.deepEqual(Object.keys(startingState).sort(), ['check', 'fen', 'fullmove', 'turn']);
+  assert.equal(startingState.check, null);
   const cachedStartingMoves = Chess.legalMoves(startingState);
   assert.equal(cachedStartingMoves, Chess.legalMoves(startingState));
   assert.ok(Object.isFrozen(cachedStartingMoves));
@@ -465,7 +466,7 @@ try {
   const e4Move = Chess.parseSAN('e4', startingState);
   assert.deepEqual(e4Move?.to, [4, 3]);
   const startingFen = startingState.fen;
-  const afterE4 = Chess.applyMove(startingState, e4Move);
+  const afterE4 = Chess.playSAN('e4', startingState).next;
   assert.equal(startingState.fen, startingFen, 'applying a move does not mutate its input snapshot');
   assert.ok(Object.isFrozen(afterE4));
   assert.deepEqual(Chess.board(afterE4)[3][4], { type: 'p', side: 'w' });
@@ -473,9 +474,9 @@ try {
   const rookCheck = Chess.stateFromFEN('7k/8/8/8/8/8/8/R3K3 w - - 0 1');
   let scholarsMate = startingState;
   for (const san of ['e4', 'e5', 'Bc4', 'Nc6', 'Qh5', 'Nf6']) {
-    const move = Chess.parseSAN(san, scholarsMate);
-    assert.ok(move, `fixture move ${san} must resolve`);
-    scholarsMate = Chess.applyMove(scholarsMate, move);
+    const played = Chess.playSAN(san, scholarsMate);
+    assert.ok(played, `fixture move ${san} must resolve`);
+    scholarsMate = played.next;
   }
   // chess.js owns check/mate suffix normalization: any of the three markers parses,
   // and sanForMove answers with the canonical one. One rule, so one table — a block
@@ -534,7 +535,7 @@ try {
   assert.ok(Chess.parseSAN('O-O+', quietCastle));
   assert.equal(Chess.parseSAN('0-0', quietCastle), null, 'strict chess.js SAN rejects zero castling');
   assert.equal(Chess.parseSAN('o-o', quietCastle), null, 'strict chess.js SAN rejects lowercase castling');
-  const castledBoard = Chess.board(Chess.applyMove(quietCastle, quietCastleMove));
+  const castledBoard = Chess.board(Chess.playSAN('O-O', quietCastle).next);
   assert.deepEqual(castledBoard[0][6], { type: 'k', side: 'w' });
   assert.deepEqual(castledBoard[0][5], { type: 'r', side: 'w' });
 
@@ -543,24 +544,32 @@ try {
   const promotionMove = Chess.parseSAN('a8=Q', promotion);
   assert.equal(promotionMove?.promotion, 'q');
   assert.deepEqual(
-    Chess.board(Chess.applyMove(promotion, promotionMove))[7][0],
+    Chess.board(Chess.playSAN('a8=Q', promotion).next)[7][0],
     { type: 'q', side: 'w' },
   );
 
   const capture = Chess.stateFromFEN('7k/8/8/3p4/4P3/8/8/7K w - - 0 1');
   const captureMove = Chess.parseSAN('exd5', capture);
   assert.equal(captureMove?.capture, true);
-  const capturedBoard = Chess.board(Chess.applyMove(capture, captureMove));
+  const capturedBoard = Chess.board(Chess.playSAN('exd5', capture).next);
   assert.deepEqual(capturedBoard[4][3], { type: 'p', side: 'w' });
   assert.equal(capturedBoard[3][4], null);
 
-  // FEN validation and default fields follow chess.js. Gambit retains only a
-  // frozen canonical FEN plus the two move-list readouts.
+  // FEN syntax and default fields follow chess.js; Gambit adds the three
+  // position checks chess.js takes on trust. It retains only a frozen
+  // canonical FEN plus its readouts.
   for (const [fen, reason] of [
     ['7k/8/8/8/8/8/PP6/4K3 w - b3 0 1', /en[- ]passant/i],
     ['8/8/8/8/8/8/8/4K3 w - - 0 1', /king/i],
     ['4k3/8/8/8/8/8/4K3/4K3 w - - 0 1', /king/i],
     ['P3k3/8/8/8/8/8/8/4K3 w - - 0 1', /pawn/i],
+    // Black already in check on White's move: Rxe8 would capture the king.
+    ['4k3/4R3/8/8/8/8/8/4K3 w - - 0 1', /Black is in check with White to move/],
+    // A K right with a knight in the corner would castle the knight.
+    ['4k3/8/8/8/8/8/8/4K2N w K - 0 1', /castling right K needs .* rook on h1/],
+    ['3k3r/8/8/8/8/8/8/4K3 b k - 0 1', /castling right k needs the king on e8/],
+    // An e6 target with no black pawn on e5 would let dxe6 remove the knight.
+    ['4k3/8/8/3PN3/8/8/8/4K3 w - e6 0 1', /en-passant square e6/],
   ]) {
     assert.throws(() => Chess.stateFromFEN(fen), reason);
   }
@@ -568,6 +577,23 @@ try {
   assert.equal(partialFen.fen, '4k3/8/8/8/8/8/8/4K3 w - - 0 1');
   const validEp = Chess.stateFromFEN('7k/8/8/3pP3/8/8/8/7K w - d6 0 1');
   assert.equal(Chess.parseSAN('exd6', validEp)?.enPassant, true);
+  assert.equal(Chess.stateFromFEN('r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1').turn, 'b');
+  assert.equal(Chess.stateFromFEN('4k3/8/8/8/8/8/8/R3K3 b - - 0 1').check, null);
+  assert.equal(Chess.stateFromFEN('4k3/8/8/8/8/8/8/4R1K1 b - - 0 1').check, 'e8');
+  {
+    // A rejected position is a setup error the walk survives, never a throw.
+    const kingCapture = buildWorld(
+      parseScript('[00:01] Rxe8'),
+      setupFromFen('4k3/4R3/8/8/8/8/8/4K3 w - - 0 1'),
+    );
+    assert.equal(kingCapture.snapshots.at(-1).chessState.fen, Chess.STARTING_FEN);
+    // playSAN is memoized by value: the same position and SAN return the
+    // same frozen result, so rebuilds share `next` and its legal-move cache.
+    const played = Chess.playSAN('e4', startingState);
+    assert.equal(Chess.playSAN('e4!', Chess.stateFromFEN(Chess.STARTING_FEN)), played);
+    assert.ok(Object.isFrozen(played) && Object.isFrozen(played.move.from));
+    assert.equal(Chess.playSAN('e5', startingState), null);
+  }
 
   // Subtitle lookup keeps the latest-started active cue while still falling
   // back to an earlier long cue after a shorter overlap ends.
@@ -824,6 +850,17 @@ text`,
   // reported as bad chess, and the shared dispatch must not swallow `fen`,
   // whose keyword is not in the command table.
   assert.match(parseScript('[1] cl e4')[0].error, /cl takes no arguments/i);
+  // The errors band and Moves view already tag each row with its line; the
+  // message itself must not repeat it.
+  assert.equal(parseScript('[1] cl e4')[0].error, 'cl takes no arguments');
+  // A bare hl names the command, never "Invalid move".
+  for (const bare of ['hl', 'highlight', 'hl pin']) {
+    assert.match(parseScript(`[1] ${bare}`)[0].error ?? '', /hl needs at least one square/, bare);
+  }
+  assert.match(parseScript('[1] hl e4 z9')[0].error, /invalid highlight square: z9/);
+  for (const bare of ['fen', 'setfen', 'FEN']) {
+    assert.equal(parseScript(`[1] ${bare}`)[0].error, 'missing FEN', bare);
+  }
   assert.match(parseScript('[1] mind x')[0].error, /mind takes no arguments/i);
   assert.equal(parseScript('[1] fen 8/8/8/8/8/8/8/8 w - - 0 1')[0].kind, 'fen');
 
@@ -1576,20 +1613,6 @@ text`,
   // quietly return.
   assert.match(bareStyles, /--artifact-fit-width:\s*var\(--artifact-width\)/);
   assert.match(bareStyles, /@media \(max-width:\s*1240px\)/);
-  // Between the stack point and the old 1380px one the side panel flexes into
-  // whatever the board leaves, so 1280x800 gets a two-column layout instead of
-  // stacking the panel under the board and pushing the transport 889px down the
-  // page. The band must keep the board on its authored track: the panel is what
-  // yields, never the recording artifact.
-  assert.match(
-    bareStyles,
-    /@media \(min-width:\s*1241px\) and \(max-width:\s*1380px\)[\s\S]*?grid-template-columns:\s*var\(--artifact-fit-width\) minmax\(0,\s*1fr\)/,
-    'the intermediate two-column band flexes the panel, never the artifact',
-  );
-  assert.match(
-    bareStyles,
-    /@media \(min-width:\s*1081px\) and \(max-height:\s*760px\)[\s\S]*?--artifact-fit-width:\s*560px/,
-  );
   // The 720px recording-frame invariant (docs/design.md), as an allowlist over
   // both artifact tokens: a literal `100dvh` ban lets `100vh`, `90svh` and
   // `clamp(…dvh…)` slip past, and checking only the outer token let a
@@ -1605,16 +1628,6 @@ text`,
       'the recording frame is an authored size, never derived from the viewport',
     );
   }
-  assert.match(
-    bareStyles,
-    /@media \(max-width:\s*760px\)[\s\S]*?\.app--present \.controls\s*\{[\s\S]*?display:\s*grid/,
-    'present mode restores the mobile transport grid after its desktop flex override',
-  );
-  assert.match(
-    bareStyles,
-    /@media \(max-width:\s*760px\)[\s\S]*?\.app--present-pgn \.main\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*var\(--artifact-fit-width\)\)/,
-    'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
-  );
 
   const cssNum = (source, prop) => {
     const m = source.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*(-?[\\d.]+)`));
@@ -1656,6 +1669,45 @@ text`,
     return regions;
   })();
   const mediaRegions = styleRegions.filter((r) => r.query !== null);
+  // The one block with exactly this query. A `@media …[\s\S]*?X` regex runs
+  // past the block's closing brace and passes on a later tier's X, so these
+  // guards read one brace-balanced block and only the rules inside it.
+  const mediaBlock = (query) => {
+    const found = mediaRegions.filter((r) => r.query === `@media ${query}`);
+    assert.equal(found.length, 1, `exactly one @media ${query} block`);
+    return found[0].css;
+  };
+  const mediaRuleMatches = (query, selector, declaration, message) => {
+    const rules = cssRules(selector, mediaBlock(query));
+    assert.ok(rules.some((rule) => declaration.test(rule)), message);
+  };
+
+  // Between the stack point and the old 1380px one the side panel flexes into
+  // whatever the board leaves, so 1280x800 gets a two-column layout instead of
+  // stacking the panel under the board and pushing the transport 889px down the
+  // page. The band must keep the board on its authored track: the panel is what
+  // yields, never the recording artifact.
+  assert.match(
+    mediaBlock('(min-width: 1241px) and (max-width: 1380px)'),
+    /grid-template-columns:\s*var\(--artifact-fit-width\) minmax\(0,\s*1fr\)/,
+    'the intermediate two-column band flexes the panel, never the artifact',
+  );
+  assert.match(
+    mediaBlock('(min-width: 1081px) and (max-height: 760px)'),
+    /--artifact-fit-width:\s*560px/,
+  );
+  mediaRuleMatches(
+    '(max-width: 760px)',
+    '.app--present .controls',
+    /display:\s*grid/,
+    'present mode restores the mobile transport grid after its desktop flex override',
+  );
+  mediaRuleMatches(
+    '(max-width: 760px)',
+    '.app--present-pgn .main',
+    /grid-template-columns:\s*minmax\(0,\s*var\(--artifact-fit-width\)\)/,
+    'the phone PGN stacks instead of crushing the recording artifact beside a fixed panel',
+  );
 
   // Media-query modelling, shared by the cascade guards below. `conditions`
   // returns null for a query it cannot express, so each caller decides what

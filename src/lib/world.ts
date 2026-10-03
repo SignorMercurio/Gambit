@@ -379,10 +379,8 @@ function glideRestoredPositions(departed: Positions, restored: Positions, t: num
 export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): WorldBuild {
   type BranchSnapshot = { entry: WorldSnapshot; setupEpoch: number; event: ParsedEvent };
 
-  const checkAt = (state: Chess.GameState, t: number): BoardCheck | null => {
-    const sq = Chess.checkedKingSquare(state);
-    return sq ? { sq, t } : null;
-  };
+  const checkAt = (state: Chess.GameState, t: number): BoardCheck | null =>
+    state.check ? { sq: state.check, t } : null;
 
   // The working snapshot. Every stored snapshot is a shallow copy of it, and
   // its fields (highlights, arrows, mind, positions) are rebound rather than
@@ -624,15 +622,16 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           visualEndTime = Math.max(visualEndTime, event.t + event.seconds);
           break;
         case 'move': {
-          const move = Chess.parseSAN(event.san, w.chessState);
-          if (!move) {
+          const played = Chess.playSAN(event.san, w.chessState);
+          if (!played) {
             reject(eventIndex, event, `Invalid move: "${event.san}"`);
             break;
           }
+          const { move } = played;
 
           const moved = movePosition(w.positions, move, event.t);
           w.positions = moved.positions;
-          w.chessState = Chess.applyMove(w.chessState, move);
+          w.chessState = played.next;
           if (w.check) touch(event.t, w.check.sq);
           w.check = checkAt(w.chessState, event.t);
           w.lastMove = lastMoveAt(move, event.t, event.annotation);
