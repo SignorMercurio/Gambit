@@ -3,7 +3,7 @@
 A Vite + React chess timeline renderer for teachers and content creators: a
 deterministic, recordable chess board driven by a small timestamped script.
 
-Requires Node 20.19+ (or 22.12+). npm, no workspaces.
+Requires Node 22.12+. npm, no workspaces.
 
 ```sh
 npm run dev        # Vite, usually http://127.0.0.1:5173/

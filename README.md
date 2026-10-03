@@ -6,7 +6,7 @@ Chess timeline renderer. Replays a game from a timestamped script with annotatio
 
 ## Run
 
-Requires Node.js 20.19+ (or 22.12+).
+Requires Node.js 22.12+.
 
 ```sh
 npm install
