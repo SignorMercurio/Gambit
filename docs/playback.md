@@ -5,27 +5,87 @@ extend duration; neither drives the board.
 
 ## Clock And Duration
 
-- If script duration shrinks, clamp the current playback time to the new duration.
-- Event-anchored seeks must not land exactly on the event's timestamp while paused: every timed visual derives from `time - event.t`, so at age 0 the moved piece, highlight, and arrow are all invisible. Land just past the event (the `seekEvent` helper: +0.5s, clamped before the next event), the same convention gesture inserts use.
+- The current time lives in one store, `src/lib/clock.ts`, not in React state. Only the
+  board column follows it every frame (`useClockTime`); everything else subscribes to a
+  derived primitive (`useClockValue`) or reads it at call time (`clock.get()`). A new
+  surface that needs the time takes the clock, never a `time` prop from `App`.
+- When script duration shrinks, clamp the current playback time to the new duration.
+- A paused, event-anchored seek never lands exactly on the event's timestamp: every
+  timed visual derives from `time - event.t`, so at age 0 the moved piece, highlight,
+  and arrow are invisible. `seekEvent` lands 0.5s past the event, clamped before the
+  next one (`landBetween` in `src/lib/playback.ts`); gesture inserts use the same rule.
 
 ## Subtitles And Narration
 
-- When changing subtitle behavior, keep SRT input independent from the chess script and surface malformed cues as visible errors.
-- Narration audio is independent from the script and subtitles, and persists like them: the object URL is session-only, but the bytes are a draft in IndexedDB ([src/lib/narrationStore.ts](../src/lib/narrationStore.ts)) because they do not fit localStorage's few megabytes. It is restored through the same probe an import goes through, so a stored track has to clear the same bar a fresh one does, and a stored track that no longer decodes is dropped silently rather than failing every future load. The playback clock stays the source of truth: the audio element follows play/pause/seek/rate and never drives the board; narration that outlasts the script extends playback duration like subtitle cues.
-- An `ask` question card renders in the subtitle strip, replacing any cue that overlaps it: the card is written for a pause in narration, and the strip's reserved height lets it appear without shifting layout. Its digit (whole seconds left) and ring (spent share) derive from `time - ask.t`, never a timer. The digit is `aria-hidden` so the live region announces the question once rather than every second. A script with any `ask` keeps the track on mobile even without an SRT. Like cues, the card is excluded from board PNG export.
-- Subtitle cues should extend playback duration when they outlast the chess script and render below the board, never over it. The cue is part of the recording artifact, not chrome: it is sized as a share of the composed frame the way broadcast captions are (~3.6%, against the ~4% streaming default), and it scales with the artifact — the 560px short-desktop frame gets a smaller cue, because holding the base size there wraps the same line in two and doubles the track. Its track is `minmax(min, auto)`, so type size, track minimum, and present mode's floating-bar floor are one coupled set of numbers — `--subtitle-cue-size` and `--subtitle-track-height` are therefore declared together in every `:root` that redefines either, because splitting them across rules is exactly how the 761–840px band ended up seating a 29px cue in a 48px track: a one-line cue must fit the declared track, and the floor must clear a *two-line* one (the caption standard's cap). Measure that floor on the page rather than deriving it — the app's top padding shifts across height tiers, so the arithmetic is wrong by ~12px.
+- SRT input is independent of the chess script. Malformed cues are visible errors.
+- Cues extend playback duration when they outlast the script, and render below the
+  board, never over it.
+- The cue is part of the recording artifact, not chrome: it is sized as a share of the
+  composed frame (~3.6%) and scales with it, so the 560px short-desktop frame gets a
+  smaller cue.
+- `--subtitle-cue-size`, `--subtitle-track-height`, and present mode's floating-bar
+  floor are one coupled set. Declare the first two together in every `:root` that
+  redefines either. A one-line cue must fit the declared track, and the floor must
+  clear a two-line cue. Measure the floor on the page: the app's top padding shifts
+  across height tiers. Enforced by
+  `the subtitle track fits its cue in every media tier` in `test/styles.test.mjs`.
+- Narration audio is independent of the script and subtitles. Its bytes persist as an
+  IndexedDB draft ([src/lib/narrationStore.ts](../src/lib/narrationStore.ts)) because
+  they do not fit localStorage; the object URL is session-only. A stored track is
+  restored through the same probe an import goes through, and one that no longer
+  decodes is dropped silently.
+- The `<audio>` element follows play, pause, seek, and rate; it never drives the
+  board. Narration that outlasts the script extends playback duration.
+- An `ask` question card renders in the subtitle strip and replaces any cue that
+  overlaps it. Its digit (whole seconds left) and ring (spent share) derive from
+  `time - ask.t`, never a timer. The digit is `aria-hidden`, so the live region
+  announces the question once. A script with any `ask` keeps the track on mobile even
+  without an SRT. Like cues, the card is excluded from board PNG export.
 
 ## The Piece Click
 
-- The move sound ([src/lib/moveSound.ts](../src/lib/moveSound.ts)) is a side effect of the frame, not an event handler. It watches the `lastMove` of the snapshot the board is already rendering and speaks when that value changes, so playback crossings, `rp` replay steps, scrub landings, and a board gesture's own paused landing are one rule rather than four call sites — and a gesture never has to announce itself, because writing the move is what moves the playhead onto it.
-- What it watches is a value key (`squares@t`), never the snapshot's object identity. `buildWorld` re-derives every snapshot on each keystroke in the script editor, so identity comparison would click at all of them; the same move at the same timestamp re-derives the same key and stays silent. The timestamp is in the key because `rp` re-lands moves the script already played, and squares alone would make every replayed repeat silent.
-- Silence is defined by the same key, not by special cases: the first frame has nothing to compare against, a reset or a rewind to the start leaves no move to name (`null` never sounds), and a scrub is a single comparison between where the playhead left and where it landed — ten crossed moves are one click, not ten.
-- The sample is served from `public/sounds/move.mp3` through a four-element round-robin pool at 0.5 volume: at 4× a script can land moves closer together than the sample is long, and restarting one element mid-play cuts the previous click off instead of layering it. A refused `play()` is swallowed — playback always starts from a user gesture here, so autoplay policy should not reach it, and audio is feedback that must never cost the frame that caused it.
-- Present mode keeps the sound. It is the recording view, and the click belongs to the recording, so the transport's `SFX` toggle rides the same `.transport-prefs` wrapper as the speed selector and appears in both modes rather than being editor-only. That wrapper exists because the console's grid gives each child one named cell and redraws its area map in four tiers; a second bare child would have no cell and auto-place into whatever cell each tier left free.
-- The toggle gates the call, not the volume: muted means no `play()` at all. It persists like the other transport preferences — a `'0'`/`'1'` localStorage draft under `gambit:draft:move-sound`, defaulting to on, with anything that is not the exact `'0'` reading as on so a junk draft cannot silently ship a recording with no click in it. Muting does not freeze the latch: the "have I said this one" ref still advances, so unmuting speaks the next move rather than replaying the one the playhead is sitting on.
+Rules live in [src/lib/moveSound.ts](../src/lib/moveSound.ts) and
+`test/move-sound.test.mjs`.
+
+- The sound is a side effect of the frame, not an event handler: it watches the
+  `lastMove` of the snapshot the board is rendering and sounds when that changes.
+  Playback crossings, `rp` steps, scrub landings, and a gesture's paused landing are
+  therefore one rule.
+- It watches a value key (`squares@t`), never snapshot identity: `buildWorld`
+  re-derives every snapshot on each keystroke. The timestamp is in the key so an `rp`
+  re-landing of an already-played move still sounds.
+- Silence follows from the key: the first frame has nothing to compare, `null` (a
+  reset, a rewind to the start) never sounds, and a scrub is one comparison — ten
+  crossed moves are one click.
+- The sample is `public/sounds/move.mp3`, played at 0.5 volume through a four-element
+  round-robin pool, because at 4× moves can land closer together than the sample is
+  long. A refused `play()` is swallowed.
+- Present mode keeps the sound. The transport's `SFX` toggle sits with the speed
+  selector inside `.transport-prefs` and appears in both modes. New transport
+  preferences go inside that wrapper: the console grid gives each child one named cell
+  per tier.
+- The toggle gates the call, not the volume. It persists as `'0'`/`'1'` under
+  `gambit:draft:move-sound`, defaulting to on; anything but the exact `'0'` reads as
+  on. Muting does not freeze the latch, so unmuting speaks the next move rather than
+  the one the playhead is on.
 
 ## Export
 
-- Board PNG export captures the board element `App` passes to `Board` as its `boardRef` prop, which `useBoardExport` hands to `downloadBoardPng` — never a separately maintained chess renderer. It freezes playback until the DOM clone completes, restores the prior play state, exports exactly 1440×1440 transparent-corner PNG, and includes all visible artifact layers except the editor-only in-flight gesture preview. It must exclude subtitles, PGN, and transport/editor chrome, and browser zoom must not alter output dimensions.
-- The current export operation locks all frame-changing controls, keyboard shortcuts, and board gestures. Pending text reads and narration metadata wait for it to finish, then recheck their request identity before committing. Success, failure, and timeout restore the previous play state; unmount aborts the operation and releases its waiters without updating the unmounted UI.
-- Any await that a user action blocks on must be bounded. An unsettled promise never runs its `finally`, so "restore the prior state afterwards" is not a recovery path on its own — pair it with a ceiling that converts the hang into a visible, retryable error state. Put the ceiling around the whole operation, not the step that looks riskiest: a guard on the inner call is useless if an earlier await is what hangs, and it makes the code read as protected when it isn't. One ceiling per user action — nesting them multiplies the worst-case wait. If the abandoned work can still produce a side effect (a download, a write), gate that effect on an abort signal so a late arrival can't contradict the error the user was already shown.
+- Board PNG export captures the board element `App` passes to `Board` as `boardRef` —
+  never a separately maintained chess renderer.
+- The frame is frozen by copying it, not by stopping the app. The click calls
+  `snapshotBoard` synchronously: a clone of the board DOM, minus the in-flight gesture
+  preview (`BOARD_GESTURE_CLASS`), mounted off-screen. Loading the exporter and
+  rasterizing both work on that clone, so playback, editing, and imports carry on, and
+  the PNG is the frame at the click, named for that time.
+- The output is exactly 1440×1440 with transparent corners and every visible artifact
+  layer. It excludes subtitles, the question card, PGN, and transport/editor chrome.
+  Browser zoom and the board's on-screen size do not alter the dimensions.
+- One export runs at a time; its buttons are disabled meanwhile. Unmount aborts it.
+- The whole export sits under one 15s ceiling (`withTimeout`), which turns a hang
+  into a visible, retryable error. A rasterize cannot be cancelled, so its download is
+  gated on an `AbortSignal` and a late result delivers nothing.
+- The general rule: any await a user action blocks on is bounded by one ceiling around
+  the whole operation — not around the step that looks riskiest, and never nested. If
+  the abandoned work can still produce a side effect, gate that effect on an abort
+  signal.

@@ -29,7 +29,8 @@ Three words: **cinematic, precise, chess-native**.
 
 - *Cinematic*: confident dark surface, the board is the hero, transport controls feel like a video editor (DaVinci Resolve, Figma dev-mode timeline, Linear's playback affordances), not a media-player widget.
 - *Precise*: monospaced numerics, exact scrub, frame-stable animations, no marketing language anywhere in the UI. When the tool speaks, it speaks like a developer console: terse, factual, no exclamation marks.
-- *Chess-native*: respects the conventions chess players already know (file/rank coordinates, SAN as input, last-move tinting, arrow gestures from analysis culture), but executes them with an original visual language rather than mimicking Lichess or chess.com tile-for-tile. One deliberate exception, taken with the trade understood: the move-quality marks (`!!` / `!` / `?` / `??`) adopt chess.com's classification treatment outright — see the anti-reference below.
+- *Chess-native*: respects the conventions chess players already know (file/rank coordinates, SAN as input, last-move tinting, arrow gestures from analysis culture), but executes them with an original visual language rather than mimicking Lichess or chess.com tile-for-tile.
+  One deliberate exception, trade understood: the move-quality marks (`!!` / `!` / `?` / `??`) adopt chess.com's classification treatment outright (see the anti-reference below).
 
 ## Anti-references
 
@@ -39,9 +40,12 @@ What Gambit must not look like:
 - **Toy or cartoon chess apps.** No oversize rounded everything, no candy palette, no XP bars, streaks, badges, mascots, or gamified rewards. Adults are using this for work.
 - **Default chess.com aesthetic**, with one carve-out. Everything Gambit draws keeps the visual distance the prototype established: no green-and-cream board, no chess.com red-and-yellow accent set. Chess-native conventions, fresh execution.
 
-  The carve-out is scoped to **one artifact, not one surface**: the **move-quality marks are exempt wherever they appear** — the board badge and the move list's `!!` / `??` alike, since the whole point is that one mark reads as one thing in both places. They copy chess.com deliberately — their classification colors, a white glyph, no rim, the corner-straddling disc. The reasoning that made this an anti-reference in the first place is about *ownership of the frame*: a creator's board appears inside their own video under their own name, so a board that reads as someone else's screenshot hands them the attribution. A badge is not the frame. It is a four-value legend a viewer has to decode in a second, most of this audience already knows this one, and originality there costs comprehension without buying identity. Everything that is not a quality mark — the board palette, the panel chrome, the transport — is still where Gambit's look lives, and none of it is open to this.
+  The carve-out is scoped to **one artifact, not one surface**: the **move-quality marks are exempt wherever they appear**, board badge and move-list `!!` / `??` alike, so one mark reads as one thing in both places. They copy chess.com deliberately: classification colors, a white glyph, no rim, the corner-straddling disc.
 
-  The trade is real and is recorded rather than glossed: white ink measures under 3:1 on two of the four fills (`mistake` 1.96, `brilliant` 2.80), and chess.com's `great` blue sits 1.08:1 against Gambit's dark square — a collision they never hit, because their board is green and cream. There is no rim to buy any of it back; the drop shadow is the disc's only edge, as in the reference, and it is deepened to 70% to carry that one case.
+  Why the exception holds: the anti-reference is about *ownership of the frame*. A creator's board appears in their own video under their own name, so a board that reads as someone else's screenshot hands away the attribution.
+  A badge is not the frame; it is a four-value legend decoded in a second, most of this audience already knows this one, and originality there costs comprehension without buying identity. Everything that is not a quality mark (board palette, panel chrome, transport) is where Gambit's look lives, and none of it is open to this.
+
+  The cost is accepted, not glossed: white ink is under 3:1 on two fills (`mistake` 1.96, `brilliant` 2.80), and `great` sits 1.08:1 against Gambit's dark square, a collision chess.com's green-and-cream board never hits. No rim buys it back; the drop shadow is the disc's only edge, deepened to 70% for that case.
 - **Glassy / blurry / glowy AI-tool reflex.** No stacked translucent panels, no neon glows, no gradient-mesh hero, no decorative backdrop-filter. The current controls strip uses a 6px blur for a real reason (it floats over the board's color); that is the ceiling, not the floor.
 
 ## Design Principles
@@ -54,8 +58,13 @@ What Gambit must not look like:
 
 ## Accessibility & Inclusion
 
-Two floors are committed and asserted by `scripts/test-regressions.mjs`, not decided per surface: editor controls hold the WCAG 2.5.8 24×24 minimum, and body text holds 4.5:1 — measured on the *worst* backdrop it renders against, not the common one. Everything above those floors is per-surface judgment.
+Two floors are committed, not decided per surface: editor controls hold the WCAG 2.5.8 24×24 minimum, and body text holds 4.5:1 on the *worst* backdrop it renders against, not the common one. Everything above those floors is per-surface judgment.
+Enforced by `editor controls keep the 24px hit floor` and `time chips keep their contrast on the variation inset` in `test/styles.test.mjs`, and `move-quality marks: chrome contrast, a rimless disc, and the corner clamp` in `test/board.test.mjs`.
 
-Working baseline: WCAG 2.1 AA contrast where it does not fight the cinematic mood (chrome hits AA against the dark backdrop; the board's own light/dark squares are an artifact of the chess convention, not chrome, and are exempted from the contrast target). All controls keyboard-reachable; space, arrow keys, and click-to-seek are core, not extras. `prefers-reduced-motion` respected for non-essential motion (decorative fades, hover scales) but not for functional motion (a piece reaching its target square).
+Working baseline:
+
+- WCAG 2.1 AA contrast where it does not fight the cinematic mood. Chrome hits AA against the dark backdrop; the board's light/dark squares are a chess convention, not chrome, and are exempt.
+- All controls keyboard-reachable; space, arrow keys, and click-to-seek are core, not extras.
+- `prefers-reduced-motion` respected for non-essential motion (decorative fades, hover scales) but not for functional motion (a piece reaching its target square).
 
 Open questions for later: localized SAN (figurine notation, non-Latin notation), high-contrast piece set, touch targets above the committed 24×24 floor, dyslexia-friendly mono alternative for the script editor. None blocks the current scope.

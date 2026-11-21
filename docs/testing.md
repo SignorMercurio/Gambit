@@ -10,36 +10,37 @@ npm run build
 `npm run build` typechecks (`tsc -b`, including `vite.config.ts`) before bundling, so
 there is no separate typecheck gate.
 
-`npm test` is `node scripts/test-regressions.mjs` — one file of `node:test` tests, no
-third-party framework. It spins up an in-process Vite server and imports the real modules,
-so it tests source rather than a build, and it additionally asserts against
-`src/styles.css` as source text and against rendered elements. Fixtures and helpers shared
-across tests sit at module scope; everything else lives inside its `test()`, so one failing
-assertion stops only its own test and the summary names every failing test. Run a subset
-with `node --test-name-pattern=<regex> scripts/test-regressions.mjs`.
+`npm test` is `node --test "test/*.test.mjs"`: `node:test`, no third-party framework,
+one file per module, one rule per test name.
 
-## What The Suite Guards
+- `test/support.mjs` starts an in-process Vite server and `load()`s the real modules,
+  so the suite tests source rather than a build. It also holds the fixtures more than
+  one file uses.
+- `test/css.mjs` reads `src/styles.css` as comment-stripped source text for the layout
+  guards in `test/styles.test.mjs`.
+- Run one file with `node --test test/world.test.mjs`, or a subset with
+  `node --test --test-name-pattern=<regex> "test/*.test.mjs"`.
 
-Beyond ordinary behavior coverage, it holds the *relations* that no single file can
-enforce on its own. These are why several rules in these docs are checkable rather than
-merely stated:
+Add a test to the file named for the module it exercises. Name it for the rule, so a
+failure reads as the rule that broke.
 
-- The command catalogue (`src/lib/commands.ts`) is chained to `markerColors`, so a new
-  event kind cannot reach the parser while staying invisible in the UI.
-- The rendered `SYNTAX_HINT` element names every catalogued command exactly once —
-  asserted against the element a reader actually sees, not against `SYNTAX_GROUPS`.
-- The in-flight gesture preview's wrapper still carries `BOARD_GESTURE_CLASS`, asserted
-  by rendering the layer: the PNG export filters that class out, and the export's own
-  guard hands `downloadBoardPng` a stand-in node, so a wrapper that lost the class would
-  bake the editor-only preview into a creator's export with the suite green.
-- `markerColors` and `markerForms`: two kinds sharing a color must not share a form,
-  unless they are two halves of one gesture or the reset family.
-- `--artifact-fit-width` is never redefined with a `100dvh` shrink formula, in any tier.
-- `--subtitle-cue-size` and `--subtitle-track-height` are declared together in every
-  `:root` that redefines either.
-- Editor controls keep the 24px floor; the smallest type clears 4.5:1 on its worst backdrop.
+## Relations The Suite Holds
 
-When a change breaks one of these, fix the relation — do not relax the assertion.
+Beyond behavior coverage, these tests hold relations no single file can enforce on its
+own. When a change breaks one, fix the relation — do not relax the assertion.
+
+| Relation | Test |
+|---|---|
+| A new event kind cannot reach the parser while staying out of the catalogue or `markerColors` | `every parser kind is in the catalogue` (commands) |
+| The rendered `SYNTAX_HINT` names every catalogued command exactly once | `the syntax hint names every kind exactly once` (commands) |
+| Two kinds sharing a color differ in form, unless they are halves of one gesture or the reset family | `two kinds that share a color differ in form` (commands) |
+| The in-flight gesture preview carries `BOARD_GESTURE_CLASS`, the class a PNG snapshot removes | `the gesture preview carries the class a snapshot removes` (board-export) |
+| `--artifact-fit-width` is the authored token or a literal size in every tier | `the recording frame is an authored size, never viewport-derived` (styles) |
+| `--subtitle-cue-size` and `--subtitle-track-height` are declared together and the cue fits its track | `the subtitle track fits its cue in every media tier` (styles) |
+| Editor controls keep the 24px hit floor | `editor controls keep the 24px hit floor` (styles) |
+| The smallest type clears 4.5:1 on its worst backdrop | `time chips keep their contrast on the variation inset` (styles) |
+| A catalogued command word never falls through to SAN | `every catalogued word selects its own command, never SAN` (commands) |
+| br/ml depth is counted once, by the walk | `each snapshot knows how many variations are open` (world) |
 
 ## Before Handing Off
 

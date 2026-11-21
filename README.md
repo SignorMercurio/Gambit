@@ -55,9 +55,9 @@ capture effects, annotation badges, and mind's-eye frame. Subtitles, controls,
 PGN, and in-progress editing gestures are excluded. Browser zoom and the board's
 onscreen size do not change the output dimensions.
 
-Playback and editing pause during export, then the prior play state resumes.
-Imports already in progress wait until export finishes. If rendering takes
-longer than 15 seconds, an error appears and the controls unlock for a retry.
+The PNG is the frame on screen at the moment you click; playback and editing
+carry on while it renders. If rendering takes longer than 15 seconds, an error
+appears and you can retry.
 
 ## Subtitles
 
@@ -72,7 +72,7 @@ Central control is established.
 ## Development
 
 ```sh
-npm test          # node scripts/test-regressions.mjs — one node:test file
+npm test          # node --test "test/*.test.mjs", one file per module
 npm run build
 ```
 

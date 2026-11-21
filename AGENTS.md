@@ -7,7 +7,7 @@ Requires Node 22.12+. npm, no workspaces.
 
 ```sh
 npm run dev        # Vite, usually http://127.0.0.1:5173/
-npm test           # node scripts/test-regressions.mjs — one node:test file
+npm test           # node --test "test/*.test.mjs" — node:test, one file per module
 npm run build
 ```
 

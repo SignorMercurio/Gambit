@@ -2,9 +2,11 @@
 
 The timestamped script is the source of truth. Short syntax is primary; legacy long
 commands remain accepted. The user-facing syntax table is in
-[README.md](../README.md#script-syntax). `src/lib/timeline.ts` owns parsing and
-accepted aliases. `src/lib/commands.ts` supplies the insert menu and Text view's
-syntax hint; adding an event kind requires updating both the parser and catalogue.
+[README.md](../README.md#script-syntax). `src/lib/commands.ts` is the catalogue: each command's words (token and long alias),
+argument parser, and the prose the insert menu and the Text view's syntax hint show.
+`src/lib/timeline.ts` owns the line shape and timestamps and dispatches to it. A new
+kind's syntax is one catalogue entry plus its `EventFields` variant; the compiler then
+names every exhaustive table and switch that must handle it.
 
 ## Parser Rules
 
