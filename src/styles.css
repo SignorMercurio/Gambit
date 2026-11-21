@@ -871,7 +871,8 @@ button {
   justify-content: space-between;
   gap: 12px;
 }
-.panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin-top: 4px; font-family: var(--font-mono); }
+/* `margin` whole, so the UA paragraph margin can't pad the header's bottom. */
+.panel-hint { font-size: 11.5px; color: var(--color-foley-slate); margin: 4px 0 0; font-family: var(--font-mono); }
 .nowrap { white-space: nowrap; }
 /* Narration section has no textarea; the hint carries the section body. */
 .narration-hint { margin: 0; padding: 0 18px 12px; }
@@ -879,7 +880,7 @@ button {
 .fen-field {
   display: grid;
   gap: 6px;
-  padding: 9px 18px 10px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--line-faint);
   background: var(--well-08);
 }
@@ -1118,10 +1119,13 @@ button {
 }
 button.insert-item:hover { background: var(--tonal-white-08); }
 .insert-item--static { cursor: default; }
+/* On the hint's first line, so a two-line row keeps dot and token together:
+   half of what the 12.5px × 1.45 line leaves around the 6px dot. */
 .insert-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
-  align-self: center;
+  align-self: start;
+  margin-top: 6px;
 }
 .insert-token {
   font-family: var(--font-mono);
@@ -1183,25 +1187,33 @@ button.insert-item:hover { background: var(--tonal-white-08); }
    events as kind-colored seek dots. Reached events read full strength;
    unreached ones dim. */
 .pgn-rows { display: flex; flex-direction: column; }
+/* A cell whose marks wrap grows the row downward only: number, White and
+   Black keep their first lines level, each centered in the first --pgn-line. */
 .pgn-row {
+  --pgn-line: 30px;
+  /* What the line leaves above and below the 23px move pill. */
+  --pgn-pad: 3.5px;
   display: grid;
   grid-template-columns: 30px 1fr 1fr;
   align-items: stretch;
-  min-height: 30px;
+  min-height: var(--pgn-line);
 }
 .pgn-numcol {
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: flex-start; justify-content: center;
   font-family: var(--font-mono);
   font-size: 10.5px; font-weight: 500;
+  line-height: var(--pgn-line);
   color: var(--color-foley-slate);
   background: var(--tonal-white-04);
 }
 .pgn-cell {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 1px 2px;
-  min-width: 0; padding: 2px 6px 2px 4px;
+  display: flex; align-items: center; align-content: flex-start;
+  flex-wrap: wrap; gap: 1px 2px;
+  min-width: 0; padding: var(--pgn-pad) 6px var(--pgn-pad) 4px;
 }
 .pgn-cell.pgn-gap {
   font-family: var(--font-mono); font-size: 12.5px;
+  line-height: calc(var(--pgn-line) - 2 * var(--pgn-pad));
   color: var(--color-foley-slate); padding-left: 11px;
 }
 /* Move-cell ink, shared with present mode's read-only list. .present-mv is a
@@ -1364,7 +1376,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   display: flex; min-width: 0; flex: 1; text-align: left;
 }
 .pgn-divider-seek { align-items: center; }
-.pgn-err-seek { align-items: baseline; gap: 8px; }
+.pgn-err-seek { align-items: baseline; gap: 10px; }
 /* Script-panel view toggle: Moves (structured) / Text (fallback). Mirrors
    the speed-group segmented pattern. */
 .view-toggle {
@@ -1385,6 +1397,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
    hover-revealed delete ×; a variation block deletes as a whole via its own
    × at the end of the flow. */
 .pgn-tok { display: inline-flex; align-items: center; gap: 1px; min-width: 0; position: relative; }
+/* A mark token has no text baseline of its own; centering every token on the
+   line keeps its dot and chip level with the moves' chips. */
+.pgn-var > .pgn-tok { vertical-align: middle; }
 /* Faint pill so editable timestamps read as objects, distinct from the mono
    move numbers they sit next to. margin-left: auto keeps the chip pushed to
    the right edge inside full-width rows (dividers). */

@@ -422,7 +422,7 @@ Its pin and dot are hollow amber, apart from `hl` (filled amber) and `cl` (hollo
 
 The script as a PGN move list, lichess-style in Gambit's chrome:
 
-- **Mainline rows.** `[num 30px] [white 1fr] [black 1fr]`, number rail on `tonal-white-04`, Lilex 13px/600. A row resuming on Black shows "…" for White. Each cell: move, annotation dots, right-aligned 10.5px time.
+- **Mainline rows.** `[num 30px] [white 1fr] [black 1fr]`, number rail on `tonal-white-04`, Lilex 13px/600. A row resuming on Black shows "…" for White. Each cell: move, annotation dots, right-aligned 10.5px time. A cell whose marks wrap grows the row downward only: number, White and Black keep their first lines level.
 - **Variations.** A top-level `br … ml` is an inset flow (`tonal-white-04`, mono 11.5px, lh 1.9): numbered spans (`3.Bc4`, `3…Bc5`), nested variations in parentheses, a trailing `↩` that seeks to the `ml`. Numbering derives from the position snapshots.
 - **Non-move events.** Highlights, arrows, clears, `rp`: inline seek dots after their move, tooltips with time + body. Resets / `st` / `fen` are full-width vermillion breaks that restart numbering. Errors stay full rows.
 - **States.** Reached at full strength, unreached dimmed, current position in a solid steel-blue pill. Event elements carry `data-evi={event index}`. A rejected move is flagged inline (error ink, vermillion wavy underline, tooltip).
