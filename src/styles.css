@@ -1101,17 +1101,25 @@ button {
   font-size: 11.5px;
   color: var(--color-foley-slate);
 }
-.insert-list { list-style: none; margin: 0; padding: 8px 8px; }
+/* The row's columns, named once: a reference row's `via` line indents to the
+   hint column by the same numbers the grid is built from. Token column sized
+   to the longest syntax example the catalogue carries, so a reference row
+   never wraps its own name. */
+.insert-list {
+  --insert-pad: 10px;
+  --insert-dot: 8px;
+  --insert-token: 88px;
+  --insert-gap: 10px;
+  list-style: none; margin: 0; padding: 8px 8px;
+}
 .insert-row { display: flex; flex-direction: column; }
 .insert-item {
   display: grid;
-  /* Token column sized to the longest syntax example the catalogue carries,
-     so a reference row never wraps its own name. */
-  grid-template-columns: 8px 88px 1fr;
+  grid-template-columns: var(--insert-dot) var(--insert-token) 1fr;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--insert-gap);
   width: 100%;
-  padding: 7px 10px;
+  padding: 7px var(--insert-pad);
   border-radius: var(--radius-sm);
   text-align: left;
   font-family: var(--font-ui);
@@ -1144,7 +1152,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 .insert-row--ref .insert-hint { color: var(--color-rim-light-pewter); }
 .insert-row--ref .insert-dot { opacity: 0.55; }
 .insert-via {
-  padding: 0 10px 6px 116px;
+  padding: 0 var(--insert-pad) 6px
+    calc(var(--insert-pad) + var(--insert-dot) + var(--insert-token) + 2 * var(--insert-gap));
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--color-studio-steel-blue);
