@@ -15,8 +15,16 @@ const VOLUME = 0.5;
 
 let players: HTMLAudioElement[] | null = null;
 let nextPlayer = 0;
+// Offline video render (src/lib/renderMode.ts) takes the click instead of the
+// speakers, so the renderer can mix it at the frame it landed on.
+let sink: (() => void) | null = null;
+
+export function setMoveSoundSink(next: (() => void) | null): void {
+  sink = next;
+}
 
 function playMoveSound(): void {
+  if (sink) return sink();
   // Lazy: test/move-sound.test.mjs imports this module without a DOM.
   players ??= Array.from({ length: PLAYER_COUNT }, () => {
     const audio = new Audio(MOVE_SOUND_URL);

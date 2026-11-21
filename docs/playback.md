@@ -89,3 +89,19 @@ Rules live in [src/lib/moveSound.ts](../src/lib/moveSound.ts) and
   the whole operation — not around the step that looks riskiest, and never nested. If
   the abandoned work can still produce a side effect, gate that effect on an abort
   signal.
+
+## Offline Video Render
+
+- `?render` ([src/lib/renderMode.ts](../src/lib/renderMode.ts)) opens present mode
+  with its chrome hidden and installs `window.gambitRender`; it never starts the
+  rAF playback loop. The grabber (`scripts/render-video.mjs`) only chooses the time:
+  `seek(t)` sets the clock and resolves after two frames, so the screenshot is the
+  same script + FEN + time frame live playback shows.
+- Wall-clock CSS transitions are off under `.app--render`: frames are taken at clock
+  times, and a transition would land on whatever step the grab happened to hit.
+- Move clicks go to a sink (`setMoveSoundSink`) instead of the speakers. `seek`
+  returns how many clicks its frame produced, and the grabber mixes the sample at
+  that frame's time at the same 0.5 volume, so the click rule stays the one in
+  `moveSound.ts`.
+- Drafts are the only input path: the grabber seeds them with an init script that
+  runs before the app, because a loaded app flushes its own drafts on unload.

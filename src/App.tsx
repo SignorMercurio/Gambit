@@ -27,6 +27,7 @@ import { fmtTime, lastEventIndexAt, parseScript } from './lib/timeline';
 import { useLatest } from './components/useLatest';
 import { buildWorld, setupFromFen, worldFrameAt } from './lib/world';
 import { landBetween, playbackDuration } from './lib/playback';
+import { RENDER_MODE, installRenderHandle } from './lib/renderMode';
 
 
 const EXPORT_LABELS: Record<BoardExportState['status'], string> = {
@@ -116,13 +117,13 @@ export default function App() {
   const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'moves');
   const scriptView: 'moves' | 'text' = scriptViewRaw === 'text' ? 'text' : 'moves';
   // Present mode is purely a view flag: the board stays script + FEN + time.
-  const [present, setPresent] = useState(false);
+  const [present, setPresent] = useState(RENDER_MODE);
   const [presentPgnRaw, setPresentPgn] = useDraftText(DRAFT_KEYS.presentPgn, '0');
   const presentPgn = presentPgnRaw === '1';
   // `moveSoundEnabled`, not `=== '1'`, keeps a junk draft at the default ON.
   const [moveSoundRaw, setMoveSoundDraft] = useDraftText(DRAFT_KEYS.moveSound, '1');
   const moveSoundOn = moveSoundEnabled(moveSoundRaw);
-  const [chromeHidden, setChromeHidden] = useState(false);
+  const [chromeHidden, setChromeHidden] = useState(RENDER_MODE);
   const chromeHiddenRef = useLatest(chromeHidden);
   const scriptTextRef = useLatest(scriptText);
   // Landing reads the transport state at release, not pointer-down: playback
@@ -157,6 +158,12 @@ export default function App() {
   useEffect(() => {
     clock.set((t) => Math.min(t, duration));
   }, [clock, duration]);
+
+  const durationRef = useLatest(duration);
+  useEffect(
+    () => (RENDER_MODE ? installRenderHandle(clock, () => durationRef.current) : undefined),
+    [clock, durationRef],
+  );
 
   const latestScriptReadRef = useRef(0);
   const latestSubtitleReadRef = useRef(0);
@@ -407,6 +414,8 @@ export default function App() {
   // on play/pause. `arm` sets state only when hidden, so a stream of
   // pointermoves never re-renders App.
   useEffect(() => {
+    // A render keeps the chrome hidden from its first frame.
+    if (RENDER_MODE) return;
     if (!present) {
       setChromeHidden(false);
       return;
@@ -486,7 +495,7 @@ export default function App() {
     <div
       className={`app${present ? ' app--present' : ''}${
         showPresentPgn ? ' app--present-pgn' : ''
-      }${present && chromeHidden ? ' app--idle' : ''}`}
+      }${present && chromeHidden ? ' app--idle' : ''}${RENDER_MODE ? ' app--render' : ''}`}
     >
       {/* Driven entirely by the playback clock (useNarration). */}
       {narration && <audio ref={narrationTrack.audioRef} src={narration.url} preload="auto" />}

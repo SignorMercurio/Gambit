@@ -59,6 +59,20 @@ The PNG is the frame on screen at the moment you click; playback and editing
 carry on while it renders. If rendering takes longer than 15 seconds, an error
 appears and you can retry.
 
+## Video render
+
+Instead of screen recording present mode, render a timeline to video frame by
+frame (needs `npm run dev`, ffmpeg, and a Chromium-family browser; pass `--chrome`
+or set `$CHROME` if none is found):
+
+```sh
+node scripts/render-video.mjs --script output.gambit --fen '<FEN>' \
+  --srt output.srt --audio output.mp3 --out render.mov
+```
+
+The output is a 30fps H.264 MOV of present mode at 1440×900 @2x, cropped to the
+board and its subtitle strip, with the narration and the piece clicks mixed in. `--until 20` renders a 20-second preview.
+
 ## Subtitles
 
 Open the **Setup** tab to paste SRT text or import a `.srt` file. Subtitle cues use standard SRT time ranges and must be separated by a blank line:
