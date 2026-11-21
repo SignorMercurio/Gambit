@@ -1,25 +1,17 @@
-// The script language's way in for the argument-free kinds — notably `mind`
-// and `reveal`, which otherwise had no on-screen entry point beyond a syntax hint.
+// Insert menu for the argument-free kinds (notably `mind` and `reveal`, which
+// have no other on-screen entry point). An inline disclosure, not a popover,
+// so no ancestor's overflow can clip it. Insertion goes through the board
+// gestures' planLineInsert path, so the same stamping rules apply.
 //
-// It is deliberately an inline disclosure rather than a popover: the side panel
-// is a tall column with room to spare, an in-flow panel can't be clipped by an
-// ancestor's overflow, and the product register's rule is to exhaust inline
-// alternatives before reaching for an overlay.
-//
-// Insertion goes through the same planLineInsert path as a board gesture, so
-// stamping policy, collision stepping, and the paused-playhead landing are the
-// gestures' rules verbatim — this is another way to type a line, not a second
-// way to edit state.
-//
-// It owns its open flag and the `/` shortcut. Mounting is the gate: the menu is
-// rendered only in the Script tab's Moves view outside present mode, so `/`
-// does nothing wherever the result of pressing it couldn't be shown, and
-// leaving the view drops the open flag with the component instead of
-// reopening on return.
+// Mounting is the gate for its open flag and the `/` shortcut: it renders only
+// in the Moves view outside present mode, so `/` does nothing wherever the menu
+// could not show, and leaving the view drops the open flag.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CommandEntry } from '../lib/commands';
+import { useClockValue, type Clock } from '../lib/clock';
 import { AUTHORED_ELSEWHERE_COMMANDS, INSERTABLE_COMMANDS } from '../lib/commands';
+import { fmtTime } from '../lib/timeline';
 import { markerColors } from '../lib/tokens';
 import { useLatest } from './useLatest';
 import { useRovingTabIndex } from './useRovingTabIndex';
@@ -28,8 +20,6 @@ import { useRovingTabIndex } from './useRovingTabIndex';
 // transport keys in App (which widen it to every interactive control).
 export const TEXT_ENTRY_SELECTOR = 'input, textarea, [contenteditable="true"]';
 
-// The two lists differ in one thing — whether the row is a button — so the face
-// itself is shared.
 function CommandFace({ command }: { command: CommandEntry }) {
   return (
     <>
@@ -46,13 +36,10 @@ function CommandFace({ command }: { command: CommandEntry }) {
 
 type InsertMenuProps = {
   onInsert: (body: string) => void;
-  // Where the line will land, already formatted. Shown on the trigger so the
-  // playhead's role is visible before the menu is ever opened.
-  timeLabel: string;
+  // Where the line will land, already formatted.
+  clock: Clock;
 };
 
-// The five kinds authored on another surface; a module constant because it
-// closes over nothing.
 const ELSEWHERE_ROWS = AUTHORED_ELSEWHERE_COMMANDS.map((c) => (
   <li key={c.token} className="insert-row insert-row--ref">
     <span className="insert-item insert-item--static">
@@ -62,17 +49,16 @@ const ELSEWHERE_ROWS = AUTHORED_ELSEWHERE_COMMANDS.map((c) => (
   </li>
 ));
 
-export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
+export function InsertMenu({ onInsert, clock }: InsertMenuProps) {
+  // The one clock reading in the editor panel: it changes ten times a second,
+  // and only this component follows it.
+  const timeLabel = useClockValue(clock, (t) => fmtTime(t, 'always'));
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // `/` opens the menu. Its guard is narrower than the transport's: the
-  // transport keys must stay off every control (Space would re-trigger a
-  // focused button), but `/` is only ever ambiguous inside real text entry,
-  // and blocking it on buttons would kill the shortcut exactly when focus is
-  // parked on the move list. A PNG export makes `main` `inert`, which
-  // stops clicks but not a window listener — so the key checks it too.
+  // `/` is guarded only against text entry, unlike the transport keys:
+  // blocking it on buttons would kill it while focus is on the move list.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '/') return;
@@ -80,7 +66,6 @@ export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
         e.target instanceof HTMLElement &&
         e.target.closest(TEXT_ENTRY_SELECTOR)
       ) return;
-      if (triggerRef.current?.closest('[inert]')) return;
       e.preventDefault();
       setOpen(true);
     };
@@ -88,26 +73,19 @@ export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Same mechanism as the event list and the pin row: the command rows cost
-  // one Tab stop, and Up/Down walk them.
   const roving = useRovingTabIndex('button.insert-item', {
     mirrorTo: panelRef,
     verticalArrows: true,
   });
 
-  // Closing always returns focus to the trigger — a menu that dismisses into
-  // nowhere strands the keyboard.
+  // Closing returns focus to the trigger so the keyboard is never stranded.
   const close = useCallback(() => {
     setOpen(false);
     triggerRef.current?.focus();
   }, []);
 
-  // This component sits in the default view, so it re-renders on every
-  // animation frame of playback. `onInsert` closes over the playhead and so
-  // changes identity every frame; held in a ref, the click handler below can be
-  // stable, which is what lets the row lists memoize down to zero per-frame
-  // work while the panel is open. `close` is a `useCallback` for the same
-  // reason.
+  // The time label re-renders this ten times a second during playback. A
+  // stable handler (and `close`) lets the row list memoize through that.
   const insertRef = useLatest(onInsert);
   const handleInsert = useCallback(
     (body: string) => {
@@ -117,9 +95,8 @@ export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
     [close],
   );
 
-  // The time is deliberately absent from the row labels: the trigger carries
-  // it ("Insert at 00:12.3"), and per-frame labels would rewrite eight
-  // accessible names 60×/s under a screen reader's cursor.
+  // Row labels omit the time (the trigger carries it): ticking labels would
+  // rewrite accessible names under a screen reader's cursor.
   const insertable = useMemo(
     () =>
       INSERTABLE_COMMANDS.map((c) => (
@@ -138,15 +115,13 @@ export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
     [handleInsert],
   );
 
-  // Opening moves focus into the first command — a menu the keyboard has to
-  // go hunting for is not a keyboard path.
   useEffect(() => {
     if (!open) return;
     panelRef.current?.querySelector<HTMLElement>('button.insert-item')?.focus();
   }, [open]);
 
-  // Light dismiss. Pointerdown rather than click so a press that starts
-  // outside never lands on the board as a gesture and leaves the menu open.
+  // Light dismiss on pointerdown, not click, so a press that starts a board
+  // gesture still closes the menu.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -177,9 +152,8 @@ export function InsertMenu({ onInsert, timeLabel }: InsertMenuProps) {
             roving.onKeyDown(e);
           }}
         >
-          {/* Clickable commands lead. In parser order the three gesture kinds
-              come first, which pushed `mind` and `reveal` — the kinds this menu
-              exists to surface — below the panel's scroll fold. */}
+          {/* Clickable commands lead, keeping `mind` and `reveal` above the
+              scroll fold. */}
           <ul className="insert-list">{insertable}</ul>
           <p className="insert-group-label">Authored on the board, not from a menu</p>
           <ul className="insert-list">{ELSEWHERE_ROWS}</ul>

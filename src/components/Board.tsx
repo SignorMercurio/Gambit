@@ -1,5 +1,3 @@
-// Pieces translate via `translate3d` so motion stays on the GPU compositor.
-
 import {
   useEffect,
   useMemo,
@@ -53,17 +51,16 @@ import {
 } from '../lib/world';
 
 const SQ = 100;
-// The board's own coordinate box. Exported because the badge-clamp guard
-// asserts the disc stays inside it, and a second `800` there would be a clamp
-// check that cannot see the box it is clamping to.
+// The board's own coordinate box; exported so the badge-clamp test
+// (test/board.test.mjs) checks against this box, not a second `800`.
 export const BOARD_SIZE = SQ * 8;
 const HIGHLIGHT_FADE_IN = 0.16;
 const OVERLAY_FADE_OUT = 0.32;
 const ARROW_DRAW_DURATION = 0.34;
 const BADGE_DELAY = 0.08;
 const BADGE_IN_DURATION = 0.18;
-// Mirrors the capture fade-out's 0.82 end scale so a piece the branch captured
-// returns along the same visual path it left by.
+// A restored piece grows from the capture fade-out's 0.82 end scale, so it
+// returns along the visual path it left by.
 const RESTORE_FADE_IN = 0.3;
 
 type BoardProps = {
@@ -80,19 +77,15 @@ type BoardProps = {
   revealedAt: number;
   time: number;
   orientation: BoardOrientation;
-  // Interactive editing (Script tab only). Gestures never draw directly —
-  // they report intents that App records as script lines, so the script
-  // text stays the single source of truth. Mouse-only by design: this is a
-  // desktop screen-recording tool and right-button gestures need a mouse.
+  // Gestures never draw directly; they report intents that App records as
+  // script lines. Mouse-only: right-button gestures need a mouse.
   interactive: boolean;
-  // The frame's position, for the gesture's legality questions. The same
-  // snapshot value the board draws from, never a copy of it.
+  // The same snapshot value the board draws from, never a copy of it.
   chessState: GameState;
   onMoveGesture: (from: string, to: string) => void;
   onArrowGesture: (from: string, to: string) => void;
   onHighlightGesture: (sq: string) => void;
-  // A left-press on a square that can't start a move. Reported rather than
-  // swallowed so App can say why; Board never decides the wording.
+  // A left-press on a square that can't start a move; App owns the wording.
   onMoveRejected: (from: string) => void;
 };
 
@@ -104,17 +97,12 @@ const BOARD_ARROW = {
   headLen: 36,
 } as const;
 
-// Trace the arrow outline as a single polygon (tail → left elbows → head
-// flare → right elbows → tail). `pts[0]` is the tail, `pts[last]` is the tip;
-// intermediates are knight-L elbows.
 type Seg = { x1: number; y1: number; ux: number; uy: number; len: number };
 
 // Where the offset edges along consecutive segments `a` and `b` meet, shifted
-// by `side * shaftHalf` (side: +1 = walker's left, -1 = right). A closed form,
-// not a general line intersection: the only multi-segment arrow is the knight
-// L from `arrowPoints`, whose legs are axis-aligned and perpendicular, so the
-// edges meet at the elbow offset by both legs' normals. A non-perpendicular
-// elbow would need the general intersection back.
+// by `side * shaftHalf` (side: +1 = walker's left, -1 = right). Valid only for
+// perpendicular legs (the knight L from `arrowPoints`); any other elbow needs
+// a general line intersection.
 function elbowJoin(a: Seg, b: Seg, side: number, shaftHalf: number): [number, number] {
   return [b.x1 + side * shaftHalf * (a.uy + b.uy), b.y1 - side * shaftHalf * (a.ux + b.ux)];
 }
@@ -122,6 +110,8 @@ function elbowJoin(a: Seg, b: Seg, side: number, shaftHalf: number): [number, nu
 const polyline = (pts: ReadonlyArray<readonly [number, number]>) =>
   'M' + pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L');
 
+// The arrow outline as one polygon: tail → left elbows → head flare → right
+// elbows → tail. `pts[0]` is the tail, `pts[last]` the tip.
 function buildArrowPath(pts: Array<readonly [number, number]>): string {
   const { shaftHalf, headHalf, headLen } = BOARD_ARROW;
   const segs: Seg[] = [];
@@ -285,13 +275,9 @@ const lastMoveFill = (f: number, r: number) =>
 // pairing, which the gesture marks share (DESIGN.md, Move gestures).
 const coordInk = (isLight: boolean) => (isLight ? tokens.coordOnLight : tokens.coordOnDark);
 
-// The two squares a last move paints, origin first. One function rather than a
-// conditional at each rect, because the rule is about the *pair*: an annotated
-// move repaints only where it landed, and the origin keeps the amber, so the
-// move still reads directionally — where it came from, and what it was worth.
-// Written as a ternary inside the map, that rule lived in the difference
-// between two iterations of the same expression, and the only way to state it
-// was to quote the source line.
+// The two squares a last move paints, origin first. An annotated move repaints
+// only where it landed; the origin keeps the amber so the move still reads
+// directionally.
 type PaintedSquare = { f: number; r: number; fill: string; alpha: number };
 
 export function lastMoveSquares(move: LastMove): [PaintedSquare, PaintedSquare] {
@@ -311,12 +297,8 @@ export function lastMoveSquares(move: LastMove): [PaintedSquare, PaintedSquare] 
   ];
 }
 
-// One of the two squares that pair paints, returning the element for the
-// reason `BadgeDisc` and `HlRing` do: the last move is a flood, and a stroke
-// added at a call site would put a hard box on every move of the recording —
-// the drift the flood exists to avoid. Owning the element makes that
-// unrepresentable there, and lets the suite assert its absence by calling this
-// function.
+// The last move is a flood, never a stroke. Returns the element (not props) so
+// a call site cannot add one, and test/board.test.mjs asserts that by calling it.
 export function LastMoveRect({
   view,
   fill,
@@ -334,59 +316,31 @@ const squareRect = (view: BoardViewPosition, fill: string, opacity: number) => (
   <rect x={view.x * SQ} y={view.y * SQ} width={SQ} height={SQ} fill={fill} opacity={opacity} />
 );
 
-// The move-quality badge, in board units (SQ = 100). Exported because the
-// suite checks the disc stays on the board, and a second `23` there would be
-// a clamp guard that can't see the radius it is clamping.
+// The move-quality badge radius, in board units (SQ = 100); exported so the
+// clamp test checks against this radius.
 export const BADGE_R = 23;
-// The disc hangs off the square's top-right corner rather than sitting inside
-// it. Two reasons, both about the recording: a badge contained in the square
-// competes with the piece standing on it — on a pawn move the disc lands on the
-// pawn's head — and a mark that breaks the grid reads as applied *to* the move
-// rather than as one more thing painted on the square, which is the whole
-// distinction between the author's judgment and the board's own state. So the
-// center sits exactly on the corner; there is no inset to tune.
-//
-// It must never leave the board, though. The overhang clips against the
-// viewBox on the h-file and the 8th rank, and the PNG export rasterizes the
-// same 800-unit box, so an edge move would ship a sliced disc.
+// The disc's center sits on the square's top-right corner, so it does not
+// cover the piece and reads as applied to the move. `badgeCenter` clamps it
+// this far inside the board, since the viewBox and the PNG both clip there.
 export const BADGE_EDGE_MARGIN = 4;
 
-// The badge glyphs. Real characters, set in the chrome face — `!` and `?` are
-// text, and drawing them as paths traded a maintainable line for control we
-// did not need. Weight 700 rather than the display 900 it started at: at the
-// ~40px the disc is drawn, 900 closes the question mark's aperture and the
-// pair of a doubled mark starts to fuse.
-//
-// One thing the path version did buy, noted so it is a known risk rather than
-// a surprise: `<text>` inside the SVG that `html-to-image` clones rasterizes in
-// the right face only if that face is loaded and embeddable. Both board fonts
-// are self-hosted and preloaded, so the export has them.
+// The glyphs are `<text>` in the chrome face; the PNG rasterizes them in that
+// face only because the board fonts are self-hosted and preloaded. 700, not
+// 900: at ~40px, 900 closes `?`'s aperture and fuses doubled marks.
 const GLYPH_WEIGHT = 700;
-// Size and tracking per mark, in board units, measured in Schibsted 700 rather
-// than shared by "single" and "double". The two doubled marks fail in opposite
-// directions, so one doubled setting cannot serve both:
-//   - `!!` is two narrow stems. One shared -1.5 tracking left ~1 unit of air
-//     between them, under a pixel once a 720px board is downscaled to 1080p, so
-//     the pair fused into one thick bar. It opens instead, and being narrow it
-//     can stand almost as tall as a single mark (ink 28.6 against 30).
-//   - `??` is the one wide mark: at single size it is 48 units of ink in a
-//     46-unit disc, so it stays smaller. `?` has almost no sidebearing, so it
-//     still needs a little tracking to keep its hooks apart; any negative value
-//     lets the second hook touch the first.
-// The singles step down from 44 to 42 so the set reads as one family: the old
-// 44/30 split put the doubled marks at 68% of a single's height, which read as
-// a lesser grade of the same judgment. Now `!!` is 95% and `??` 79%.
+// Size and tracking per mark, in board units, measured in Schibsted 700. The
+// doubled marks need opposite fixes: `!!` needs positive tracking or its stems
+// fuse at 1080p; `??` is too wide for the disc at single size, and any negative
+// tracking makes its hooks touch.
 const BADGE_GLYPHS: Record<MoveAnnotation, { size: number; tracking: number }> = {
   brilliant: { size: 40, tracking: 2.5 },
   great: { size: 42, tracking: 0 },
   mistake: { size: 42, tracking: 0 },
   blunder: { size: 33, tracking: 0.5 },
 };
-// Cap height as a share of the em in Schibsted Grotesk (31.5 units of ink at
-// 44). `!` and `?` are cap-height marks sitting on the baseline, so dropping
-// the baseline half a cap below the disc's centre centres the ink itself —
-// `dominant-baseline="central"` centres the em box instead, which put the
-// marks 1–1.5 units low and needed a hand-tuned nudge per size.
+// Cap height as a share of the em in Schibsted Grotesk. The baseline sits half
+// a cap below the disc's center to center the ink; `dominant-baseline="central"`
+// centers the em box instead and puts the marks low.
 const GLYPH_CAP_HEIGHT = 0.716;
 
 export function badgeCenter(view: BoardViewPosition): [number, number] {
@@ -395,11 +349,8 @@ export function badgeCenter(view: BoardViewPosition): [number, number] {
   return [Math.min((view.x + 1) * SQ, limit), Math.max(view.y * SQ, floor)];
 }
 
-// The disc in one place, returning the element rather than a props bag, for
-// the reason `HlRing` does it below: the reference has no rim, and a `stroke`
-// added at a call site is the exact drift this replica keeps inviting. Owning
-// the element makes a rim unrepresentable there, and lets the suite assert its
-// absence by calling this function instead of pattern-matching JSX source.
+// The disc has no rim. Returns the element (not props) so a call site cannot
+// add a stroke, and test/board.test.mjs asserts that by calling it.
 export function BadgeDisc({
   annotation,
   cx,
@@ -412,32 +363,17 @@ export function BadgeDisc({
   return <circle cx={cx} cy={cy} r={BADGE_R} fill={annotationColors[annotation]} />;
 }
 
-// The `hl` ring, in board units (SQ = 100) so it scales with the board rather
-// than the viewport. A circle, not a rounded square. An outlined rounded rect restates the
-// square's own geometry, so it reads as the square being *selected* — UI
-// language — no matter how thin or how softly cornered it gets. A circle does
-// not echo the grid, so it reads as a mark drawn on top of the square, and it
-// is the annotation shape chess players already know from ring-a-square.
-// 6% stroke still resolves at 480p, where the board is ~50px per square.
+// The `hl` ring, in board units (SQ = 100). A circle, not a rounded square: a
+// rounded rect echoes the grid and reads as UI selection. A 6-unit stroke
+// still resolves at 480p.
 const HL_RING = 6;
 const HL_RADIUS = 43;
 
-// The ring in one place: the live overlay and the in-flight gesture preview
-// must draw the same shape, or the preview promises a mark the script will not
-// produce.
-//
-// It returns the element, not a props bag. A bag is only a default — every
-// call site spreads it, and `{...hlRingCircle(v)} r={30} strokeWidth={2.5}`
-// silently wins, which is the invariant this helper exists for. Owning the
-// element makes a second radius unrepresentable at a call site rather than
-// merely discouraged.
-//
-// `scale` is the fade-in growth, applied here because it pivots on the ring's
-// own center: two expressions for one point can drift, and the ring would then
-// grow about a spot that is not its middle.
-//
-// No per-square-color variant: the stroke is opaque, so it does not take on the
-// square underneath and reads as one pen on both. See tokens.ts.
+// The live overlay and the gesture preview both draw the ring through this, so
+// the preview cannot promise a mark the script will not produce. Returns the
+// element (not props) so a call site cannot override the radius or stroke.
+// `scale` pivots on the ring's own center. The stroke is opaque, so one color
+// serves both square colors.
 export function HlRing({
   view,
   opacity = 1,
@@ -498,11 +434,9 @@ function coordLabels(orientation: BoardOrientation) {
   ];
 }
 
-// The board's one <defs>, hoisted so 60Hz renders reuse one element instead of
-// rebuilding (and remounting) the subtree with the check state. SVG ids are
-// document-global, so the arrow and badge planes resolve `url(#…)` against
-// these from the base plane, which is always mounted; one copy per id also
-// means a plane cannot shadow another's definition.
+// The board's one <defs>, hoisted so per-frame renders reuse one element. SVG
+// ids are document-global, so the other planes resolve `url(#…)` against these
+// in the always-mounted base plane; keep one copy per id.
 const BOARD_DEFS = (
   <defs>
     <radialGradient id="board-check-glow">
@@ -513,24 +447,17 @@ const BOARD_DEFS = (
     <filter id="arrow-shadow" x="-10%" y="-10%" width="120%" height="120%">
       <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodColor="#0f1525" floodOpacity="0.32" />
     </filter>
-    {/* The badge's only edge, now that the rim is gone. Deeper than an
-       ordinary board shadow on purpose: chess.com's `great` blue is 1.08:1
-       against our dark square, so on half the board this filter is the
-       entire difference between a disc and a smudge. Compared on the page at
-       0.34 / 0.55 / 0.70 / 0.85 — 0.34 left the circle's edge to guesswork on
-       blue, and 0.85 turned into a grey halo that reads as grime on the cream
-       squares, where the fills already have contrast to spare. 0.70 is the
-       last stop that helps the blue case without dirtying the cream one. */}
+    {/* The badge's only edge: `great` blue is ~1:1 against the dark square,
+       so the shadow carries the disc there. 0.7 is the deepest that does not
+       read as grime on the cream squares. */}
     <filter id="annotation-badge-shadow" x="-45%" y="-45%" width="190%" height="190%">
       <feDropShadow dx="0" dy="3" stdDeviation="3.5" floodColor="#0f1525" floodOpacity="0.7" />
     </filter>
   </defs>
 );
 
-// One square pair per surface. Both sets are hoisted fragments so a lit frame
-// diffs a single constant element instead of 64 rects. Alone under the void's
-// fading <g>, React unwraps the fragment, so there each rect bails out on
-// identity instead.
+// Hoisted fragments, so a steady frame bails out on element identity instead
+// of diffing 64 rects.
 const squareRects = (light: string, dark: string) => (
   <>
     {SQUARES.map(({ f, r, isLight }) => (
@@ -546,26 +473,16 @@ const squareRects = (light: string, dark: string) => (
   </>
 );
 const SQUARE_RECTS = squareRects(tokens.squareLight, tokens.squareDark);
-// The void layer: the same 64 squares in near-black, faded in over the lit
-// board by `mindSink`. A layer rather than a fill swap so the sink follows the
-// playback clock (and so overlays keep landing on top of it).
+// The void: a layer faded in over the lit squares by `mindSink`, not a fill
+// swap, so the sink follows the playback clock and overlays stay on top.
 const VOID_RECTS = squareRects(tokens.mindVoidLight, tokens.mindVoidDark);
-// The fully-sunk steady state — the whole mind phase after the 0.6s ramp —
-// hoisted so it bails out on identity like the lit squares do.
+// The fully-sunk steady state, hoisted for the same identity bail-out.
 const VOID_G = <g>{VOID_RECTS}</g>;
 
-// Coordinates sit above enlarged Staunty pieces so file/rank labels remain
-// visible in recordings, but below annotation arrows: they open the arrows'
-// plane, painted before the arrows in it. Two hoisted sets of the same
-// labels: the board ink, and the bright mind's-eye ink that cross-fades in
-// with the void (in the dark, the coordinates are the only orientation left,
-// so they must read at full strength). Each set is one hoisted fragment, so
-// a lit frame — every frame of an ordinary script — bails out on element
-// identity instead of reconciling 16 labels; so does the fully-sunk mind set
-// (`mindG`). Only the 0.6s ramp wraps a fresh <g>, whose labels bail out one
-// by one.
-// `ink` null means the per-square board pair; a color means the one bright
-// mind's-eye ink.
+// Coordinates paint above the pieces but below the arrows (first in the arrows'
+// plane). Two hoisted label sets, board ink and the bright mind's-eye ink that
+// fades in with the void, so steady frames bail out on identity. `ink` null
+// means the per-square board pair.
 const coordTexts = (ink: string | null, orientation: BoardOrientation) => (
   <>
     {coordLabels(orientation).map((c, i) => (
@@ -591,30 +508,22 @@ const coordSet = (orientation: BoardOrientation) => {
 };
 const COORDS = { white: coordSet('white'), black: coordSet('black') };
 
-// The board's stack, in one place: the code half of the layer table in
-// docs/design.md. A new layer names itself here rather than landing wherever
-// the DOM puts it, and the squares plane takes no entry — it is the base.
-// The per-piece 1/4/5 z-index is deliberately not sourced from this map:
-// those numbers live inside the pieces layer's own stacking context and mean
-// nothing to the outer stack.
-// Coordinates ride in the overlay plane, under the arrows, so they take no
-// entry. The numbers are not packed: the board is not its own stacking
-// context, so they meet the page's z-indexes, and 3 is the plane DESIGN.md
-// names for the gesture preview.
+// The board's stack; the code half of the layer table in docs/design.md. The
+// squares plane is the base and takes no entry. Per-piece 1/4/5 z-indexes live
+// inside the pieces layer's stacking context and are not sourced from here.
+// The board is not its own stacking context, so these meet the page's
+// z-indexes; 3 is the plane DESIGN.md names for the gesture preview.
 const BOARD_LAYER_Z = {
   pieces: 1,
-  // Arrows and the editor-only gesture preview share a plane so an annotate
-  // preview reads exactly like the artifact it is about to record.
+  // Arrows and the gesture preview share a plane so a preview reads exactly
+  // like the mark it would record.
   overlay: 3,
   captureFlash: 4,
   badge: 5,
 } as const;
 
-// Full-size SVG planes share one positioning contract; a layer only adds its
-// own z (or none, to sit at the base). One frozen style object per plane,
-// derived from the map above so the numbers stay in one place: Board re-renders
-// every animation frame during playback, and a style object built per call
-// would hand every layer a new prop reference each of those frames.
+// One prebuilt style object per plane: Board re-renders every animation frame,
+// and a style built per call would hand every layer a new prop each frame.
 const BOARD_LAYER_BASE_STYLE: CSSProperties = {
   position: 'absolute',
   inset: 0,
@@ -626,8 +535,7 @@ const BOARD_LAYER_STYLE: Record<number, CSSProperties> = Object.fromEntries(
   Object.values(BOARD_LAYER_Z).map((z) => [z, { ...BOARD_LAYER_BASE_STYLE, zIndex: z }]),
 );
 
-// A layer adds its own z (or none, to sit at the base) and, for the gesture
-// preview, the class the PNG export filters on.
+// A full-size SVG plane: its own z (or none, for the base) and an optional class.
 function BoardLayer({
   z,
   className,
@@ -649,14 +557,13 @@ function BoardLayer({
   );
 }
 
-// Best-effort: capture keeps the gesture tracking when the pointer leaves
-// the board, but a pointer can go inactive between down and capture, and
-// browsers throw for it. The gesture still works without capture.
+// Best-effort: browsers throw if the pointer went inactive before capture, and
+// the gesture still works uncaptured.
 function capturePointer(e: React.PointerEvent) {
   try {
     e.currentTarget.setPointerCapture(e.pointerId);
   } catch {
-    // Fall back to uncaptured tracking.
+    // Uncaptured tracking is the fallback.
   }
 }
 
@@ -683,13 +590,9 @@ function insetSquareMarker(sq: string, key: string, orientation: BoardOrientatio
   );
 }
 
-// Live preview of the gesture in progress. Move gestures mark the origin and
-// the legal destinations (dot on empty squares, ring on occupied ones);
-// annotate gestures preview the exact highlight or arrow a release would
-// record, at reduced opacity so preview reads as not-yet-committed.
-// Exported so the suite can render it and read the class the PNG export
-// filters on: the export guard stubs the board node, so losing the class here
-// is the one board regression `npm test` would otherwise pass green.
+// Live preview of the gesture in progress: a move marks the origin and legal
+// destinations; an annotate previews, at reduced opacity, the exact mark a
+// release would record. Exported for test/board-export.test.mjs.
 export function GestureOverlay({
   gesture,
   positions,
@@ -699,9 +602,8 @@ export function GestureOverlay({
   positions: Positions;
   orientation: BoardOrientation;
 }) {
-  // Memoized on positions (not gesture start): a scripted move firing during
-  // playback must restyle the dots, but a 60Hz drag frame must not rebuild
-  // the set.
+  // Memoized on positions: a scripted move during playback must restyle the
+  // dots, but a drag frame must not rebuild the set.
   const occupied = useMemo(
     () =>
       new Set(
@@ -712,13 +614,9 @@ export function GestureOverlay({
     [positions],
   );
 
-  // One wrapper for both gesture kinds. `BOARD_GESTURE_CLASS` is the single
-  // hook the PNG export filters on, so a branch that grew its own <svg> and
-  // missed the class would bake the in-flight preview into a user's 1440×1440
-  // export with nothing failing. The wrapper is its own root <svg> rather than
-  // a <g> in the arrows' plane because html-to-image clones an <svg> whole
-  // (`cloneNode(true)`) and never runs `filter` on its descendants: a classed
-  // <g> inside a shared plane would ship in every export.
+  // Both gesture kinds render inside one wrapper carrying `BOARD_GESTURE_CLASS`,
+  // which `snapshotBoard` removes so the preview never reaches a PNG
+  // (test/board-export.test.mjs).
   const body =
     gesture.kind === 'annotate' ? (
       gesture.over == null ? null : gesture.over !== gesture.from ? (
@@ -775,13 +673,10 @@ export function Board({
   onMoveRejected,
 }: BoardProps) {
   const [gesture, setGesture] = useState<BoardGesture | null>(null);
-  // Whether the square under the pointer can start a move, so the board can
-  // offer a resting `grab` cursor. Without it an editable board is visually
-  // identical to an inert one and nothing invites the drag at all.
+  // Whether the square under the pointer can start a move (the `grab` cursor).
   const [hoverGrab, setHoverGrab] = useState(false);
-  // The square that answer was computed for. `legalMoves` memoizes on the
-  // immutable GameState, so the list itself is cheap; what must not run per
-  // mousemove is the `setState` — only a square change can change the answer.
+  // The square `hoverGrab` was computed for, so mousemove sets state only when
+  // the square changes.
   const hoverSqRef = useRef<string | null>(null);
   const positionEntries = useMemo(() => Object.entries(positions), [positions]);
   const arrowShapes = useMemo(
@@ -798,10 +693,8 @@ export function Board({
     [arrows, orientation],
   );
 
-  // Interactive mode can turn off while a pointer is still captured (for
-  // example, keyboard-switching to Setup or Present during a drag). Cancel the
-  // in-flight gesture at the mode boundary so its pointer-down callback cannot
-  // commit into an editing surface that is no longer active.
+  // Interactive mode can turn off mid-drag (e.g. a keyboard tab switch); cancel
+  // the gesture so it cannot commit into a surface that is no longer editing.
   useEffect(() => {
     if (interactive || !gesture) return;
     const board = boardRef.current;
@@ -811,16 +704,13 @@ export function Board({
     setGesture(null);
   }, [interactive, gesture]);
 
-  // A new position makes the cached hover answer wrong on the very same
-  // square — the piece that could move a moment ago may be the opponent's now.
-  // `chessState` is an immutable value whose identity changes with the
-  // position, so it is the signal.
+  // A new position invalidates the cached hover answer even on the same square;
+  // `chessState` identity changes with the position.
   useEffect(() => {
     hoverSqRef.current = null;
     setHoverGrab(false);
   }, [chessState, interactive]);
 
-  // Map a pointer event to the square under it, or null outside the board.
   const squareAtPointer = (e: React.PointerEvent): string | null => {
     const rect = boardRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return null;
@@ -834,12 +724,9 @@ export function Board({
     if (!interactive || e.pointerType !== 'mouse') return;
     const downBit = buttonBit(e.button);
     if (gesture) {
-      // A second button pressed while the drag's button is still held is a
-      // chord: ignore it, the drag continues. A re-press of the initiating
-      // button (or its bit missing from `buttons`) means the release happened
-      // where the board couldn't see it (pointer capture unavailable): drop
-      // the dangling gesture — its captured playhead is long stale — and let
-      // this press start over.
+      // A second button while the drag's button is held is a chord: ignore it.
+      // Otherwise the release was missed (no capture): drop the stale gesture
+      // and let this press start over.
       if (downBit !== gesture.buttonBit && (e.buttons & gesture.buttonBit) !== 0) return;
       setGesture(null);
     }
@@ -865,7 +752,6 @@ export function Board({
     setGesture(beginMoveGesture(owner, sq, targets, onMoveGesture));
   };
 
-  // Resting affordance only — a drag in flight already owns the cursor.
   const updateHoverCursor = (e: React.PointerEvent) => {
     if (gesture || !interactive || e.pointerType !== 'mouse') return;
     const sq = squareAtPointer(e);
@@ -877,16 +763,13 @@ export function Board({
   const onGesturePointerMove = (e: React.PointerEvent) => {
     updateHoverCursor(e);
     if (!gesture || e.pointerId !== gesture.pointerId) return;
-    // The effect above owns normal mode transitions; this guard closes the
-    // event-ordering window before that effect has run.
+    // Covers the window before the mode-change effect above has run.
     if (!interactive) {
       setGesture(null);
       return;
     }
     if ((e.buttons & gesture.buttonBit) === 0) {
-      // The initiating button is no longer held: it was released off-board
-      // with capture unavailable. Cancel rather than commit — an uncaptured
-      // off-board release never commits.
+      // Released off-board without capture: cancel, never commit.
       setGesture(null);
       return;
     }
@@ -896,7 +779,7 @@ export function Board({
 
   const onGesturePointerUp = (e: React.PointerEvent) => {
     if (!gesture || e.pointerId !== gesture.pointerId) return;
-    // Never invoke the captured commit after the board has become inert.
+    // Never commit once the board is no longer interactive.
     if (!interactive) {
       setGesture(null);
       return;
@@ -916,9 +799,8 @@ export function Board({
   const checkOpacity = check ? timedProgress(time - check.t, 0.12) : 0;
   const checkView = check ? squareViewPosition(check.sq, orientation) : null;
 
-  // Which highlights are lit, resolved once: the rects render from this list
-  // and mind mode's rehearsal reads it, so "is this alarm showing" has exactly
-  // one answer per frame.
+  // Lit highlights, resolved once: the rings and mind-mode rehearsal both read
+  // this list, so they agree on what is showing.
   const litHighlights: { h: BoardHighlight; age: number; opacity: number }[] = [];
   for (const h of highlights) {
     const age = time - h.t;
@@ -926,14 +808,10 @@ export function Board({
     if (opacity > 0) litHighlights.push({ h, age, opacity });
   }
 
-  // While dark, the move on the board and the squares under a lit highlight or
-  // a live check are being rehearsed — by the narration or by the alarm itself
-  // — so their pieces resist the forgetting curve for as long as that lasts.
-  // The world snapshot walk releases each rehearsal as it ends (see `touch`
-  // in world.ts), so those pieces fade out rather than vanish; the exception
-  // is an unpinned highlight,
-  // which expires between events and keeps its own stamp. Arrows deliberately
-  // hold nothing: the attack line persists while its endpoints fade.
+  // While dark, held squares and squares under a lit highlight or live check
+  // are rehearsed and resist fading. world.ts (`touch`) restamps a rehearsal as
+  // it ends so the piece fades rather than vanishes; an unpinned highlight
+  // keeps its own stamp. Arrows rehearse nothing by design.
   const mindFrame = mind
     ? {
         touches: mind.touches,
@@ -947,9 +825,7 @@ export function Board({
 
   const sink = mindSink(mind, revealedAt, time);
   const coords = COORDS[orientation];
-  // Outside mind mode every piece shares one strength (the reveal fade-up, or
-  // a saturated 1 for scripts that never darken), so it is computed once here
-  // instead of per piece per frame.
+  // Outside mind mode every piece shares this one strength.
   const revealStrength = mindRevealStrength(revealedAt, time);
   const flash =
     captureFlash && time - captureFlash.t < BOARD_OVERLAY_LIFETIME.captureFlash
@@ -996,12 +872,10 @@ export function Board({
         {/* squares */}
         <BoardLayer>
           {BOARD_DEFS}
-          {/* Once the void is fully sunk it is opaque, so the lit squares
-             underneath are pure cost — drop them for the rest of the phase. */}
+          {/* A fully sunk void is opaque, so the lit squares under it are skipped. */}
           {sink < 1 && SQUARE_RECTS}
 
-          {/* The void sinks in over the lit squares; every overlay below
-             renders on top of it, so the alarms keep carrying the light. */}
+          {/* Every overlay below renders on top of the void. */}
           {sink >= 1 ? VOID_G : sink > 0 && <g opacity={sink}>{VOID_RECTS}</g>}
 
           {lastMove &&
@@ -1025,18 +899,14 @@ export function Board({
             );
           })}
 
-          {/* Check glow: vermillion radial under the checked king. A board
-             state (not a timed overlay), so it persists while the check
-             lasts and clears the moment the position resolves it. */}
+          {/* Check glow: board state, not a timed overlay; it lasts as long as the check. */}
           {checkView &&
             checkOpacity > 0 &&
             squareRect(checkView, 'url(#board-check-glow)', checkOpacity)}
         </BoardLayer>
 
-        {/* Not a `BoardLayer`: the pieces ride HTML divs so their transforms
-           stay on the compositor. zIndex here creates a stacking context so
-           per-piece zIndex (1/4/5) stays contained and doesn't outrank the
-           arrows overlay. */}
+        {/* HTML divs, not a `BoardLayer`, so transforms stay on the compositor.
+           Its zIndex makes a stacking context that contains per-piece 1/4/5. */}
         <div aria-hidden="true" style={BOARD_LAYER_STYLE[BOARD_LAYER_Z.pieces]}>
           {positionEntries.map(([id, p]) => {
             const strength = mindFrame
@@ -1044,9 +914,7 @@ export function Board({
               : revealStrength;
             if (strength <= 0) return null;
             const visual = pieceVisual(p, time);
-            // A captured piece stays in `positions` (an `ml` can fade it back
-            // in), but once its fade is over it has nothing to draw: dropping
-            // it keeps a middlegame's dead pieces off the per-frame path.
+            // Captured pieces stay in `positions` (a restore can fade them back).
             if (visual.opacity <= 0) return null;
             const view = boardViewPosition(visual.f, visual.r, orientation);
             const tx = view.x * 100;
@@ -1074,12 +942,10 @@ export function Board({
           })}
         </div>
 
-        {/* coordinates, then arrows — above pieces so annotations land on top */}
+        {/* coordinates, then arrows */}
         <BoardLayer z={BOARD_LAYER_Z.overlay}>
-          {/* Both sets draw only mid-ramp: an opaque base with one fading
-             layer over it, the same compositing rule the squares use.
-             Cross-fading both at once would dip the labels to ~72% coverage
-             at the midpoint. */}
+          {/* An opaque base with one fading set over it, as the squares do;
+             cross-fading both would dip the labels mid-ramp. */}
           {sink < 1 && coords.lit}
           {sink >= 1 ? coords.mindG : sink > 0 && <g opacity={sink}>{coords.mind}</g>}
           <g filter="url(#arrow-shadow)">
@@ -1142,9 +1008,7 @@ export function Board({
           />
         )}
 
-        {/* Annotation badge — sits above pieces so a moved piece never
-           occludes the move-quality mark. SVG-based so the disc and text
-           scale with the board's viewBox without container queries. */}
+        {/* Annotation badge, above the pieces so a moved piece never covers it. */}
         {lastMove?.annotation && (
           <BoardLayer z={BOARD_LAYER_Z.badge}>
             {(() => {

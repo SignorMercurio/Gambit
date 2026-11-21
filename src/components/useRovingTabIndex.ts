@@ -1,21 +1,13 @@
-// Roving tabindex over the interactive controls inside a container — the
-// WAI-ARIA toolbar/composite pattern shared by the timeline pin row, the
-// Moves-view event list, and the insert menu. The whole group costs one Tab
-// stop; ←/→ (and optionally ↑/↓) walk controls in DOM order, Home/End jump to
-// the extremes, and any focus landing inside (mouse click, programmatic)
-// re-anchors the stop so Tab-out/Tab-in returns there.
+// Roving tabindex (WAI-ARIA composite) over the controls inside a container:
+// one Tab stop; ←/→ (optionally ↑/↓) walk DOM order, Home/End jump, and any
+// focus inside re-anchors the stop.
 //
-// The cursor lives in a ref and tabIndex is written imperatively so an arrow
-// press never re-renders the container's subtree (the pin row is memoized
-// against the 60Hz clock; the move list re-renders per event boundary).
-// Controls must render WITHOUT a tabIndex prop — the hook owns the attribute,
-// and a rendered prop would reset it whenever a control remounts.
+// The cursor lives in a ref and tabIndex is written imperatively, so an arrow
+// press never re-renders the subtree. Controls must render WITHOUT a tabIndex
+// prop: the hook owns the attribute, and a rendered prop resets it on remount.
 //
-// The single-stop invariant is re-asserted by a childList MutationObserver,
-// not render-time deps: control mounts/unmounts the parent never re-renders
-// for (e.g. the time chip swapping its button for an input while editing)
-// must still leave exactly one tabbable control. Attribute churn (class,
-// aria-current) during playback doesn't wake a childList observer.
+// A childList MutationObserver re-asserts the single stop, because controls
+// can mount or unmount without the parent re-rendering.
 
 import { useCallback, useMemo, useRef } from 'react';
 
@@ -32,9 +24,8 @@ export function syncRovingTabStops<T extends { tabIndex: number }>(
   return current;
 }
 
-// `mirrorTo` is an output the returned `ref` writes the node into, for callers
-// that need it. It sits in `opts` because attaching it instead of `ref`
-// typechecks (a MutableRefObject is a valid `ref` prop) and silently no-ops.
+// `mirrorTo` receives the node the returned `ref` attaches. Attach `ref`, never
+// `mirrorTo`: a MutableRefObject typechecks as a `ref` prop and silently no-ops.
 export function useRovingTabIndex<T extends HTMLElement>(
   selector: string,
   opts?: {
@@ -57,9 +48,8 @@ export function useRovingTabIndex<T extends HTMLElement>(
     [containerRef, selector],
   );
 
-  // A callback ref, not a mount effect: an effect with stable deps runs once
-  // and never sweeps a container that mounts later (the insert menu's panel
-  // renders only while open), which would leave every row tabbable.
+  // A callback ref, not a mount effect, so a container that mounts later (the
+  // insert menu's panel) is still swept.
   const observerRef = useRef<MutationObserver | null>(null);
   const attach = useCallback(
     (node: T | null) => {
@@ -78,9 +68,8 @@ export function useRovingTabIndex<T extends HTMLElement>(
     [containerRef, controls],
   );
 
-  // The handlers sit on the container, so a target matching the selector is
-  // by construction one of the container's own controls: indexOf always hits
-  // and the control list is never empty.
+  // Handlers sit on the container, so a matching target is always one of its
+  // controls: indexOf always hits and the list is never empty.
   const onFocus = useCallback(
     (e: React.FocusEvent) => {
       if (!(e.target instanceof HTMLElement) || !e.target.matches(selector)) return;
@@ -93,8 +82,7 @@ export function useRovingTabIndex<T extends HTMLElement>(
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // Controls excluded by keySelector (e.g. the time editor's input) keep
-      // their own keyboard behavior instead of moving through the toolbar.
+      // Controls outside keySelector keep their own keyboard behavior.
       if (!(e.target instanceof HTMLElement) || !e.target.matches(keySelector)) return;
       const horizontal = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
       const vertical = verticalArrows && (e.key === 'ArrowUp' || e.key === 'ArrowDown');
@@ -109,8 +97,7 @@ export function useRovingTabIndex<T extends HTMLElement>(
       else if (e.key === 'End') next = els.length - 1;
       else if (back) next = Math.max(0, cur - 1);
       else next = Math.min(els.length - 1, cur + 1);
-      // Focus is the single owner of the tab-stop swap: this focus() fires
-      // onFocus above, which moves tabIndex and the cursor.
+      // onFocus alone moves tabIndex and the cursor; this only focuses.
       els[next].focus();
     },
     [controls, keySelector, verticalArrows],

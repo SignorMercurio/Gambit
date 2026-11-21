@@ -1,32 +1,23 @@
-// Timeline parser. Input format (one event per line):
-//   [mm:ss] move                    (SAN — may carry a trailing !!/!/?/?? annotation)
-//   [mm:ss] hl a1,b2,... [pin]      (or highlight)
-//   [mm:ss] a1→b2 [pin]             (or a1->b2, arrow a1->b2)
-//   [mm:ss] cl                      (or clear; clears highlights and arrows)
-//   [mm:ss] rs                      (or reset; resets to configured start)
-//   [mm:ss] st                      (or start; resets to standard initial position)
-//   [mm:ss] fen <FEN>               (or setfen; sets board to that FEN)
-//   [mm:ss] br                      (or branch; enters a variation)
-//   [mm:ss] ml                      (or mainline; exits current variation)
-//   [mm:ss] rp [seconds]            (or replay; replays prior mainline moves,
-//                                    0.5s per move unless a step is given)
-//   [mm:ss] ask <seconds> <question> (question card under the board with a
-//                                    countdown; a later ask replaces it)
+// Timeline parser. One event per line:
+//   [mm:ss] <command word> [argument]   words and arguments: `commands.ts`
+//   [mm:ss] a1->b2 [pin]                an arrow (also a1→b2, a1 to b2, arrow a1->b2)
+//   [mm:ss] <SAN>                       anything else is a move, which may
+//                                       carry a trailing !!/!/?/?? annotation
 // Branches nest: every `br` must be paired with a later `ml`.
 // `pin` keeps a highlight or arrow on screen until the next `cl`, `rs`, `st`, or `fen`;
 // without it they auto-fade after their lifetime window.
 // Lines starting with # or // are comments.
 
 import { parseSANSuffix } from './chess';
+import { COMMAND_PARSERS, parseArrow } from './commands';
 import {
   isValidScriptTimestamp,
   MAX_SAFE_PLAYBACK_SECONDS,
   MAX_SCRIPT_TIMESTAMP_SECONDS,
 } from './playback';
 
-// Move quality marks. `!?` / `?!` (interesting / dubious) are intentionally
-// not supported: the four below are the universal pedagogical set and give
-// the badge layer one color per mark with no overlap.
+// Move quality marks. `!?` / `?!` are deliberately unsupported: one badge
+// color per mark, with no overlap.
 export type MoveAnnotation = 'brilliant' | 'great' | 'mistake' | 'blunder';
 
 export const ANNOTATION_MARKS: Record<MoveAnnotation, string> = {
@@ -39,13 +30,10 @@ const ANNOTATION_BY_MARK = Object.fromEntries(
   Object.entries(ANNOTATION_MARKS).map(([annotation, mark]) => [mark, annotation]),
 ) as Record<string, MoveAnnotation>;
 
-// One event line: `[time] body` (non-empty body). This is the single home of
-// the line shape for parsing, collision scans, and timestamp rewrites. The
-// captures preserve indentation and authored whitespace when a line is
-// retimed in place.
+// The single home of the `[time] body` line shape, for parsing, collision
+// scans and retiming. The captures preserve authored whitespace on retime.
 const SCRIPT_LINE_RE = /^(\s*)\[\s*([0-9:.]+)\s*\](\s*)(\S(?:.*\S)?)(\s*)$/;
 
-// Blanks and comments — lines the parser skips entirely.
 function isSkippedLine(raw: string): boolean {
   return !raw || raw.startsWith('#') || raw.startsWith('//');
 }
@@ -69,28 +57,23 @@ function matchScriptLine(line: string): ScriptLineMatch | null {
   };
 }
 
-// Public consumers only receive valid event lines — null for blanks, comments,
-// and lines the parser would reject, including a bare `[00:05]` (a parse
-// error), which is not a timed anchor either. parseScript uses the internal
-// structural match below to keep its missing-vs-invalid error split.
+// Valid event lines only: null for blanks, comments, a bare `[00:05]`, and
+// anything with an invalid timestamp.
 export function parseScriptLine(line: string): ScriptLine | null {
   const match = matchScriptLine(line);
   return match && Number.isFinite(match.t) ? { t: match.t, body: match.body } : null;
 }
 
-// Rewrites only a valid event line and preserves everything after its closing
-// bracket byte-for-byte. Invalid lines are left to parseScript's visible error
-// path instead of being silently normalized into valid input.
+// Rewrites only a valid event line, preserving everything after its bracket
+// byte-for-byte; an invalid line is never silently normalized into valid input.
 export function rewriteScriptLineTime(line: string, t: number): string | null {
   const match = matchScriptLine(line);
   if (!match || !isValidScriptTimestamp(match.t) || !isValidScriptTimestamp(t)) return null;
   return `${match.indent}${formatScriptTime(t)}${match.gap}${match.body}${match.trailing}`;
 }
 
-// SAN with its trailing quality marks split off, plus the badge that mark
-// names. Shared by the parser (badge derivation) and the move list (mark
-// coloring) so the mark vocabulary can't drift between the two — and so a
-// caller holding a mark never has to cross back to the badge itself.
+// SAN split from its quality mark, plus the badge it names. Shared by the
+// parser and the move list so the mark vocabulary cannot drift.
 export function splitSanAnnotation(san: string): { text: string } & (
   | { mark: string; annotation: MoveAnnotation }
   | { mark: null; annotation?: undefined }
@@ -104,17 +87,13 @@ export function splitSanAnnotation(san: string): { text: string } & (
   };
 }
 
-const SQUARE_PATTERN = '[a-h][1-8]';
-const SQUARE_RE = new RegExp(`^${SQUARE_PATTERN}$`, 'i');
-const ARROW_PATTERN = `(${SQUARE_PATTERN})\\s*(?:→|->|to)\\s*(${SQUARE_PATTERN})(?:\\s+(pin))?`;
-const ARROW_RE = new RegExp(`^(?:arrow\\s+)?${ARROW_PATTERN}$`, 'i');
 const MAX_SCRIPT_CHARACTERS = 1_000_000;
 export const MAX_SCRIPT_LINES = 5_000;
 
-// Every outcome retains the same timestamp and authored source location.
 type EventSource = { t: number; line: number; raw: string };
 
-export type ParsedEvent = EventSource & (
+// What a line says, apart from where and when it says it.
+export type EventFields =
   | { kind: 'move'; san: string; annotation?: MoveAnnotation }
   | { kind: 'highlight'; squares: string[]; pinned?: boolean }
   | { kind: 'arrow'; from: string; to: string; pinned?: boolean }
@@ -127,34 +106,13 @@ export type ParsedEvent = EventSource & (
   | { kind: 'replay'; step?: number }
   | { kind: 'mind' }
   | { kind: 'reveal' }
-  | { kind: 'ask'; seconds: number; text: string }
-);
+  | { kind: 'ask'; seconds: number; text: string };
+
+export type ParsedEvent = EventSource & EventFields;
 
 export type ErrorEvent = EventSource & { error: string; kind?: undefined };
 
 export type TimelineEvent = ParsedEvent | ErrorEvent;
-
-type SimpleEventKind = Extract<
-  ParsedEvent['kind'],
-  'clear' | 'reset' | 'start' | 'branch' | 'mainline' | 'replay' | 'mind' | 'reveal'
->;
-
-const SIMPLE_COMMANDS = new Map<string, SimpleEventKind>([
-  ['cl', 'clear'],
-  ['clear', 'clear'],
-  ['rs', 'reset'],
-  ['reset', 'reset'],
-  ['st', 'start'],
-  ['start', 'start'],
-  ['br', 'branch'],
-  ['branch', 'branch'],
-  ['ml', 'mainline'],
-  ['mainline', 'mainline'],
-  ['rp', 'replay'],
-  ['replay', 'replay'],
-  ['mind', 'mind'],
-  ['reveal', 'reveal'],
-]);
 
 export function parseTime(s: string): number {
   const text = s.trim();
@@ -172,16 +130,14 @@ function safeTimelineTime(t: number): number {
   return Math.min(MAX_SAFE_PLAYBACK_SECONDS, Math.max(0, t));
 }
 
-// Deciseconds via `Math.floor(t*10)` avoids 9.95→10 rollover.
+// Floors to deciseconds, so elapsed time never shows ahead of itself.
 // `fine`: 'never' = mm:ss; 'auto' = mm:ss[.t] when fractional; 'always' = mm:ss.t.
 export function fmtTime(t: number, fine: 'never' | 'auto' | 'always' = 'never'): string {
-  // The clock readout floors: elapsed time never shows ahead of itself.
   return fmtDeci(Math.floor(safeTimelineTime(t) * 10), fine);
 }
 
-// Format a decisecond count. Grid-exact surfaces (time chips, script lines)
-// should round to deciseconds first and format through this, so display and
-// written text can never disagree by a tenth.
+// Grid-exact surfaces (time chips, script lines) round to deciseconds and
+// format through this, so display and written text never disagree by a tenth.
 export function fmtDeci(deci: number, fine: 'never' | 'auto' | 'always' = 'never'): string {
   const totalDeciseconds = Number.isFinite(deci)
     ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(deci)))
@@ -196,14 +152,12 @@ export function fmtDeci(deci: number, fine: 'never' | 'auto' | 'always' = 'never
   return `${head}.${tenths}`;
 }
 
-// `[mm:ss]`, or `[mm:ss.t]` when the tenths are non-zero — the house style
-// for generated and retimed script lines.
+// House style for generated and retimed lines: `[mm:ss]`, or `[mm:ss.t]`.
 export function formatScriptTime(t: number): string {
   const scriptTime = Math.min(MAX_SCRIPT_TIMESTAMP_SECONDS, safeTimelineTime(t));
   return `[${fmtDeci(Math.round(scriptTime * 10), 'auto')}]`;
 }
 
-// Human-readable event body shared by the move list and its tooltips.
 export function eventBody(e: ParsedEvent): string {
   switch (e.kind) {
     case 'move':
@@ -234,12 +188,6 @@ export function eventBody(e: ParsedEvent): string {
       return `${e.text} · ${e.seconds}s`;
   }
 }
-
-// Whole seconds keep the countdown's digit and its ring on the same beat; the
-// ceiling is a thinking pause, not a chapter, and bounds how long one line can
-// cover the subtitle track.
-export const ASK_MIN_SECONDS = 1;
-export const ASK_MAX_SECONDS = 30;
 
 export function parseScript(text: string): TimelineEvent[] {
   if (text.length > MAX_SCRIPT_CHARACTERS) {
@@ -279,108 +227,28 @@ export function parseScript(text: string): TimelineEvent[] {
     }
     const at = { t, line, raw };
 
-    // A bare `hl` is still a highlight with no squares, not a move called "hl".
-    const hm = body.match(/^(?:hl|highlight)(?:\s+(.+))?$/i);
-    if (hm) {
-      const tokens = (hm[1] ?? '').split(/[,\s]+/).filter(Boolean);
-      let pinned = false;
-      if (tokens[tokens.length - 1]?.toLowerCase() === 'pin') {
-        pinned = true;
-        tokens.pop();
-      }
-      const invalid = tokens.filter((sq) => !SQUARE_RE.test(sq));
-      if (tokens.length === 0) {
-        fail(t, 'hl needs at least one square, like: hl e4 d5');
-        continue;
-      }
-      if (invalid.length > 0) {
-        fail(t, `invalid highlight square: ${invalid.join(', ')}`);
-        continue;
-      }
-      const squares = [...new Set(tokens.map((sq) => sq.toLowerCase()))];
-      events.push({ ...at, kind: 'highlight', squares, pinned });
-      continue;
-    }
-    const arrowMatch = body.match(ARROW_RE);
-    if (arrowMatch) {
-      events.push({
-        ...at,
-        kind: 'arrow',
-        from: arrowMatch[1].toLowerCase(),
-        to: arrowMatch[2].toLowerCase(),
-        pinned: !!arrowMatch[3],
-      });
-      continue;
-    }
-    if (/^arrow\b/i.test(body)) {
-      fail(t, 'invalid arrow');
-      continue;
-    }
-    // Derived from the table rather than by restating its keys. The alias set
-    // is spelled only in SIMPLE_COMMANDS, so a body that names a command but
-    // carries something after it — `cl e4`, `br 1`, `mind x` — reports that
-    // instead of falling through to SAN and being told it is bad chess.
-    // Carrying no argument is these kinds' normal form, so it is decided once
-    // for all eight; replay is the one kind that accepts an argument, and that
-    // is keyed on the kind so the table stays the only place aliases are spelled.
-    const firstWord = body.split(/\s+/)[0].toLowerCase();
-    const simpleKind = SIMPLE_COMMANDS.get(firstWord);
-    if (simpleKind) {
-      const argument = body.slice(firstWord.length).trim();
-      if (!argument) {
-        events.push({ ...at, kind: simpleKind });
-        continue;
-      }
-      if (simpleKind === 'replay') {
-        // One decimal place keeps the step on the decisecond grid every other
-        // timestamp lives on, so replay frame times never leave it.
-        const step = /^\d+(?:\.\d)?$/.test(argument) ? Number(argument) : NaN;
-        if (step >= 0.1 && step <= 10) {
-          events.push({ ...at, kind: 'replay', step });
-        } else {
-          fail(t, 'replay step must be 0.1–10 seconds in 0.1s increments');
-        }
-        continue;
-      }
-      fail(t, `${firstWord} takes no arguments`);
-      continue;
-    }
-    // The seconds come first so the question can be any text, digits included:
-    // `ask 3 3 步之内怎么杀？` is a 3s card, never an argument-order guess.
-    const askMatch = body.match(/^ask(?:\s+(.*))?$/i);
-    if (askMatch) {
-      const argument = askMatch[1]?.match(/^(\d+)\s+(\S.*)$/);
-      if (!argument) {
-        fail(t, 'ask needs seconds and a question, like: ask 3 Which move wins?');
-        continue;
-      }
-      const seconds = Number(argument[1]);
-      if (seconds < ASK_MIN_SECONDS || seconds > ASK_MAX_SECONDS) {
-        fail(t, `ask countdown must be ${ASK_MIN_SECONDS}–${ASK_MAX_SECONDS} whole seconds`);
-      } else {
-        events.push({ ...at, kind: 'ask', seconds, text: argument[2] });
-      }
-      continue;
-    }
-    const fenMatch = body.match(/^(?:fen|setfen)(?:\s+(.+))?$/i);
-    if (fenMatch) {
-      if (fenMatch[1]) events.push({ ...at, kind: 'fen', fen: fenMatch[1].trim() });
-      else fail(t, 'missing FEN');
-      continue;
-    }
-    // The chess parser owns the strict SAN suffix grammar; the timeline only
-    // derives a badge when that shared parser recognizes a supported mark.
-    const { annotation } = splitSanAnnotation(body);
-    events.push({ ...at, kind: 'move', san: body, annotation });
+    // A command word decides the line; a stray or missing argument is that
+    // command's error, never a fall-through. Without one, the line is an
+    // arrow or else SAN, whose suffix grammar the chess parser owns.
+    const word = body.split(/\s+/)[0].toLowerCase();
+    const parse = COMMAND_PARSERS.get(word);
+    const parsed: EventFields | string = parse
+      ? parse(body.slice(word.length).trim(), word)
+      : (parseArrow(body) ?? {
+          kind: 'move',
+          san: body,
+          annotation: splitSanAnnotation(body).annotation,
+        });
+    if (typeof parsed === 'string') fail(t, parsed);
+    else events.push({ ...at, ...parsed });
   }
   events.sort((a, b) => a.t - b.t);
   return events;
 }
 
-// The question card on screen at `time`: the latest reached `ask`, while its
-// countdown runs. A later ask replaces an earlier one outright, so only the
-// latest can be live — an expired latest means no card, even when an earlier
-// ask's window would still be open. Script + time decide it; nothing latches.
+// The latest reached `ask` while its countdown runs. A later ask replaces an
+// earlier one outright: an expired latest means no card, even if an earlier
+// window is still open.
 export function activeAskAt(
   events: TimelineEvent[],
   time: number,
@@ -392,10 +260,8 @@ export function activeAskAt(
   return null;
 }
 
-// Largest index i such that events[i].t <= time, or -1 when none. Events
-// with t === time count as reached (inclusive on the lower side). The single
-// home of the playhead→event-index rule: the world snapshot pick, the move
-// list, the follow-scroll, and the gesture planners all derive from this.
+// Largest i with events[i].t <= time, or -1. The single playhead-to-event
+// rule; an event at exactly `time` counts as reached.
 export function lastEventIndexAt(events: TimelineEvent[], time: number): number {
   let lo = 0;
   let hi = events.length;

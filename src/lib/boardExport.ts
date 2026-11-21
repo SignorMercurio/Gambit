@@ -1,34 +1,24 @@
+// Board PNG export. The frame is frozen by copying it, not by stopping the
+// app: `snapshotBoard` clones the rendered board synchronously, and everything
+// asynchronous works on that copy while playback and editing carry on.
+
 export const BOARD_EXPORT_SIZE = 1440;
 
-// The editor-only in-flight gesture preview: the one layer the export drops.
-// Declared here rather than spelled in `Board.tsx` and again in the filter
-// below, because the two are a matched pair with nothing else tying them —
-// renaming the class on the overlay alone typechecks, passes, and quietly
-// starts baking the drag preview into every exported PNG.
+// The editor-only in-flight gesture preview: the one layer a snapshot drops.
+// Shared with `Board.tsx` so the overlay and the removal cannot drift apart.
 export const BOARD_GESTURE_CLASS = 'board-gesture-overlay';
 
-// Every step of an export can stall without settling, and a promise that never
-// settles never runs the caller's `finally` either. That is not hypothetical:
-// an export observed here sat past 18s, leaving playback paused and the button
-// disabled for the rest of the session with no message. A ceiling converts an
-// unbounded hang into the 'error' state the UI already offers a retry from.
-//
-// The ceiling is applied once, by the caller, around the whole operation.
-// Guarding only the rasterize would leave the earlier awaits unbounded while
-// making the code look protected — and the hang observed here was in fact in
-// the caller's frame wait (now `useBoardExport`), above this function entirely.
+// One ceiling around the whole export, applied by the caller. A promise that
+// never settles never runs a `finally`, so this is what makes the retry state
+// reachable.
 export const BOARD_EXPORT_TIMEOUT_MS = 15000;
-
-// Templated off the ceiling rather than restating it: the test uses the
-// constant on both sides, so it could never have caught the two drifting, and
-// a raised ceiling would leave the user-facing error confidently wrong.
 export const BOARD_EXPORT_TIMEOUT_MESSAGE = `The browser did not finish rendering the PNG within ${
   BOARD_EXPORT_TIMEOUT_MS / 1000
 }s.`;
 
-// Rejects with `message` if `work` has not settled inside `ms`. The abandoned
-// work may still be running — nothing here can cancel a rasterize already in
-// flight — but the UI stops waiting on it, which is the part that matters.
+// Rejects with `message` if `work` has not settled inside `ms`, or with the
+// signal's reason if it aborts first. The abandoned work keeps running; the
+// caller gates its side effects on the same signal.
 export function withTimeout<T>(work: Promise<T>, ms: number, message: string, signal?: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abort: (() => void) | undefined;
@@ -53,35 +43,47 @@ export function boardPngFilename(time: number): string {
   return `gambit-board-${String(minutes).padStart(2, '0')}-${String(seconds).padStart(2, '0')}-${String(centiseconds).padStart(2, '0')}.png`;
 }
 
+// A detached-from-React copy of the board as it is drawn right now, minus the
+// gesture preview. It is mounted off-screen at the board's own size because
+// the rasterizer reads computed styles, which only a connected node has; the
+// board's rules are all top-level selectors and `:root` tokens, so they apply
+// under `<body>` as they do in place. `dispose` removes it.
+export function snapshotBoard(board: HTMLElement): { node: HTMLElement; dispose: () => void } {
+  const { width, height } = board.getBoundingClientRect();
+  const node = board.cloneNode(true) as HTMLElement;
+  for (const preview of node.querySelectorAll(`.${BOARD_GESTURE_CLASS}`)) preview.remove();
+  const holder = document.createElement('div');
+  holder.inert = true;
+  holder.setAttribute('aria-hidden', 'true');
+  holder.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;pointer-events:none`;
+  holder.append(node);
+  document.body.append(holder);
+  return { node, dispose: () => holder.remove() };
+}
+
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.download = filename;
   link.href = url;
   link.click();
-  // The click has synchronously captured the URL. Revoke on the next task so
-  // WebKit still has time to begin reading it for the download.
+  // Revoke on the next task so WebKit has time to begin reading the URL.
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-// Loaded only on demand: normal playback should not pay for the DOM-cloning
-// exporter, and the pure filename helper remains safe in the SSR harness.
-// Exposed separately so the caller can start the fetch while it waits for the
-// board to settle — the module load depends on nothing the wait produces, and
-// serializing them put a cold chunk fetch inside the user-visible pause.
+// Loaded on demand so normal playback never pays for the DOM-cloning exporter.
 export const loadExporter = () => import('html-to-image');
 
+// Rasterize `board` (a snapshot node) to a 1440×1440 PNG and deliver it. An
+// aborted export delivers nothing, however late its rasterize settles.
+// `deliver` is a seam: delivery needs a DOM, and the abort contract is tested
+// through it.
 export async function downloadBoardPng(
   board: HTMLElement,
   time: number,
   {
     signal,
     exporter,
-    // A seam, defaulted to the real thing. Delivery needs a DOM, so the
-    // abandoned-export contract below is otherwise only assertable by grepping
-    // this file's source — which passes an `if (aborted) console.warn()` and
-    // fails a rename of `blob`. `exporter` has no default: the caller loads it
-    // concurrently with its settle wait and passes the loaded module.
     deliver = downloadBlob,
   }: {
     signal?: AbortSignal;
@@ -91,17 +93,10 @@ export async function downloadBoardPng(
 ): Promise<void> {
   if (signal?.aborted) return;
   const blob = await exporter.toBlob(board, {
-    cacheBust: true,
     canvasWidth: BOARD_EXPORT_SIZE,
     canvasHeight: BOARD_EXPORT_SIZE,
-    filter: (node) => !node.classList?.contains(BOARD_GESTURE_CLASS),
     pixelRatio: 1,
   });
-  // Nothing can cancel a rasterize already in flight, so a timed-out export
-  // keeps working in the background and may still settle. Dropping it here is
-  // the difference between "the export failed" and a file appearing in the
-  // user's downloads a minute after they were told it failed — and the time it
-  // was stamped with is no longer the time on the board.
   if (signal?.aborted) return;
   if (!blob) throw new Error('The browser returned an empty PNG.');
   deliver(blob, boardPngFilename(time));

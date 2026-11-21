@@ -1,12 +1,7 @@
-// The question card an `ask` line puts in the subtitle track. It is part of
-// the recording, so everything on it derives from the event and the clock:
-// the digit is the whole seconds left, the ring is the unspent fraction, and
-// no timer or transition state exists to drift from the playhead.
-//
-// It sits in the subtitle strip rather than over the board because the viewer
-// is meant to look at the position while thinking, and a thinking pause is
-// exactly when narration — and so the cue — is silent. The strip's height is
-// reserved already, so the card appears without shifting layout.
+// The question card an `ask` line puts in the subtitle strip. Everything on it
+// derives from the event and the clock; no timer or transition state exists.
+// It uses the strip, not the board, so the position stays clear, and the
+// strip's reserved height means it appears without layout shift.
 
 import type { ParsedEvent } from '../lib/timeline';
 

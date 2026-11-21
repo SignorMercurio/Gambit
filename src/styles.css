@@ -1,13 +1,8 @@
 /* =====================================================================
-   Self-hosted fonts (latin subsets, variable weight). No network fonts:
-   first paint must not depend on a CDN, and the app must keep its voice
-   behind blocked font hosts. Files live in public/fonts/; index.html
-   preloads the same two files — keep the paths in sync.
-
-   `font-display: block`, not `swap`: both files are local and preloaded, so
-   the block period is unobservable in practice, while `swap` licenses a
-   fallback flash plus reflow at exactly the moment a creator may be
-   recording. Correct-or-invisible beats wrong-then-shifted here.
+   Self-hosted fonts (latin subsets, variable weight); no network fonts.
+   Files live in public/fonts/ and index.html preloads the same two files —
+   keep the paths in sync. `font-display: block`, not `swap`: both are local
+   and preloaded, and `swap` would flash a fallback mid-recording.
    ===================================================================== */
 
 @font-face {
@@ -26,23 +21,11 @@
   font-style: normal;
   font-display: block;
 }
-/* CJK companion for the mono stack. Lesson scripts are frequently Chinese
-   (PRODUCT.md), and the latin subset above holds no Han glyphs — without this
-   the editor drops CJK onto whatever face the OS happens to pick, off the
-   design system entirely. `local()` only: this ships no CJK payload.
-
-   `size-adjust: 120%` is the grid. The mono cell is 0.6em, so two cells are
-   1.2em, while a Han glyph is 1em square; scaling to 120% lands every Han
-   character on exactly two latin cells, which is also the size CJK wants
-   beside latin at these sizes. `unicode-range` keeps this face off latin
-   entirely, so the adjust can never touch a glyph Lilex already covers.
-
-   `local()` matches PostScript / full names, never family names — `local('PingFang
-   SC')` silently fails and takes the whole @font-face down with it. Hence the
-   PostScript names here, and hence the plain family names in --font-cjk, which
-   --font-mono lists behind this face: this tier is the best-effort grid, that
-   tier is the guarantee that CJK reaches a chosen face on platforms whose
-   PostScript names we can't verify from here. */
+/* CJK companion for the mono stack; `local()` only, so it ships no CJK payload.
+   `size-adjust: 120%` lands each 1em Han glyph on exactly two 0.6em mono cells;
+   `unicode-range` keeps the adjust off latin. `local()` matches PostScript/full
+   names, never family names (one silently drops the whole @font-face), so the
+   family-name fallback lives in --font-cjk. */
 @font-face {
   font-family: 'Gambit Mono CJK';
   src: local('PingFangSC-Regular'), local('HiraginoSansGB-W3'),
@@ -61,8 +44,7 @@
    ===================================================================== */
 
 :root {
-  /* Dark-only: native scrollbars and form controls render dark on the
-     panel's scroll regions instead of light-gray system chrome. */
+  /* Dark-only: native scrollbars and form controls render dark. */
   color-scheme: dark;
 
   /* Surface (dark navy ramp) */
@@ -146,31 +128,20 @@
 
   /* Layout */
   --artifact-width: 720px;
-  /* The recording artifact stays 720px on ordinary laptop viewports. Width
-     caps still shrink it on phones; only the genuinely short-viewport rule
-     near the end of the file opts into the 560px fallback. */
+  /* Width caps still shrink it on phones; only the short-desktop band
+     (max-height: 760px) opts into the 560px fallback. */
   --artifact-fit-width: var(--artifact-width);
   --main-column-gap: 20px;
   --main-row-gap: 16px;
   --side-panel-width: clamp(560px, 32vw, 620px);
-  /* Present-mode move list: narrower than the editor panel — it holds only a
-     numbered mainline, no FEN field or textarea. */
+  /* Narrower than the editor panel: it holds only a numbered mainline. */
   --present-pgn-width: clamp(220px, 22vw, 320px);
-  /* The cue and the track it sits in are one pair, declared together in every
-     `:root` that redefines either. Split them across tiers and you get what
-     shipped once: the 761–840px band kept the base 29px cue while dropping the
-     track to 48px, so a *one-line* cue grew the row — the transport shifted
-     8px the moment a subtitle appeared, which is precisely the layout
-     stability the fixed track exists to provide. Fit rule for any pair:
-     cue × line-height + padding + 2px border ≤ track. */
+  /* The cue and its track are one pair: declare both in every `:root` that
+     redefines either. Fit rule: cue × line-height + padding + 2px border ≤ track. */
   --subtitle-track-height: 64px;
   --subtitle-cue-size: 29px;
-  /* Timeline ruler geometry. These exist as tokens because the scrub thumb's
-     offset is their sum: hand-computing it shipped `24px` against a true 34px
-     — two terms dropped — which put the thumb inside the pin row, where the
-     marker hit targets sit above the scrub input, and the only control that
-     looks draggable could not be dragged. A calc() of the same tokens cannot
-     be wrong by construction. */
+  /* Timeline ruler geometry. Tokens because .playhead-thumb's `top` is a calc()
+     of their sum; never hand-sum it. */
   --tl-pin-row: 18px;
   --tl-rail: 6px;
   --tl-tick-row: 14px;
@@ -178,16 +149,10 @@
   --tl-pad-top: 2px;
   --tl-crown: 6px;
 
-  /* Present's floating transport: its own inset plus its height plus a gap.
-     The inset is shared with the bar's `bottom` so the two cannot disagree.
-     The height is measured, not derived — the bar is content-sized, so nothing
-     in CSS knows it. Measured at 80px with the default `.controls` padding;
-     the short-desktop tiers put the bar in flow with a zero reserve, so the
-     number never applies there. It is a token because the number
-     is also quoted in the floor rationale further down: named once, it is at
-     least obvious where the other reader is. Do not turn it into a
-     `min-height` on the bar — that would grow the 560px tier's transport by
-     8px, in the one tier that exists to give vertical space back. */
+  /* Present's floating transport: inset + height + gap. The inset is shared with
+     the bar's `bottom`. The height is measured (the bar is content-sized): 80px at
+     default `.controls` padding. Not a `min-height` on the bar — that would grow
+     the in-flow 560px-tier transport. */
   --present-bar-inset: 28px;
   --present-bar-height: 80px;
   --present-bar-reserve: calc(
@@ -207,27 +172,21 @@
   /* Chrome UI font stack (mirrored as fontUi in src/lib/tokens.ts for the
      SVG layer, which can't read custom properties). */
   --font-ui: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  /* The system CJK sans stack, read by two sites for two different reasons: as
-     the miss-fallback behind 'Gambit Mono CJK' in --font-mono (the `local()`
-     PostScript lookups can fail; these keep a chosen face and lose the two-cell
-     grid), and as the CJK-first primary of the subtitle cue. They agree today;
-     a face that suits only one belongs at that site, not here. */
+  /* System CJK sans stack, read twice: as the fallback behind 'Gambit Mono CJK'
+     in --font-mono, and as the subtitle cue's CJK-first primary. A face that
+     suits only one belongs at that site, not here. */
   --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC',
     'Source Han Sans SC', 'Microsoft YaHei';
-  /* CJK sits between Lilex and the generics, not after them: 'Gambit Mono CJK'
-     only ever claims Han/kana (unicode-range), so latin still resolves to
-     Lilex, and CJK reaches a chosen face before `ui-monospace` — which carries
-     no Han glyphs — can hand it to an arbitrary system font. */
+  /* CJK sits between Lilex and the generics: 'Gambit Mono CJK' claims only
+     Han/kana, and `ui-monospace` carries no Han glyphs, so CJK must resolve first. */
   --font-mono: 'Lilex', 'Gambit Mono CJK', var(--font-cjk), ui-monospace, monospace;
 
   /* Focus ring */
   --focus-ring-color: var(--color-camera-highlight-blue);
   --focus-ring-offset: 2px;
 
-  /* Surface backgrounds. Three radial washes layered over the navy linear:
-     a tight steel-blue key-light pool centered on the board column, a warm
-     wash from the upper-left, a cool wash from the lower-right. The
-     "Editing Booth" reads physically. */
+  /* Three radial washes over the navy linear: a steel-blue key-light pool on the
+     board column, a warm upper-left wash, a cool lower-right wash. */
   --surface-app: radial-gradient(900px 600px at 36% 48%, rgba(93, 143, 201, 0.10) 0%, transparent 62%),
     radial-gradient(1200px 800px at 12% -10%, var(--color-set-indigo) 0%, transparent 60%),
     radial-gradient(900px 700px at 100% 110%, var(--color-backdrop-slate) 0%, transparent 60%),
@@ -247,9 +206,8 @@ body {
   overflow-x: hidden;
 }
 #root { min-height: 100vh; }
-/* Every button here is custom chrome, so none of the UA's bevel, fill,
-   padding, pointer or small-control font survives. The rules below state only
-   what differs from inherited type on a bare box. */
+/* Every button is custom chrome: none of the UA's bevel, fill, padding, pointer
+   or control font survives. State only what differs from inherited type. */
 button {
   padding: 0;
   border: 0;
@@ -287,10 +245,9 @@ button {
 .title-block { display: flex; align-items: center; gap: 14px; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .export-board-label-compact { display: none; }
-/* Ghost buttons for present mode: the header's enter-present button and the
-   floating transport's PGN/Exit toggles. The quiet tonal pair and its hover
-   are the transport's (see .ctrl-btn) — shared by selector so the treatment
-   can't drift; only label type, size and shape are local. */
+/* Present-mode ghost buttons (header enter-present, transport PGN/Exit). They
+   share .ctrl-btn's tonal pair and hover by selector; only label type, size and
+   shape are local. */
 .present-btn,
 .present-toggle {
   position: relative;
@@ -298,19 +255,15 @@ button {
   font-weight: 700; letter-spacing: 0;
   transition: background var(--duration-state), color var(--duration-state);
 }
-/* Hit-area extension: the visual stays small, the hit zone reaches 44 — the
-   convention every sub-44px control here follows (.ctrl-btn, .speed-btn,
-   .upload-btn). */
+/* Hit-area extension: visual stays small, hit zone reaches 44 (the convention
+   of .ctrl-btn, .speed-btn, .upload-btn). */
 .present-btn::before {
   content: '';
   position: absolute;
   inset: -5px -4px;
 }
-/* The 30px controls — both present toggles and the move-sound toggle — need
-   7px a side rather than 5 to reach the same 44. One statement of the number,
-   so the three cannot drift apart. The sound toggle sits here rather than with
-   `.speed-btn`/`.view-btn`, whose hover and pressed states it does share: it is
-   already 30px tall, so it needs 7 and not their 11. */
+/* The 30px controls (present toggles, .mute-btn) need 7px a side — not 5, and
+   not .speed-btn/.view-btn's 11 — to reach the same 44. */
 .present-toggle::before,
 .mute-btn::before {
   content: '';
@@ -396,8 +349,8 @@ button {
   box-shadow: inset 0 0 0 1px var(--line-faint);
   color: var(--color-sodium-chalk);
 }
-/* Hit-area extension to clear WCAG 2.5.5 (44 min) without breaking the
-   visual rhythm of the tab group. */
+/* Hit-area extension toward the 44px floor without breaking the tab group's
+   visual rhythm. */
 .tab-btn::before {
   content: '';
   position: absolute; inset: -2px 0;
@@ -454,20 +407,9 @@ button {
   max-width: 58ch;
   margin: 0;
   font-family: var(--font-cjk), var(--font-ui);
-  /* 3.6% of the composed 798px frame (720 board + 64 track + seam). Broadcast
-     and streaming captions sit around 4% of picture height — YouTube's default
-     is ~4.2%, Netflix's 1080p spec ~3.9% — and 21px was 2.6%, near the ~2%
-     floor where type stops surviving a downscale. This is a recording tool, so
-     the cue is read at delivery size, not at authoring size.
-
-     29 and not 32 (a true 4%): the track's content box is 44px — 64 less 18px
-     of padding and the 2px `border-block`, which the border-box measures — so
-     a one-line cue at 29px leaves 4.6px of slack while 32px leaves 0.5px and
-     looks wedged into its own strip. The hard ceiling is 32.4px; past that a
-     single line grows the track, and present mode's floating-bar floor is
-     derived from the track height. The cue is a token declared beside its
-     track in every tier (see `--subtitle-cue-size`) so the pair cannot drift
-     apart the way it did once. */
+  /* ~3.6% of the 798px composed frame, near broadcast caption size: the cue is
+     read at delivery size. 29, not 32: the 64px track's content box is 44px, and
+     past 32.4px one line grows the track that present's bar floor is measured on. */
   font-size: var(--subtitle-cue-size);
   font-weight: 600;
   line-height: 1.36;
@@ -479,12 +421,9 @@ button {
   text-rendering: optimizeLegibility;
   text-shadow: 0 1px 2px rgba(15, 21, 37, 0.42);
 }
-/* The `ask` question card. It borrows the cue's type and the strip's reserved
-   height, so a card never resizes the track; what marks it as a question is
-   the amber countdown ring and an amber border in place of the cue's hairline.
-   The ring is sized in em against the cue so every tier's cue size carries it:
-   1.36em is the cue's own line box, the tallest thing a one-line cue puts in
-   the track. The amber is `--ask-ink`, set inline from `markerColors.ask`. */
+/* The `ask` card borrows the cue's type and the strip's reserved height, so it
+   never resizes the track. The ring is sized in em (1.36em = the cue's line
+   box). `--ask-ink` is set inline from `markerColors.ask`. */
 .subtitle-strip.is-ask {
   border-color: color-mix(in srgb, var(--ask-ink) 45%, transparent);
 }
@@ -550,10 +489,9 @@ button {
   backdrop-filter: blur(6px);
   box-shadow: inset 0 1px 0 var(--rim-light);
 }
-/* Each console child names its cell once, here; a tier below redraws only the
-   map. A map that leaves a named cell out sends that child to an implicit
-   track — onto the timeline, at one viewport band only — so every map names
-   every cell (present's only in present mode), and the suite checks it. */
+/* Each console child names its cell once, here; tiers redraw only the map. Every
+   map must name every cell (present's only in present mode), or a child
+   auto-places onto the timeline. The suite checks it. */
 .controls > .play-btn { grid-area: play; }
 .controls > .ctrl-btn { grid-area: rewind; }
 .controls > .time-readout { grid-area: time; }
@@ -605,20 +543,13 @@ button {
   min-width: 118px;
   height: 24px;
   padding: 0 2px;
-  /* No `font-variant-numeric: tabular-nums` here. It used to sit on this rule
-     and did nothing: every family in --font-mono is monospaced, so the digits
-     already share one advance. Keeping it implied the clock's frame-stability
-     came from the property rather than from the Mono-for-Chess rule, which is
-     the thing that actually has to hold. */
 }
 .t-now { color: var(--color-sodium-chalk); font-weight: 700; }
 .t-sep { color: var(--color-stage-mauve); opacity: 0.72; }
 .t-tot { color: var(--color-rim-light-pewter); opacity: 0.68; }
 
-/* Timeline: pro-grade transport ruler. Three rows: marker pins above, the
-   rail with fill + playhead in the middle, and time-tick labels below. The
-   playhead is a vertical line that crosses all three rows so position is
-   readable at recording resolution. */
+/* Timeline ruler, three rows: marker pins, the rail with fill + playhead, and
+   tick labels. The playhead line crosses all three. */
 .timeline {
   position: relative;
   display: grid;
@@ -644,10 +575,8 @@ button {
 .timeline-rail {
   position: relative;
   width: 100%;
-  /* The grid rows are centered, not stretched, and both this and the tick row
-     are empty boxes with absolutely-positioned children — so each restates its
-     own row height. Same token, or the thumb's calc() drifts from the rail it
-     is supposed to sit on. */
+  /* Rows are centered, not stretched, and this and the tick row hold only absolute
+     children, so each restates its row height — same token the thumb's calc() uses. */
   height: var(--tl-rail);
   background: var(--tonal-white-08);
   border-radius: var(--radius-pill);
@@ -665,8 +594,7 @@ button {
   width: 100%;
   height: var(--tl-tick-row);
   font-family: var(--font-mono);
-  /* Label-tier floor (10.5px): 9.5px was below the system's smallest type
-     size and started to alias on downscaled recordings. */
+  /* Label-tier floor: 10.5px is the system's smallest type. */
   font-size: 10.5px;
   font-weight: 500;
   color: var(--color-foley-slate);
@@ -710,11 +638,8 @@ button {
 }
 .playhead-thumb {
   position: absolute;
-  /* The rail center, measured from the playhead's own top. Derived, not
-     hand-summed: this was `24px` against a true 34px, and those 10px put the
-     thumb inside the pin row where the marker hit targets sit above the scrub
-     input — the only control that looks draggable was the only band that
-     wasn't. */
+  /* The rail center, measured from the playhead's own top: a calc() of the ruler
+     tokens, never a hand-summed length. */
   top: calc(
     var(--tl-crown) + var(--tl-pad-top) + var(--tl-pin-row) + var(--tl-row-gap)
       + var(--tl-rail) / 2
@@ -753,25 +678,17 @@ button {
 .marker[data-form='capsule'] {
   border-radius: var(--radius-pill);
 }
-/* `cl` hollows, matching its own seek dot — the pin and the dot for one event
-   should read the same, and it also separates `cl` from `mind`/`reveal`, which
-   share its grey. Inset ring rather than `border`, so the 5x16 box (and the
-   ::before hit target measured against it) is unchanged. */
+/* `cl` hollows to match its seek dot and to separate it from `mind`/`reveal`,
+   which share its grey. Inset ring, not `border`, so the 5x16 box and its
+   ::before hit target stay unchanged. */
 .marker[data-form='hollow'] {
   border-radius: var(--radius-pill);
   background: transparent;
   box-shadow: inset 0 0 0 1.5px currentColor;
 }
-/* `rp` is the fourth form. On the ruler it wore move's exact blue *and*
-   move's square cut — the one place in the vocabulary where two kinds were
-   separated by nothing at all, in the surface an author scrubs to find things.
-   Frequency decides which one yields: a move is on every other line, a replay
-   is rare and deliberate, so the replay takes the distinctive mark. Two
-   stacked segments read as "run it again" and stay decodable in grayscale at
-   recording size, where a 1px outline or a side-by-side pair would blur into
-   the solid bar it has to differ from. Painted as background layers for the
-   same reason the pennant is: clip-path would clip ::before too and collapse
-   the 40x45 hit target back to 5x16. */
+/* `rp` is the fourth form: two stacked segments, so a replay never reads as a
+   move's blue square cut. Background layers, not clip-path, which would also
+   clip the ::before hit target. */
 .marker[data-form='stack'] {
   border-radius: 0;
   background:
@@ -781,7 +698,7 @@ button {
 .marker[data-form='pennant'] {
   border-radius: 0;
   /* Paint the pennant without clipping the button: clip-path would also clip
-     ::before, collapsing the promised 44px hit target back to 5×16. */
+     ::before, collapsing the hit target back to 5×16. */
   background:
     linear-gradient(to bottom right, transparent 48%, currentColor 52%) top left / 50% 30% no-repeat,
     linear-gradient(to bottom left, transparent 48%, currentColor 52%) top right / 50% 30% no-repeat,
@@ -802,14 +719,9 @@ button {
 .marker::before {
   content: '';
   position: absolute;
-  /* Hit extension reaches up into the console's free padding and stops just
-     above the scrub thumb — a pin's target must never steal the rail's own
-     scrub clicks. The bottom used to stop at the *rail's* top edge, but the
-     thumb is 14px on a 6px rail and overhangs it by 4px, so the pin still
-     owned the top slice of the one control users aim at. Those 4px can't be
-     won back upward (the subtitle strip already wins above -22px), so the
-     target is 40×45 rather than 44×45: past the 24×24 floor either way, and
-     the pin is the one that yields. */
+  /* Stops just above the scrub thumb (14px on the 6px rail, overhanging it by
+     4px) so a pin never takes the rail's scrub clicks; the subtitle strip owns
+     above -22px. Hence 40px tall, not 44 — still past the 24×24 floor. */
   inset: -22px -20px -2px;
 }
 .marker:hover, .marker:focus-visible {
@@ -835,12 +747,9 @@ button {
   outline-offset: var(--focus-ring-offset);
 }
 
-/* The transport's two recording preferences — playback rate and whether the
-   piece click sounds — share one grid cell, `prefs`, which this wrapper names
-   and `.speed-group` never does: every tier redraws the console's area map, so
-   a second bare child would have no cell of its own and auto-place into
-   whatever cell each tier left free — a control landing on the timeline at one
-   viewport band only. */
+/* `.transport-prefs` names the `prefs` cell for rate and move sound; `.speed-group`
+   must not, or a second bare child would auto-place into whatever cell a tier
+   leaves free. */
 .transport-prefs {
   display: flex; align-items: center; gap: 8px;
   flex: 0 0 auto;
@@ -861,13 +770,8 @@ button {
   font-size: 11.5px; font-weight: 600;
   transition: color var(--duration-state), background var(--duration-state);
 }
-/* The move sound's on/off, seated beside the rate selector because both are
-   preferences about the recording rather than about the board, and a video
-   editor keeps both on the transport instead of behind a settings pane.
-   Type is the sans compact Title, not the speed segment's mono: the speed
-   buttons are mono because `0.5×` is a numeric, while `SFX` is a chrome word
-   and the Mono-for-Chess rule sets those in Schibsted. Geometry is the compact
-   toggle's (30px on the sm radius), so no new size enters the system. */
+/* Move sound on/off, beside the rate selector. Sans, not mono: `SFX` is a chrome
+   word, `0.5×` a numeric. Geometry is the compact toggle's (30px, sm radius). */
 .mute-btn {
   position: relative;
   color: var(--color-foley-slate);
@@ -878,23 +782,17 @@ button {
   text-transform: uppercase;
   transition: color var(--duration-state), background var(--duration-state);
 }
-/* Segmented-control states, shared with the script view toggle (.view-btn) and
-   the move-sound toggle so the pressed treatment can't drift between them.
-   The sound toggle takes this pair rather than `.present-toggle`'s steel-blue
-   pressed fill, which measures 2.85:1 against its own chalk — a cost an 11px
-   label cannot pay. Here the lit state is chalk on the 12% stop (9.6:1) and the
-   resting one is foley-slate on the console (5.3:1), both clear of the 4.5
-   body floor, and "lit means on" is the reading the neighbouring rate segment
-   already teaches. */
+/* Segmented-control states, shared by .speed-btn, .view-btn and .mute-btn. The
+   sound toggle uses this pair, not `.present-toggle`'s steel-blue pressed fill
+   (2.85:1), so its 11px label stays above 4.5:1. */
 .speed-btn:hover,
 .view-btn:hover,
 .mute-btn:hover { color: var(--color-sodium-chalk); }
 .speed-btn[aria-pressed='true'],
 .view-btn[aria-pressed='true'],
 .mute-btn[aria-pressed='true'] { background: var(--tonal-white-12); color: var(--color-sodium-chalk); }
-/* Hit-area extension: visual ~28×22, hit zone reaches 44 vertically to clear
-   WCAG 2.5.5. Inner padding stays tight so the segmented groups read. Shared
-   with the view toggle, like the hover/pressed states above. */
+/* Hit-area extension: visual ~28×22, hit zone 44 tall. Shared with the view
+   toggle, like the hover/pressed states. */
 .speed-btn::before,
 .view-btn::before {
   content: '';
@@ -906,10 +804,8 @@ button {
    Side panel
    ===================================================================== */
 
-/* The side panel surface, shared with present mode's move list so the panel
-   wash, rim and radius have one definition and can't drift. Both span the
-   board + subtitle rows: the panel bottom lines up with the subtitle strip's
-   bottom, above the full-width controls bar. */
+/* Side-panel surface, shared with present mode's move list. Both span the board
+   + subtitle rows, so the panel bottom lines up with the subtitle strip's. */
 .side-col,
 .present-moves {
   grid-column: 2;
@@ -933,18 +829,9 @@ button {
   margin-bottom: var(--board-seam);
   backdrop-filter: blur(8px);
 }
-/* Between the two-column floor and the old 1380px stack point the panel can
-   still sit beside the board — just not at its 560px resting width. 1380 was
-   derived from that floor (1380 - 72 page padding - 740 board and gap = 568,
-   the last width that seats a 560px panel), so holding the floor is the only
-   thing that forced 1280x800 to stack. Stacked, the panel lands under a 720px
-   board and pushed the transport 889px down the page: first paint was a board
-   and a header, and the tool read as a static image viewer.
-
-   Here the panel fills what the board leaves instead (468px at 1280, 429px at
-   the 1241px floor) and the workspace clamp releases to full width, since a
-   centered fixed workspace is what created the leftover gutter in the first
-   place. The board never moves: it keeps its authored track. */
+/* From the two-column floor up to 1380px — the last width that seats a 560px
+   panel (1380 − 72 padding − 740 board and gap = 568) — the panel fills what the
+   board leaves and the workspace clamp releases. The board keeps its track. */
 @media (min-width: 1241px) and (max-width: 1380px) {
   :root { --workspace-width: 100%; }
   .main {
@@ -1072,9 +959,8 @@ button {
   justify-content: space-between;
   gap: 12px;
 }
-/* The panel's field-label tier. One recipe, one selector list: these render
-   a row apart on the Setup page, so a type-scale change that reaches two of
-   the three is visible side by side. */
+/* The panel's field-label tier: one recipe for all three, which render a row
+   apart on the Setup page. */
 .fen-field label,
 .orientation-label,
 .subtitle-editor-head label,
@@ -1092,13 +978,8 @@ button {
   gap: 8px;
   min-width: 0;
 }
-/* Script header: the view toggle anchors left and Import anchors right, so the
-   transient Undo grows into the gap between them instead of shoving the row.
-   Undo used to displace the toggle by its own width the moment it appeared —
-   a control moving out from under the cursor right after a board edit, which
-   is exactly when the author is most likely to reach for it again. Pinning
-   Import also breaks the segment illusion: sitting flush against the toggle it
-   read as a third view ("Moves | Text | Import") rather than an action. */
+/* Script header: the view toggle anchors left and Import right, so the transient
+   Undo grows into the gap instead of moving the toggle. */
 .panel-title-row > .subtitle-actions {
   flex: 1;
 }
@@ -1153,18 +1034,9 @@ button {
 }
 
 /* =====================================================================
-   Insert menu
-   The way into the script language. Twelve event kinds ship in the parser;
-   before this only three had an input path (the board gestures), so the
-   menu is both an inserter and the app's only syntax reference. It docks at
-   the bottom of the Moves view and expands upward in the flow rather than
-   floating: the panel is a tall column with room, and an in-flow disclosure
-   can't be clipped by an ancestor's overflow.
-
-   Type sizes here start at 12.5px rather than joining the surrounding
-   10.5/11.5px chrome. These rows are read as prose, once, by someone
-   learning the language — the density that serves a move list works against
-   a reference.
+   Insert menu: the inserter and the app's only syntax reference. It docks at
+   the bottom of the Moves view and expands upward in flow, so no ancestor's
+   overflow can clip it. Type starts at 12.5px: these rows are read as prose.
    ===================================================================== */
 .insert-dock {
   flex: 0 0 auto;
@@ -1189,9 +1061,8 @@ button {
 }
 .insert-trigger:hover { background: var(--tonal-white-04); color: var(--color-sodium-chalk); }
 .insert-trigger[aria-expanded='true'] { color: var(--color-sodium-chalk); }
-/* Glyph size, not a type-ramp step: the `+` is an icon that happens to be a
-   character, so it is sized to sit optically with the 44px trigger rather than
-   to any text tier. Same exemption as .pgn-x's `×`. */
+/* Glyph size, not a type-ramp step: the `+` is an icon sized to the 44px
+   trigger (same exemption as .pgn-x's `×`). */
 .insert-plus {
   font-family: var(--font-mono);
   font-size: 14px;
@@ -1275,11 +1146,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   color: var(--color-studio-steel-blue);
 }
 
-/* Collapsed by default to ERRORS_COLLAPSED_ROWS, so the band sizes itself
-   instead of turning into a nested scroll region inside an already-scrolling
-   panel — at the old fixed 140px, six errors scrolled the report out of sight.
-   Expanded it still needs a ceiling (a badly broken paste can produce dozens),
-   but that scroll is now something the user asked for. */
+/* Collapsed to ERRORS_COLLAPSED_ROWS (SidePanel.tsx) so the band sizes itself
+   instead of nesting a scroll region in the scrolling panel. Expanded, it still
+   needs a ceiling. */
 .errors {
   border-top: 1px solid var(--errors-border);
   background: var(--errors-bg);
@@ -1298,9 +1167,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-/* Caption tier, not a 12px step of its own: the errors band is prose the
-   author reads before going to fix a line, so it belongs to the same size as
-   every other working-surface small text. */
+/* Caption tier, not a 12px step of its own: working-surface prose. */
 .err-row {
   display: flex; gap: 10px;
   padding: 4px 18px;
@@ -1312,13 +1179,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 
 .event-list { flex: 1; overflow-y: auto; padding: 8px 8px 16px; }
-/* PGN move list: mainline moves in numbered white/black rows, variations as
-   inset flow blocks, non-move events as kind-colored seek dots. The lichess
-   analysis convention restated in Gambit's chrome: number rail on the tonal
-   ladder, Lilex for every move, a steel-blue pill (Five Meanings:
-   move) on the current position. Reached events read at full strength;
-   not-yet-reached ones sit dimmed — the recording-progress cue the old list
-   carried, kept. */
+/* PGN move list: numbered mainline rows, variations as inset blocks, non-move
+   events as kind-colored seek dots. Reached events read full strength;
+   unreached ones dim. */
 .pgn-rows { display: flex; flex-direction: column; }
 .pgn-row {
   display: grid;
@@ -1367,9 +1230,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 .pgn-mv.past,
 .present-mv.past { color: var(--color-rim-light-pewter); }
-/* A line the snapshot builder rejected (illegal SAN, bad FEN, resource cap) is flagged
-   inline, not only in the errors band: vermillion ink plus a wavy strand,
-   so the broken move is findable at a glance while paused anywhere. */
+/* A line the snapshot builder rejected (illegal SAN, bad FEN, resource cap) is
+   flagged inline too: vermillion ink plus a wavy strand. */
 .pgn-mv.has-error,
 .pgn-var-mv.has-error {
   color: var(--color-error-text);
@@ -1388,10 +1250,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   background: var(--color-deep-set-blue);
   color: var(--color-sodium-chalk);
 }
-/* Move-quality marks. Weight only — the color arrives inline from
-   `annotationMarkColors`, the same way a seek dot takes `markerColors`, so
-   the four hexes live in one table instead of also being custom properties
-   this rule and a per-kind class had to keep agreeing with. */
+/* Move-quality marks: weight only. Color arrives inline from
+   `annotationMarkColors`, so the hexes live in one table. */
 .pgn-annot { font-weight: 700; }
 /* Non-move events as seek dots, colored per event kind (same vocabulary as
    the timeline pins). Current state rings the dot instead of filling a pill
@@ -1496,10 +1356,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   display: flex; align-items: center; gap: 4px;
   min-height: 24px; padding: 2px 6px 2px 30px;
 }
-/* Seek affordances inside divider / error wrappers (the wrapper also hosts
-   the editable time chip and delete ×, so it can't be a button itself). The
-   global button reset hands them the row's type and ink; only the row's own
-   alignment differs. */
+/* Seek buttons inside divider / error wrappers (the wrapper also hosts the time
+   chip and delete ×, so it can't be a button). Only alignment differs from the
+   global button reset. */
 .pgn-divider-seek,
 .pgn-err-seek {
   display: flex; min-width: 0; flex: 1; text-align: left;
@@ -1541,12 +1400,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   background: var(--tonal-white-06);
   padding: 1px 4px; border-radius: var(--radius-pill);
 }
-/* No resting opacity fade. It cost real contrast rather than reading as
-   restraint: inside a variation's lighter `tonal-white-04` inset the chips
-   measured 4.18:1, under the 4.5:1 body floor, and the fade is what put them
-   there (4.80:1 without it, on the same foley-slate). The quiet comes from the
-   token and the 10.5px size, which is where it belongs — brightening the token
-   instead would have made timestamps compete with the moves. */
+/* No resting opacity fade: on a variation's tonal-white-04 inset it drops the
+   chips under 4.5:1. The quiet comes from the token and the 10.5px size. */
 /* Hit-area extension to the 24px floor (WCAG 2.5.8); visual pill stays tiny
    so timestamps keep reading as metadata. */
 .pgn-time-edit::before {
@@ -1579,7 +1434,7 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   flex: 0 0 auto;
   width: 16px; height: 16px; border-radius: var(--radius-xs);
   /* Glyph size, not a type-ramp step — the `×` is an icon (see .insert-plus),
-     drawn in the UA control face rather than whichever type its row sets. */
+     drawn in the UA control face. */
   font-family: revert;
   color: var(--color-foley-slate); font-size: 12px; line-height: 1;
   opacity: 0;
@@ -1659,9 +1514,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 @media (max-height: 920px) {
   :root {
     --main-row-gap: 12px;
-    /* The full-size artifact keeps the base cue, so this tier's track floor is
-       the cue's own height: 29 × 1.36 + 15px padding (7/8 at this height) + 2px
-       border = 56.44. */
+    /* Track floor = the base cue's height: 29 × 1.36 + 15px padding (7/8 here)
+       + 2px border = 56.44. */
     --subtitle-track-height: 57px;
     --subtitle-cue-size: 29px;
   }
@@ -1704,21 +1558,14 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   }
 }
 
-/* Only genuinely short desktop viewports trade recording size for a 560px
-   working board. Ordinary 800–900px laptop heights keep the 720px artifact;
-   the page may scroll rather than silently shrinking a recording frame.
-   This band is the narrowest of the height tiers and every viewport it matches
-   also matches the two above, so it is declared last: media queries add no
-   specificity, and source order is the only thing that lets it win. */
+/* Only short desktops trade the 720px artifact for a 560px working board;
+   ordinary laptop heights keep 720 and scroll. Declared after the taller height
+   tiers it overlaps: media queries add no specificity, so source order wins. */
 @media (min-width: 1081px) and (max-height: 760px) {
   :root {
     --artifact-fit-width: 560px;
-    /* The cue is part of the artifact, so it scales with it — 560/720 of the
-       base, rounded to keep a one-line cue inside this tier's track (22 × 1.36
-       + 15 + 2 = 46.9). Holding the base 29px here would wrap the same cue onto
-       two lines on the narrower board, double the track to 96px, and land the
-       floating bar on the subtitles. Artifact size and cue size move together
-       or not at all — which is why the two are declared side by side. */
+    /* The cue scales with the artifact (≈560/720 of the base), rounded so one line
+       fits this tier's track: 22 × 1.36 + 15 + 2 = 46.9. */
     --subtitle-track-height: 48px;
     --subtitle-cue-size: 22px;
   }
@@ -1735,10 +1582,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 
 /* =====================================================================
-   Board surface. The board floats on one ambient floor shadow (DESIGN.md
-   "Board ambient"); pieces carry a soft drop shadow that deepens while one
-   slides. Static, so CSS rather than JS tokens — the PNG export inlines
-   computed styles, so it reads a class exactly as it read an inline style.
+   Board surface: one ambient floor shadow (DESIGN.md "Board ambient"); pieces
+   carry a drop shadow that deepens while sliding. CSS, not JS tokens: the PNG
+   export inlines computed styles.
    ===================================================================== */
 
 .board {
@@ -1767,10 +1613,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 
 /* =====================================================================
-   Mobile reflow: at ≤600px the 5-column controls strip stops fitting. The
-   timeline drops to a second row spanning the full width while play /
-   restart / time / speed share row 1. App padding tightens so the
-   board column doesn't get squeezed.
+   Mobile reflow (≤600px): the 5-column controls strip stops fitting, so the
+   timeline drops to its own full-width row. App padding tightens.
    ===================================================================== */
 @media (max-width: 600px) {
   :root {
@@ -1779,10 +1623,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
     --board-radius: 8px;
   }
 
-  /* No SRT loaded at all: drop the empty subtitle track instead of pushing
-     the transport down a phone screen. When cues exist the track stays
-     reserved so playback never shifts layout (desktop keeps the reserve
-     unconditionally; its grid rows align with the side panel). */
+  /* No SRT loaded: drop the empty subtitle track. With cues the track stays
+     reserved so playback never shifts layout. */
   .subtitle-strip.no-track { display: none; }
 
   .app { padding: 16px 16px 20px; gap: 16px; }
@@ -1806,9 +1648,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
     line-height: 1.34;
   }
 
-  /* Three rows on mobile: transport + readout, timeline, speed selector.
-     Squeezing all five children into one row collapses the time-readout
-     below its natural width and overlaps the speed group. */
+  /* Three rows: transport + readout, timeline, speed. One row collapses the
+     readout below its natural width and overlaps the speed group. */
   .controls {
     grid-template-columns: auto auto 1fr;
     grid-template-areas:
@@ -1824,56 +1665,33 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 }
 
 /* =====================================================================
-   Present mode: a distraction-free recording/presentation view. Editing
-   chrome (header, side panel, footer) hides, the board grows and centers,
-   the transport becomes a floating bar that fades out while playback runs
-   and the pointer is idle. Purely a view layer — the board is still fully
-   determined by script + FEN + time.
+   Present mode: editing chrome hides, the board centers, the transport floats
+   and fades while playback runs and the pointer idles. A view layer only — the
+   board is still determined by script + FEN + time.
    ===================================================================== */
 .app--present .header {
   display: none;
 }
-/* With those three gone and the transport fixed (below), `.app`'s only
-   in-flow child is the artifact — so it pinned to the top of a viewport-tall
-   #root and opened a void between the board and the floating bar (258px on a
-   1210px-tall window). Edit mode never showed it because the side panel and
-   the in-flow console filled that height. Present is the recording frame, so
-   the artifact belongs on the optical center, not at the top edge.
-
-   `safe center` is load-bearing: on a window too short to seat the artifact
-   plus the reserve, it degrades to top-aligned and the page scrolls, instead
-   of centering overflow and pushing the board's top edge out of reach above
-   the scroll origin. A browser that can't parse it drops the declaration and
-   lands back on today's top-aligned layout — no breakage either way. */
+/* The artifact is `.app`'s only in-flow child here; center it optically.
+   `safe center` is load-bearing: on a window too short to seat it, it falls
+   back to top-aligned and scrolls instead of pushing the board above the origin. */
 .app--present {
   min-height: 100dvh;
   justify-content: safe center;
-  /* The floating bar's own footprint, so centering can never slide the
-     artifact under it. Reserving it here (rather than centering on the full
-     viewport) is what keeps the result centered in the space the bar leaves —
-     and it is zeroed in the two queries below that put the bar back in flow,
-     where reserving space for a float that no longer exists just parks 130px
-     of empty page under the console. */
+  /* Reserve the floating bar's footprint so centering never slides the artifact
+     under it. Zeroed wherever the bar goes back in flow. */
   padding-bottom: var(--present-bar-reserve);
 }
-/* The board keeps the authored recording size (720px, or the 560px
-   short-desktop fallback via the existing height media query); with the
-   editing chrome gone it simply has more room. Present must NOT introduce a
-   dvh shrink formula on --artifact-fit-width — the recording frame is a fixed
-   authored size and the page scrolls on a short window. That invariant is
-   guarded by scripts/test-regressions.mjs. */
-/* minmax(0, …) rather than a bare track: these selectors outrank the
-   max-width:1240px `1fr` collapse at every width (0,2,0 beats 0,1,0, and media
-   queries add no specificity), so a fixed track would keep demanding 720px on
-   a narrow window — overflowing .main, which body's overflow-x:hidden then
-   center-crops with no scrollbar. The max stays the authored size, so ordinary
-   desktop widths are unchanged; only a window too narrow to seat it shrinks,
-   exactly as edit mode already does via 1fr + .board-wrap's max-width. */
+/* The board keeps the authored size (720px, or the 560px short-desktop
+   fallback). Present must not add a viewport-derived formula to
+   --artifact-fit-width; guarded by test/styles.test.mjs. */
+/* minmax(0, …), not a fixed track: these selectors outrank the max-width:1240px
+   `1fr` collapse at every width, so a fixed 720px track would overflow .main on
+   a narrow window, where body's overflow-x:hidden crops it without a scrollbar. */
 .app--present .main {
   grid-template-columns: minmax(0, var(--artifact-fit-width));
 }
-/* With the move list alongside: board at its authored width + narrow panel
-   (~1040px total, narrower than the editor layout that already ships). */
+/* With the move list alongside: authored board width + the narrow present panel. */
 .app--present-pgn .main {
   grid-template-columns: minmax(0, var(--artifact-fit-width)) var(--present-pgn-width);
 }
@@ -1886,14 +1704,9 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   left: 50%;
   bottom: var(--present-bar-inset);
   transform: translateX(-50%);
-  /* Not the board's width. The bar floats *below* the artifact and fades out
-     during playback, so matching the frame bought nothing visually and cost the
-     timeline everything: six control groups eat ~620px, which left the scrubber
-     99px at 1512px wide — 1.03s per pixel on a 1:42 script, with the tick
-     labels overlapping into an unreadable smear. The timeline is the control
-     that must survive; give it room and let the bar run wider than the board,
-     the way a video editor's transport does. Capped so it stays anchored under
-     the frame rather than spanning an ultrawide desktop. */
+  /* Not the board's width: the timeline must keep usable scrub resolution, so the
+     bar runs wider than the board, like a video editor's transport. Capped so it
+     stays anchored under the frame on ultrawide desktops. */
   width: min(1080px, 92vw);
   z-index: 20;
   display: flex;
@@ -1927,10 +1740,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   color: var(--color-sodium-chalk);
 }
 
-/* Read-only mainline move list. Takes the shared panel surface (see the
-   .side-col rule); no blur, unlike the editor panel — only the flat app
-   background sits behind it, so the compositor work would buy nothing and
-   this rides beside an animating board during a recording. */
+/* Read-only mainline list on the shared panel surface (see .side-col). No blur:
+   only the flat background sits behind it, beside an animating board. */
 .present-moves-scroll {
   width: 100%;
   overflow-y: auto;
@@ -1955,16 +1766,14 @@ button.insert-item:hover { background: var(--tonal-white-08); }
 /* .past / .current pill colors are shared with the editor list (see .pgn-mv). */
 
 @media (max-width: 760px) {
-  /* Present's desktop flex override cannot seat six controls at compact tablet
-     widths (at 601px the timeline collapsed to 16px). Use four bands so the
-     speed selector and PGN/Exit retain useful hit and scrub areas. */
+  /* Present's desktop flex bar cannot seat six controls at compact tablet widths;
+     four bands keep the speed selector and PGN/Exit usable. */
   /* The bar is in flow here, so there is no float to reserve for. */
   .app--present { --present-bar-reserve: 0px; }
 
   .app--present .controls {
-    /* On a short phone a 211px fixed console covers the subtitle track. The
-       mobile console returns to its authored slot below the subtitle; hiding
-       it still changes only opacity, so the recording frame never reflows. */
+    /* On a short phone the fixed console would cover the subtitle track, so it
+       returns below the subtitle; hiding it still changes only opacity. */
     position: static;
     transform: none;
     width: 100%;
@@ -1985,9 +1794,8 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   .app--present .speed-btn { padding-inline: 8px; }
   .app--present .mute-btn { padding-inline: 8px; }
 
-  /* The optional PGN is useful on a phone, but it cannot share a row with the
-     board: the fixed 220px panel used to crush the recording artifact to 105px
-     at a 375px viewport. Stack it below at full width instead. */
+  /* On a phone the PGN cannot share a row with the board; stack it below at full
+     width. */
   .app--present-pgn .main {
     grid-template-columns: minmax(0, var(--artifact-fit-width));
   }
@@ -1999,40 +1807,11 @@ button.insert-item:hover { background: var(--tonal-white-08); }
   }
 }
 
-/* A floating bar only works when the window is tall enough to seat the whole
-   recording frame above it. At 1280x800 it is not: the fixed console covered
-   the board's first rank and its a-h coordinates by 28px across the full width,
-   whenever playback was paused — exactly the frame a creator is looking at
-   while framing the shot and arming a screen recorder. The artifact keeps its
-   authored size (docs/design.md guards that), so the console returns to the
-   flow and the page scrolls instead; scroll over a shrunken frame is the trade this
-   project already prefers.
-
-   In the flow the bar is only as wide as the board column, so a single row
-   would put the scrubber right back where it started (107px at 1280px). Two
-   bands instead: transport and secondaries on top, timeline spanning its own
-   full-width row underneath.
-
-   This includes the 560px short-desktop frame: at 1440x720 a two-line cue
-   still overlaps the fixed bar by 37px. Keep that smaller artifact, but let
-   the transport follow its subtitle track in the flow. Start at 761px so the
-   <=760px mobile grid above keeps its own four-band placement.
-
-   970px is the measured floor, not a round number: anything shorter lands the
-   bar on the subtitles, which DESIGN.md forbids just as firmly as landing it
-   on the board. It was 905px, measured against a *one-line* track (12 top +
-   720 frame + 66 track = 798, versus an 80px bar at bottom:28px). But the
-   track is `auto` and grows with the cue, and a two-line cue already left
-   exactly 0px of clearance at 1440x920 — the floor had no margin, it just
-   hadn't been measured against the format captions actually use. Two lines is
-   the cap in every caption standard (Netflix, BBC, EBU), so that is what this
-   is measured against now, and measured rather than derived: the app's own
-   top padding shifts across height tiers, so the arithmetic that predicts 958
-   is wrong on the page (1440x960 clears by 1px, not 10). Observed clearance
-   runs vh − 959, so 970 buys ~11px; past 972 the artifact centers and the gap
-   only widens. Common laptop viewports sit in the band this recovers —
-   1470x956 is one. A 3+ line cue is outside the caption convention and
-   outside this floor. */
+/* The floating bar needs the window tall enough to seat the frame and a
+   two-line cue above it. 970px is measured, not derived (top padding shifts
+   across height tiers). Below it the console returns to the flow in two bands
+   (transport, then full-width timeline) and the page scrolls. 761px leaves the
+   ≤760px mobile grid its own placement. */
 @media (min-width: 761px) and (max-height: 970px) {
   /* In flow here too — nothing floats, so nothing needs reserving. */
   .app--present { --present-bar-reserve: 0px; }

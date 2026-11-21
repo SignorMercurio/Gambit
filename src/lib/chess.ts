@@ -76,13 +76,10 @@ function owns(engine: ChessJs, sq: string, type: PieceType, side: Side): boolean
   return piece?.type === type && piece.color === side;
 }
 
-// chess.js checks FEN syntax and king counts, then loads whatever position
-// lies beneath. Three claims it takes on trust break Gambit's board: a side
-// not to move already in check lets the script capture a king (and the next
-// load throws mid-walk); a castling right with no rook in the corner moves
-// whatever piece stands there as if it were one; an en-passant square with no
-// pawn behind it removes whatever piece does stand there. Each is rejected as
-// typo-like input, not repaired behind the author's back.
+// chess.js checks FEN syntax and king counts but takes three claims on trust
+// that break the board: the side not to move in check (a king becomes
+// capturable), a castling right with no corner rook, and an en-passant square
+// with no pawn behind it. Each is rejected, not silently repaired.
 function positionError(engine: ChessJs): string | null {
   const turn = engine.turn();
   const waiting: Side = turn === 'w' ? 'b' : 'w';
@@ -165,10 +162,7 @@ export function legalMoves(state: GameState): readonly Move[] {
   return moves;
 }
 
-// The gesture questions, answered here rather than in App: which squares a
-// piece can reach, which legal moves connect two squares, whether two moves
-// name the same squares. Each would otherwise restate that `Move.from` and
-// `Move.to` are [file, rank] tuples in a file that owns no chess.
+// Gesture queries live here so callers never touch the [file, rank] tuples.
 function movesFrom(state: GameState, from: string): readonly Move[] {
   const { f, r } = sqToIdx(from);
   return legalMoves(state).filter((m) => m.from[0] === f && m.from[1] === r);
@@ -222,13 +216,10 @@ export function explainNoMoves(state: GameState, from: string): string | null {
 
 type PlayedMove = Readonly<{ move: Move; next: GameState }>;
 
-// buildWorld replays the whole script on every keystroke, and one engine load
-// per move is most of its cost. A move is a pure function of (position, SAN),
-// so results are memoized by value — never a second copy of board state, just
-// the same answer again. Returning the same `next` object also keeps
-// `legalMoves`' identity cache warm across rebuilds. Least-recently-used
-// entries go first, so an unchanged script prefix stays hot while edits churn
-// the tail.
+// buildWorld replays the script on every keystroke, and engine loads dominate.
+// A move is a pure function of (FEN, SAN), so results are memoized by value
+// (LRU, so an unchanged prefix stays hot); the same `next` object also keeps
+// `legalMoves`' identity cache warm.
 const PLAYED_CACHE = new Map<string, PlayedMove | null>();
 const PLAYED_CACHE_LIMIT = 4096;
 

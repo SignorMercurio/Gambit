@@ -1,28 +1,26 @@
-// The editor's side panel: two tab pages (Script, Setup) over one tabpanel
-// shell, with the errors band at the foot of whichever page is open.
+// The editor's side panel: Script and Setup pages over one tabpanel shell,
+// with the errors band under whichever page is open.
 //
-// Memoized, and clock-free below the shell: App re-renders every playback
-// frame, and a controlled <textarea>/<input> re-reads and compares its DOM
-// value on every render it takes part in — a full 1 MB script per frame. The
-// one clock readout, the insert menu's label, is rendered by the shell itself;
-// the pages and the errors band never see it, so they are memoized on their
-// own and skip its tenth-of-a-second ticks too. Every callback prop must be
-// stable, or the memos are decoration.
+// Clock-free: a controlled textarea compares its whole value on every render,
+// so the panel takes the reached event index rather than the time, and the
+// pages and errors band are memoized. Only the insert menu's label follows the
+// clock, by subscribing to it itself. Callback props must be stable, or the
+// memos do nothing.
 
 import { memo, useRef, type ChangeEvent, type KeyboardEvent } from 'react';
-import type { GameState } from '../lib/chess';
 import type { BoardOrientation } from '../lib/boardOrientation';
+import type { Clock } from '../lib/clock';
 import { fmtTime, type TimelineEvent } from '../lib/timeline';
 import { InsertMenu } from './InsertMenu';
 import { MoveList } from './MoveList';
 import { SYNTAX_HINT } from './SyntaxHint';
 import type { NarrationTrack } from './useNarration';
+import type { StructureSnapshot } from '../lib/world';
 
 export type PanelTab = 'script' | 'setup';
 export type ScriptView = 'moves' | 'text';
 
-// Element ids for ARIA wiring. Literals rather than `useId`: there is one
-// panel per document and no server render, so a fixed name is already unique.
+// Literal ids rather than `useId`: one panel per document, no server render.
 const editorLabelId = 'script-editor-label';
 const subtitleLabelId = 'subtitle-label';
 const narrationLabelId = 'narration-label';
@@ -35,25 +33,18 @@ const scriptTabId = 'script-tab';
 const panelId = 'side-panel';
 const fenErrorId = 'fen-error';
 
-// How many error rows the band shows before collapsing the rest behind a
-// count. Three keeps the band a fixed, readable strip: the common case (one
-// typo) never gets a toggle, and a broken paste reports its scale instead of
-// burying it in a 140px scroll well.
+// Error rows shown before the rest collapse behind a count.
 const ERRORS_COLLAPSED_ROWS = 3;
 
-// Pluck the selected file and reset the input so re-picking the same file
-// fires change again. Shared intake for every import affordance.
+// Resets the input so re-picking the same file fires change again.
 function takeSelectedFile(e: ChangeEvent<HTMLInputElement>): File | null {
   const file = e.currentTarget.files?.[0];
   e.currentTarget.value = '';
   return file ?? null;
 }
 
-// Import affordance: a labelled button driving a hidden file input. The
-// three import surfaces (script, subtitles, narration) share the wiring so
-// accept types and the button/input pairing stay in one place. `id` is only
-// for an importer whose visible text is a `<label htmlFor>` (narration); the
-// other two inputs are opened by the button's ref and need no identity.
+// A labelled button driving a hidden file input. `id` is only for an
+// importer named by a `<label htmlFor>` (narration).
 function ImportButton({
   id,
   accept,
@@ -104,14 +95,13 @@ type PanelProps = {
   scriptView: ScriptView;
   onScriptView: (view: ScriptView) => void;
   scriptText: string;
-  // A hand edit in the Text view.
   onScriptText: (text: string) => void;
   scriptFileName: string | null;
   undoText: string | null;
   onUndo: (text: string) => void;
   onImportScript: (file: File) => void;
   events: TimelineEvent[];
-  snapshots: readonly { chessState: GameState }[];
+  snapshots: readonly StructureSnapshot[];
   reachedEventIndex: number;
   errorLines: ReadonlySet<number>;
   playing: boolean;
@@ -146,15 +136,15 @@ type PanelProps = {
   onErrorsExpanded: (expanded: boolean) => void;
 };
 
-// The insert menu belongs to the shell: it is the only consumer of the clock.
+// The insert menu's props stay out of the pages' memoized props.
 type SidePanelProps = PanelProps & {
   onInsert: (body: string) => void;
-  timeLabel: string;
+  clock: Clock;
 };
 
 export const SidePanel = memo(function SidePanel({
   onInsert,
-  timeLabel,
+  clock,
   ...p
 }: SidePanelProps) {
   const onTabKeyDown = (e: KeyboardEvent) => {
@@ -163,8 +153,7 @@ export const SidePanel = memo(function SidePanel({
     e.stopPropagation();
     const next = p.tab === 'script' ? 'setup' : 'script';
     p.onTab(next);
-    // Both tab buttons stay mounted, so focus can follow selection
-    // synchronously without inserting an uncancelled frame of latency.
+    // Both tab buttons stay mounted, so focus follows selection synchronously.
     e.currentTarget
       .querySelector<HTMLElement>(`#${next === 'script' ? scriptTabId : setupTabId}`)
       ?.focus();
@@ -204,8 +193,7 @@ export const SidePanel = memo(function SidePanel({
           Setup
         </button>
       </div>
-      {/* One tabpanel shell for both pages: the ARIA wiring and the
-         errors-stay-visible rule live here once, not per page. */}
+      {/* One tabpanel for both pages, so the errors band shows on either. */}
       <div
         className="editor"
         role="tabpanel"
@@ -215,9 +203,8 @@ export const SidePanel = memo(function SidePanel({
         {p.tab === 'script' ? (
           <>
             <ScriptPage {...p} />
-            {/* Insertion reuses the board gesture's own commit path rather
-                than opening a second one. */}
-            {p.scriptView === 'moves' && <InsertMenu onInsert={onInsert} timeLabel={timeLabel} />}
+            {/* Insertion reuses the board gesture's commit path. */}
+            {p.scriptView === 'moves' && <InsertMenu onInsert={onInsert} clock={clock} />}
           </>
         ) : (
           <SetupPage {...p} />
@@ -234,8 +221,7 @@ const ScriptPage = memo(function ScriptPage(p: PanelProps) {
     <>
       <div className="panel-header">
         <div className="panel-title-row">
-          {/* Visually hidden (the tab above reads "Script"); the h2
-              exists to name the editor via aria-labelledby. */}
+          {/* Names the editor via aria-labelledby. */}
           <h2 className="sr-only" id={editorLabelId}>Script</h2>
           <div className="subtitle-actions">
             <div className="view-toggle" role="group" aria-label="Script view mode">
@@ -377,8 +363,7 @@ const SetupPage = memo(function SetupPage(p: PanelProps) {
             {narration && (
               <>
                 <span className="subtitle-file">{narration.name}</span>
-                {/* Duration outside the truncating span: metrics never
-                   tail-truncate into an ellipsis. */}
+                {/* Outside the truncating span so the duration never ellipsizes. */}
                 <span className="narration-duration">
                   {fmtTime(narration.duration, 'always')}
                 </span>
@@ -409,10 +394,7 @@ const SetupPage = memo(function SetupPage(p: PanelProps) {
   );
 });
 
-// Rendered at the bottom of whichever page is open, so an error anywhere
-// stays visible on both pages; one ordered list so the band can count itself.
-// Rows are keyed by index, not `tag`: `S{line}` is not unique (one SRT line
-// can raise two errors).
+// Rows key by index, not `tag`: one SRT line can raise two errors.
 const ErrorsBand = memo(function ErrorsBand(p: PanelProps) {
   const rows: { tag: string; text: string; id?: string }[] = [];
   if (p.fenError) rows.push({ tag: 'FEN', text: p.fenError, id: fenErrorId });
@@ -431,8 +413,7 @@ const ErrorsBand = memo(function ErrorsBand(p: PanelProps) {
 
   const collapsed = !p.errorsExpanded && rows.length > ERRORS_COLLAPSED_ROWS;
   return (
-    // role="status" (implicitly polite): errors persist and update as the
-    // user types — an assertive alert would interrupt every edit.
+    // role="status", not alert: errors update as the user types.
     <div className={`errors${p.errorsExpanded ? ' errors--expanded' : ''}`} role="status">
       {(collapsed ? rows.slice(0, ERRORS_COLLAPSED_ROWS) : rows).map((row, i) => (
         <div key={i} className="err-row">

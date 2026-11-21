@@ -1,15 +1,7 @@
-// Where the narration track survives a reload.
-//
-// Every other authored input is a string in localStorage, and narration was
-// left out on the grounds that it does not fit there — which is true, and was
-// never a reason for it to be the one input that evaporates on refresh. A
-// lesson's voice track is tens of megabytes of binary; localStorage holds a few
-// megabytes of UTF-16. IndexedDB stores a Blob as a Blob, so this is the same
-// best-effort draft policy as `saveDraft`, in the only store that can hold it.
-//
-// Everything here fails soft for the same reason the localStorage helpers do:
-// storage can be denied outright (private windows, blocked third-party
-// contexts) and losing a draft must never cost the author their session.
+// The narration draft, kept across reloads in IndexedDB because a voice track
+// is too large for localStorage. Same best-effort policy as `saveDraft`: every
+// call fails soft, since storage can be denied and losing a draft must never
+// cost the session.
 
 const DB_NAME = 'gambit';
 const DB_VERSION = 1;
@@ -24,16 +16,13 @@ function openDb(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => request.result.createObjectStore(STORE);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('indexedDB open failed'));
-    // Another tab is holding an older version open. Rejecting rather than
-    // waiting keeps this promise from hanging for as long as that tab lives.
+    // Another tab holds an older version open; reject rather than hang.
     request.onblocked = () => reject(new Error('indexedDB open blocked'));
   });
 }
 
-// One transaction per call, resolved on `complete` rather than on the request:
-// a write that succeeds and then loses its transaction to a quota error has not
-// been stored, and reporting it as stored would leave the next load empty with
-// nothing having gone wrong.
+// One transaction per call, resolved on `complete`, not on the request: a
+// write can succeed and still lose its transaction to a quota error.
 async function withStore<T>(
   mode: IDBTransactionMode,
   work: (store: IDBObjectStore) => IDBRequest,
@@ -57,8 +46,7 @@ export async function loadNarration(): Promise<StoredNarration | null> {
     const stored = await withStore<StoredNarration | undefined>('readonly', (store) =>
       store.get(KEY),
     );
-    // Written by an older build, or hand-edited: treat anything that is not the
-    // current shape as absent rather than handing `useNarration` a track with no bytes.
+    // Anything not in the current shape is treated as absent.
     if (!stored || !(stored.blob instanceof Blob) || typeof stored.name !== 'string') {
       return null;
     }
@@ -72,8 +60,7 @@ export async function saveNarration(value: StoredNarration): Promise<void> {
   try {
     await withStore('readwrite', (store) => store.put(value, KEY));
   } catch {
-    // Best-effort, exactly like the localStorage drafts: the track is already
-    // live in this session, and only the reload after it loses anything.
+    // Best-effort: the track is still live in this session.
   }
 }
 
@@ -81,7 +68,6 @@ export async function clearNarration(): Promise<void> {
   try {
     await withStore('readwrite', (store) => store.delete(KEY));
   } catch {
-    // Nothing to report: a delete that fails leaves a track that the next load
-    // either restores or rejects as undecodable, and both are recoverable.
+    // A failed delete leaves a track the next load restores or rejects.
   }
 }

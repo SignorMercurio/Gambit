@@ -1,8 +1,6 @@
-// Narration audio rides the playback clock. The object URL is session-only —
-// it dies with the page — but the bytes behind it are a draft like the script
-// and the subtitles, kept in IndexedDB because they do not fit localStorage.
-// The clock stays the single source of truth: the <audio> element follows it,
-// never the other way round.
+// Narration audio follows the playback clock, never the other way round. The
+// object URL is session-only; the bytes are a draft kept in IndexedDB because
+// they do not fit localStorage.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -10,50 +8,39 @@ import {
   loadNarration,
   saveNarration,
 } from '../lib/narrationStore';
+import type { Clock } from '../lib/clock';
 import { MAX_SAFE_PLAYBACK_SECONDS } from '../lib/playback';
 
 export type NarrationTrack = { url: string; name: string; duration: number };
 
 export function useNarration({
-  time,
+  clock,
   playing,
   speed,
-  lockRef,
-  waitForUnlock,
 }: {
-  time: number;
+  clock: Clock;
   playing: boolean;
   speed: number;
-  // The board-export lock: deliberate acts stand still while it is held, and
-  // a probe that settles mid-export waits for it before committing.
-  lockRef: { readonly current: unknown };
-  waitForUnlock: () => Promise<void>;
 }) {
   const [narration, setNarration] = useState<NarrationTrack | null>(null);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Bumped by every deliberate act on the track — importing or removing — and
-  // by unmount. A probe or restore carries the number it started under and
-  // commits only if it is still current, so the latest act wins, a remove
-  // beats any probe in flight, and the restore never overrules a pick.
+  // Bumped by import, remove and unmount. A probe or restore commits only if
+  // the number it started under is still current, so the latest act wins.
   const requestRef = useRef(0);
 
-  // Shared by the file picker and the restore-on-load below: a separate restore
-  // path would be a second definition of "playable".
+  // The one definition of "playable", shared by import and restore.
   const adopt = useCallback(
     (blob: Blob, name: string, source: 'import' | 'restore', request: number) => {
       const url = URL.createObjectURL(blob);
-      // Probe metadata off-DOM so a broken file never becomes the live track.
-      // Only the latest request may commit: a slow earlier probe must not
-      // overwrite a newer file or resurrect audio after Remove. A superseded
-      // probe still settles, and settling is where it frees its URL.
+      // Probe off-DOM so a broken file never becomes the live track. A
+      // superseded probe still settles, and settling frees its URL.
       const probe = new Audio();
       probe.preload = 'metadata';
       probe.src = url;
-      probe.onloadedmetadata = async () => {
+      probe.onloadedmetadata = () => {
         // Each probe settles once; a later error must not reach a live track.
         probe.onloadedmetadata = probe.onerror = null;
-        await waitForUnlock();
         if (requestRef.current !== request) {
           URL.revokeObjectURL(url);
           return;
@@ -63,8 +50,7 @@ export function useNarration({
           : 0;
         setError(null);
         setNarration({ url, name, duration: audioDuration });
-        // Stored only once the probe has accepted it: the draft is a track the
-        // app knows it can play, not whatever the picker last handed over.
+        // Stored only once the probe accepts it.
         if (source === 'import') void saveNarration({ blob, name });
       };
       probe.onerror = () => {
@@ -73,34 +59,25 @@ export function useNarration({
         if (requestRef.current !== request) return;
         if (source === 'import') {
           setError(`Could not decode audio file: "${name}"`);
-          // No `clearStoredNarration` here on purpose: a rejected import never
-          // reached the store, and the previous track is still the live one.
+          // No store clear: the previous track is still the live one.
           return;
         }
-        // A stored track that no longer decodes — a codec the browser dropped,
-        // or bytes that did not survive. Drop it rather than failing this load
-        // and every later one, and stay quiet: the author did nothing to be
-        // told about, and the panel already shows no track.
+        // A stored track that no longer decodes is dropped quietly, so it
+        // cannot fail every later load.
         void clearStoredNarration();
       };
     },
-    [waitForUnlock],
+    [],
   );
 
   const importFile = useCallback(
-    (file: File) => {
-      if (lockRef.current) return;
-      adopt(file, file.name, 'import', ++requestRef.current);
-    },
-    [adopt, lockRef],
+    (file: File) => adopt(file, file.name, 'import', ++requestRef.current),
+    [adopt],
   );
 
-  // Restoring is async, and an author who picks a file before it lands must not
-  // have last session's track land on top. The ref, not `narration` state: a
-  // pick is a decision the moment it is made, well before the probe commits it.
-  // The restore claims no number of its own, so any act since it started wins.
-  // Cleanup (unmount) bumps the counter, superseding the restore and every
-  // probe still in flight.
+  // The restore claims no number of its own, so any pick or remove since it
+  // started wins; the check reads the ref because a pick counts before its
+  // probe commits.
   useEffect(() => {
     const request = requestRef.current;
     void loadNarration().then((stored) => {
@@ -113,50 +90,51 @@ export function useNarration({
   }, [adopt]);
 
   const clear = useCallback(() => {
-    if (lockRef.current) return;
     requestRef.current++;
     setError(null);
     setNarration(null);
     void clearStoredNarration();
-  }, [lockRef]);
+  }, []);
 
-  // State owns the live URL: replacing or removing a track cleans up the
-  // previous one, and unmounting cleans up the current one.
+  // State owns the live URL and revokes it on replace, remove, or unmount.
   useEffect(() => () => {
     if (narration) URL.revokeObjectURL(narration.url);
   }, [narration]);
 
-  // One idempotent application: rate, a drift snap that also covers seeks, and
-  // play/pause — re-applied when the <audio> element remounts on narration
-  // change. Past the track's end the element is paused, never played: `play()`
-  // on an ended element would restart it from zero. A seek back into the track
-  // snaps first, which clears `ended`, so the resume below still happens.
+  // One idempotent application of rate, drift snap (which also covers seeks)
+  // and play/pause. Past the track's end the element is paused, never played:
+  // `play()` on an ended element restarts it from zero.
   //
-  // 0.25s tick granularity matches the snap tolerance: any seek larger than the
-  // tolerance crosses a tick boundary, while steady playback runs this ~4x/s
-  // instead of every animation frame. `time` is deliberately left out of the
-  // effect's deps and sampled through driftTick.
-  const driftTick = narration ? Math.round(time * 4) : 0;
+  // It subscribes to the clock without re-rendering, and samples it at 0.25s
+  // granularity to match the snap tolerance: any larger seek crosses a tick,
+  // and playback runs this ~4x/s instead of every frame.
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !narration) return;
-    el.playbackRate = speed;
-    const target = Math.min(time, narration.duration);
-    if (Math.abs(el.currentTime - target) > 0.25) el.currentTime = target;
-    if (playing && time < narration.duration) {
-      // `ended` too: the element can finish a few ticks before the clock
-      // reaches `narration.duration` (audio clock drift, or a VBR length
-      // estimate), and this runs every tick, not only on a state change.
-      if (el.paused && !el.ended) {
-        el.play().catch(() => {
-          // Autoplay rejection: playback starts from a user gesture in every
-          // Gambit flow, but if a browser still refuses, stay silent.
-        });
+    let driftTick: number | null = null;
+    const follow = () => {
+      const time = clock.get();
+      const tick = Math.round(time * 4);
+      if (tick === driftTick) return;
+      driftTick = tick;
+      el.playbackRate = speed;
+      const target = Math.min(time, narration.duration);
+      if (Math.abs(el.currentTime - target) > 0.25) el.currentTime = target;
+      if (playing && time < narration.duration) {
+        // `ended` too: the element can finish before the clock reaches
+        // `narration.duration` (drift, or a VBR length estimate).
+        if (el.paused && !el.ended) {
+          el.play().catch(() => {
+            // Autoplay rejection stays silent; playback always starts from a gesture.
+          });
+        }
+      } else {
+        el.pause();
       }
-    } else {
-      el.pause();
-    }
-  }, [driftTick, narration, playing, speed]);
+    };
+    follow();
+    return clock.subscribe(follow);
+  }, [clock, narration, playing, speed]);
 
   return { narration, error, audioRef, importFile, clear };
 }

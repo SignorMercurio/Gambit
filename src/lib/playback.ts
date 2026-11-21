@@ -1,10 +1,7 @@
-// Small pure playback policies shared by the React transport and regression
-// tests. These functions describe clock behavior; they do not own clock state.
+// Pure playback policies; they describe clock behavior, never own clock state.
 
-// Every formatter and generated script line works in deciseconds. Keeping
-// accepted playback times within this arithmetic boundary prevents `t * 10`
-// from overflowing or losing integer identity while remaining far beyond any
-// plausible recording duration.
+// Formatters and generated script lines work in deciseconds; this bound keeps
+// `t * 10` an exact integer, far beyond any plausible recording.
 export const MAX_SAFE_PLAYBACK_SECONDS = Number.MAX_SAFE_INTEGER / 10;
 const SCRIPT_TAIL_SECONDS = 3;
 const SUBTITLE_TAIL_SECONDS = 1;

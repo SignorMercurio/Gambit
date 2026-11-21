@@ -1,11 +1,8 @@
-// Gesture-to-script writer: pure text operations that insert one timestamped
-// event line into the script while preserving the author's comments, blank
-// lines, and formatting, plus the pure gesture planners built on them. The
-// script text stays the single source of truth — a board gesture is just
-// another way to type a line.
-
-// Line recognition and rewriting are parseScript's own, so collision scans,
-// retiming, and relocation always track the parser's line shape exactly.
+// Gesture-to-script writer: pure text operations that insert or retime one
+// timestamped line while preserving the author's comments, blank lines and
+// formatting, plus the pure gesture planners built on them. A board gesture
+// is just another way to type a line. Line recognition and rewriting are the
+// parser's own (timeline.ts), so scans always track its line shape.
 import {
   formatScriptTime,
   lastEventIndexAt,
@@ -16,13 +13,11 @@ import {
 } from './timeline';
 import { isValidScriptTimestamp, MAX_SCRIPT_TIMESTAMP_SECONDS } from './playback';
 
-// The one decisecond-boundary vocabulary for every scanner below: `capDeci`
-// converts an exclusive upper bound to grid units, `firstDeciAbove` yields
-// the first grid slot strictly above a (possibly off-grid, possibly
-// infinite) time — grid rounding must never slip a stamp back across the
-// previous event. A finite `limit` is always an event timestamp, and every
-// parsed timestamp cleared `isValidScriptTimestamp`, so the finite branch
-// cannot exceed the authored ceiling and needs no clamp of its own.
+// Decisecond-grid boundaries shared by every scanner: `capDeci` converts an
+// exclusive upper bound; `firstDeciAbove` is the first slot strictly above a
+// (possibly off-grid or infinite) time, so rounding never slips a stamp back
+// across the previous event. A finite `limit` is always a parsed, already
+// valid timestamp, so it needs no clamp to the ceiling.
 const MAX_SCRIPT_DECI = Math.round(MAX_SCRIPT_TIMESTAMP_SECONDS * 10);
 const capDeci = (limit: number): number =>
   Number.isFinite(limit) ? Math.round(limit * 10) : MAX_SCRIPT_DECI + 1;
@@ -33,9 +28,8 @@ function firstDeciAbove(t: number): number {
   return deci / 10 > t ? deci : deci + 1;
 }
 
-// Timestamps already used by script lines, on the decisecond grid. A plan
-// computes it once from the text it started from and hands it to every
-// scanner below.
+// Timestamps used by script lines, in deciseconds; computed once per plan
+// from the text it started from.
 function takenDeciseconds(text: string): Set<number> {
   const taken = new Set<number>();
   for (const line of text.split('\n')) {
@@ -45,18 +39,11 @@ function takenDeciseconds(text: string): Set<number> {
   return taken;
 }
 
-// `gaps.length + 1` free timestamps starting at/after `from`, each at least
-// the given gap after the previous, all strictly below `limit` — the one slot
-// scanner behind every gesture layout. `step` is how far the preferred layout
-// jumps past a taken stamp: a plain insert passes 0.5s so successive gestures
-// at a paused playhead spread out instead of stacking on one instant. When
-// the preferred layout does not fit under the limit, retries with 0.1s steps
-// and halved gaps, then with 0.1s gaps too, so the line stays on the
-// position the gesture previewed; returns null when even that fails — the
-// caller reports an explicit conflict. `floor` keeps every stamp strictly
-// above the previous event: grid rounding (and planLineInsert's parked
-// clamp) may otherwise slip an off-grid timestamp's decisecond back across
-// it, re-ordering the gesture onto a position it never previewed.
+// `gaps.length + 1` free timestamps at/after `from`, each at least its gap
+// after the previous, all strictly below `limit` and strictly above `floor`
+// (the previous event). `step` is how far the preferred layout jumps past a
+// taken stamp. If that layout does not fit, retries with 0.1s steps and
+// halved gaps, then 0.1s gaps; null means the caller reports a conflict.
 function findSlots(
   taken: ReadonlySet<number>,
   from: number,
@@ -87,9 +74,6 @@ function findSlots(
 }
 
 // Nearest free decisecond strictly below `t` and strictly above `floor`.
-// A `br` timestamp is ordering-only (anything between the previous event and
-// the variation's first move renders identically), so gesture wraps tuck it
-// into whatever slot is free just before the move.
 function nearestFreeTimeBelow(taken: ReadonlySet<number>, t: number, floor: number): number | null {
   const lowest = firstDeciAbove(floor);
   const start = Math.min(MAX_SCRIPT_DECI + 1, Math.round(t * 10)) - 1;
@@ -99,9 +83,8 @@ function nearestFreeTimeBelow(taken: ReadonlySet<number>, t: number, floor: numb
   return null;
 }
 
-// Null rather than the untouched text: a line that cannot be retimed must
-// surface as the caller's explicit conflict, never as a silent no-op that
-// leaves a colliding timestamp behind.
+// Null, not the untouched text, so a failed retime surfaces as a conflict
+// instead of leaving a colliding timestamp behind.
 function retimeLine(text: string, line: number, t: number): string | null {
   const lines = text.split('\n');
   const idx = line - 1;
@@ -112,18 +95,15 @@ function retimeLine(text: string, line: number, t: number): string | null {
   return lines.join('\n');
 }
 
-// Set an event line's time from the structured editor. When the new time
-// keeps the line's chronological position among its textual neighbors, the
-// timestamp is rewritten in place (preserving attached comments); when it
-// crosses other events, the line is relocated to its time-sorted position so
-// the text stays readable top-to-bottom.
+// Retimes in place when the line stays chronological among its textual
+// neighbors (keeping attached comments); otherwise relocates it to its
+// time-sorted position.
 type LineTimeEdit = { text: string; line: number | null };
 
 export function setLineTime(text: string, line: number, t: number): LineTimeEdit {
   if (!isValidScriptTimestamp(t)) return { text, line: null };
-  // Decide and write on the same decisecond grid: the written stamp rounds,
-  // so an unrounded decision could place the line on the other side of a
-  // textual neighbor than the chronology check assumed.
+  // Decide on the grid the written stamp rounds to, or the chronology check
+  // could disagree with the written order.
   const roundedT = Math.round(t * 10) / 10;
   const lines = text.split('\n');
   const idx = line - 1;
@@ -144,19 +124,17 @@ export function setLineTime(text: string, line: number, t: number): LineTimeEdit
   return insertScriptLineInto(lines, roundedT, parsed.body);
 }
 
-// Remove a set of script lines (1-based). Comments are left in place — their
-// attachment is the author's to manage in text mode.
+// Lines are 1-based. Comments stay in place; their attachment is the author's.
 export function removeLines(text: string, targets: number[]): string {
   const lines = text.split('\n');
   const targetIndexes = new Set(targets.map((line) => line - 1));
   return lines.filter((_, index) => !targetIndexes.has(index)).join('\n');
 }
 
-// Insert `[t] body` in timestamp order: before the first line whose time
-// exceeds t, and before the comment/blank run attached to that line so a
-// comment stays glued to the section it introduces (a run at the very top
-// of the file reads as a script header and stays put). With no later event
-// the line is appended at the end, before trailing blank lines.
+// Inserts `[t] body` before the first later line and before the comment/blank
+// run attached to it, so comments stay with the section they introduce (a run
+// at the top of the file is a header and stays put). With no later event it
+// appends before trailing blank lines.
 function insertScriptLineInto(lines: string[], t: number, body: string): LineTimeEdit {
   const entry = `${formatScriptTime(t)} ${body}`;
   let insertAt = -1;
@@ -179,10 +157,9 @@ function insertScriptLineInto(lines: string[], t: number, body: string): LineTim
 }
 
 // ---------------------------------------------------------------------------
-// Gesture planners: pure policy over the event stream and the text helpers
-// above. A plan carries new script text plus the landing boundaries (`t` and
-// the first event strictly after it) — the caller owns the React commit
-// (undo snapshot, state updates, the paused-playhead jump between t/nextT).
+// Gesture planners: pure policy. A plan carries new text plus the landing
+// boundaries (`t` and the first event strictly after it); the caller owns
+// the commit, undo snapshot and paused-playhead landing.
 
 export type ScriptEditPlan =
   | { kind: 'edit'; text: string; t: number; nextT?: number }
@@ -197,10 +174,9 @@ const NO_FREE_SLOT_ERROR =
 const NO_VARIATION_ROOM_ERROR =
   'Cannot record this move: not enough free 0.1s slots to preserve the scripted main line. Move the playhead or retime the neighboring event.';
 
-// Plain insert: stamp `body` at the playhead, stepping +0.5s past taken
-// stamps so successive paused gestures never stack on one instant, capped
-// strictly before the next scripted event so the line stays on the position
-// the gesture previewed.
+// Stamps `body` at the playhead, stepping 0.5s past taken stamps so repeated
+// paused gestures spread out, strictly before the next event so the line
+// lands on the position the gesture previewed.
 export function planLineInsert(
   events: TimelineEvent[],
   scriptText: string,
@@ -209,15 +185,9 @@ export function planLineInsert(
 ): ScriptEditPlan {
   const idx = lastEventIndexAt(events, time);
   const bound = events[idx + 1];
-  // The paused playhead often rests 0.05s before the next event (the landing
-  // convention), and rounding half-up then puts the scan start on the cap
-  // itself even though the playhead is below it. Any stamp strictly between
-  // the neighboring events executes against the same position the gesture
-  // previewed, so start one tick under the cap instead; if that slot is taken
-  // the grid truly is saturated and the scanner reports a conflict. The clamp
-  // stays with the plain insert rather than in `findSlots`: there it would
-  // also reach the variation-extend layout, whose cap is not the playhead's
-  // next event, and turn that layout's conflicts into recorded moves.
+  // A playhead parked just before the next event rounds up onto the cap, so
+  // start one tick under it. The clamp stays out of `findSlots`, where it
+  // would turn the variation-extend layout's conflicts into recorded moves.
   const from = bound ? Math.min(time, (capDeci(bound.t) - 1) / 10) : time;
   const slot = findSlots(
     takenDeciseconds(scriptText),
@@ -233,26 +203,23 @@ export function planLineInsert(
     kind: 'edit',
     text: insertScriptLineInto(scriptText.split('\n'), t, body).text,
     t,
-    // `findSlots` returns a stamp strictly inside (events[idx].t, bound.t)
-    // or null, so the event after the playhead is also the event after the
-    // written line — no need to locate it a second time.
+    // The slot lies strictly inside (events[idx].t, bound.t), so `bound` is
+    // also the event after the written line.
     nextT: bound?.t,
   };
 }
 
 // Branch-aware move-gesture planner, lichess-style. The first later event
-// that interacts with chess state decides the mode:
-//   none / fen / rs / st  → plain insert (tail of the line, or a position
-//                           reset re-establishes state anyway);
+// that touches chess state decides the mode:
+//   none / fen / rs / st  → plain insert;
 //   the same move         → seek to it, record nothing;
 //   a different move / br → wrap the gesture in its own br/ml variation;
 //   ml                    → extend the open variation, pushing its ml later
 //                           when the new move would land on or past it.
-// When the br/ml structure cannot fit before the next event, report a conflict:
-// a plain insert can change which piece a later SAN resolves to without
-// producing an error. Never silently alter, reorder, or delete the main line.
-// `matchesScripted` answers "does this scripted SAN resolve to the gestured
-// move?" — chess resolution stays with the caller.
+// When br/ml cannot fit before the next event, report a conflict rather than
+// fall back to a plain insert, which could silently change what a later SAN
+// resolves to. The main line is never altered, reordered, or deleted.
+// `matchesScripted` resolves a scripted SAN against the gestured move.
 export function planMoveGesture(
   events: TimelineEvent[],
   scriptText: string,
@@ -262,18 +229,15 @@ export function planMoveGesture(
   rejectedEventIndexes: ReadonlySet<number>,
 ): MoveGesturePlan {
   const prevIdx = lastEventIndexAt(events, time);
-  // Every stamp this planner lays out is floored strictly after the event
-  // the playhead sits on — the one boundary all three layout paths share.
+  // Every layout is floored strictly after the event the playhead sits on.
   const prevT = events[prevIdx]?.t ?? -Infinity;
   let stateEv: ParsedEvent | null = null;
   let stateIdx = -1;
   for (let i = prevIdx + 1; i < events.length; i++) {
     const e = events[i];
     if ('error' in e) continue;
-    // A malformed FEN is an intrinsic failure and therefore cannot cut
-    // continuity. A rejected SAN is position-dependent: inserting the
-    // gestured move can make that same SAN legal, so it must still protect the
-    // future line instead of being skipped and silently "revived".
+    // A malformed FEN cannot cut continuity. A rejected SAN still counts: the
+    // gestured move could make it legal and silently revive it.
     if (rejectedEventIndexes.has(i) && e.kind === 'fen') continue;
     if (
       e.kind === 'move' ||
@@ -308,9 +272,8 @@ export function planMoveGesture(
     let text = scriptText;
     let mlT = stateEv.t;
     if (mlT <= mvT) {
-      // The pushed ml must land on a free slot: a timestamp collision
-      // would tie-break by textual order and silently decide another
-      // line's variation membership.
+      // The pushed ml needs a free slot: a tie breaks by textual order and
+      // would silently decide another line's variation membership.
       const pushed = Math.min(mvT + 1, mlCap);
       const free = nearestFreeTimeBelow(taken, pushed + 0.1, mvT);
       if (free == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
@@ -319,25 +282,19 @@ export function planMoveGesture(
       if (retimed == null) return { kind: 'conflict', error: NO_VARIATION_ROOM_ERROR };
       text = retimed;
     }
-    // The paused landing must stop short of the first event after the move
-    // of ANY kind: an annotation inside the variation can sit between the
-    // move and the (possibly pushed) ml, and landing on it would hit the
-    // age-0 invisibility pitfall. When the next event is the ml itself, use
-    // its (possibly pushed) new time.
+    // Land short of the first event of any kind after the move (an annotation
+    // may sit before the ml); if that event is the ml, use its new time.
     const afterMv = events[lastEventIndexAt(events, mvT) + 1];
     const nextT = afterMv && afterMv !== stateEv ? Math.min(afterMv.t, mlT) : mlT;
     const { text: extended } = insertScriptLineInto(text.split('\n'), mvT, san);
     return { kind: 'edit', text: extended, t: mvT, nextT };
   }
 
-  // A different move (or an explicit br): wrap. The move lands on the
-  // playhead itself — that's the instant the narration means. `br`'s time is
-  // ordering-only, so it tucks into the nearest free slot before the move;
-  // when there's no room below, fall back to the forward layout (br at the
-  // playhead, move after). The whole layout must fit before the next event
-  // of ANY kind — an author's annotation caught between the move and the
-  // generated `ml` would be absorbed into the variation and silently
-  // reverted by the mainline restore.
+  // Wrap: the move lands on the playhead. `br`'s time is ordering-only, so it
+  // tucks into the nearest free slot below; without room, fall back to br at
+  // the playhead and the move after. The layout must fit before the next
+  // event of any kind, or an annotation caught before the generated `ml`
+  // would be absorbed into the variation and reverted by the restore.
   const boundT = events[prevIdx + 1]?.t ?? Infinity;
   let placed: { brT: number; mvT: number; mlT: number } | null = null;
   const pair = findSlots(taken, time, [1], boundT, prevT);

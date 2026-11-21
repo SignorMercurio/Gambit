@@ -1,9 +1,8 @@
-// In-flight board gestures capture their commit callbacks at pointer-down.
-// Playback may keep advancing while the pointer is held, so resolving through
-// the latest React props at pointer-up would apply the preview against a
-// different position and playhead. A gesture also remembers which pointer and
-// button started it: other pointers (a stray touch mid-drag) and chorded
-// buttons must not retarget, commit, or cancel it.
+// A gesture captures its commit callbacks at pointer-down: playback can advance
+// while the pointer is held, and the latest props at pointer-up would commit
+// against a different position and playhead. It also records its pointer and
+// button, so other pointers and chorded buttons cannot retarget, commit, or
+// cancel it.
 
 // The initiating button as its `e.buttons` bit, so handlers can tell whether
 // that button is still held mid-gesture.

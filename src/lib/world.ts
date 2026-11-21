@@ -7,9 +7,8 @@ import type { MindWorld } from './mind';
 import type { ErrorEvent, MoveAnnotation, ParsedEvent, TimelineEvent } from './timeline';
 import { isValidScriptTimestamp } from './playback';
 
-// `captured` is the discriminant, not a second copy of `capturedAt != null`:
-// the pair is written at one site, so the type says so and the renderer never
-// has to invent a fallback timestamp for a capture that cannot exist.
+// `captured` discriminates `capturedAt`, so a captured piece always has its
+// capture time.
 export type PiecePos = {
   f: number;
   r: number;
@@ -31,9 +30,7 @@ export type LastMove = {
   t: number;
   annotation?: MoveAnnotation;
 };
-// Built at two instants — when the script's move applies, and again per frame
-// of a replay — so the flattening of `move.from` / `move.to` into the four
-// fields the board renders lives in one place.
+// Shared by the authored walk and replay templates.
 const lastMoveAt = (move: Chess.Move, t: number, annotation?: MoveAnnotation): LastMove => ({
   fromF: move.from[0],
   fromR: move.from[1],
@@ -48,19 +45,16 @@ export type BoardArrow = { from: string; to: string; t: number; pinned?: boolean
 export type CaptureFlash = { f: number; r: number; t: number; id: string };
 export type BoardCheck = { sq: string; t: number };
 
-// Shared by world-history retention and Board's clock-derived fades. Keeping
-// the lifetime in one domain constant prevents the snapshot builder from
-// retaining history the renderer can no longer show.
+// Seconds. Shared by snapshot pruning and Board's fades, so the walk never
+// retains overlays the renderer can no longer show.
 export const BOARD_OVERLAY_LIFETIME = {
   highlight: 2.5,
   arrow: 2.5,
   captureFlash: 0.5,
 } as const;
 
-// More simultaneous arrows are no longer legible, and retaining every unique
-// pair in every historical snapshot turns a bounded script into quadratic
-// memory. Repeating an existing arrow remains allowed; `cl`/reset/FEN opens the
-// budget again.
+// Bounds per-snapshot arrow memory (and legibility). Repeating a live arrow is
+// allowed; `cl`/reset/FEN reopens the budget.
 export const MAX_LIVE_ARROWS = 128;
 export const REPLAY_STEP_SECONDS = 0.5;
 
@@ -77,17 +71,23 @@ type WorldSnapshot = {
   mind: MindWorld | null;
   // Time of the reveal that ended the last mind phase (-Infinity: never).
   revealedAt: number;
+  // Open `br` variations. The one count of br/ml nesting: readers take it
+  // from the snapshot before an event instead of recounting.
+  branchDepth: number;
 };
 
-type WorldBuild = {
+// What the move lists read: snapshots[i] numbers event i's move row and says
+// whether it sits on the main line.
+export type StructureSnapshot = Pick<WorldSnapshot, 'chessState' | 'branchDepth'>;
+
+export type WorldBuild = {
   // snapshots[i] is the world before event i and snapshots[i + 1] the world
   // after it, so snapshots[i].chessState also numbers event i's move row.
   snapshots: WorldSnapshot[];
   scriptErrors: ErrorEvent[];
-  // Parsed events that could not be applied to the world (for example an
-  // illegal SAN, malformed FEN, or exhausted overlay budget). Structural
-  // errors are deliberately excluded so presentation readers still honor the
-  // br/ml depth encoded by the event stream.
+  // Parsed events the walk could not apply (illegal SAN, malformed FEN,
+  // exhausted arrow budget). Unmatched br/ml are excluded so readers still
+  // honor the depth the event stream encodes.
   rejectedEventIndexes: ReadonlySet<number>;
   replayFrames: ReplayFrame[];
   replaySequences: ReadonlyMap<number, ReplaySequence>;
@@ -118,8 +118,8 @@ type WorldFrame = {
 };
 
 function replayTime(sequence: Pick<ReplaySequence, 'start' | 'step'>, ordinal: number): number {
-  // Only the relative step is on the decisecond grid. Authored starts can
-  // carry finer precision, so rounding the origin changes the recording.
+  // Only the step is rounded to the decisecond grid; authored starts can be
+  // finer, and rounding the origin would shift the recording.
   return sequence.start + (ordinal * Math.round(sequence.step * 10)) / 10;
 }
 
@@ -154,21 +154,22 @@ function replaySnapshot(state: ReplayState, sequence: ReplaySequence): WorldSnap
     arrows: [],
     mind: null,
     revealedAt: Number.NEGATIVE_INFINITY,
+    // Replay is rejected inside a variation.
+    branchDepth: 0,
   };
 }
 
-// One cached frame per world, never a growing cache of visited replay frames.
-// The stable reference lets Board reuse its position-derived work between steps.
+// One cached frame per world, never a growing cache. The stable reference
+// lets Board reuse its position-derived work between steps.
 const REPLAY_FRAME_CACHE = new WeakMap<WorldBuild, {
   sequence: ReplaySequence;
   index: number;
   frame: WorldFrame;
 }>();
 
-// Select the authored snapshot or the clock-derived frame of a successful
-// replay directive. Exact step boundaries keep the outgoing move so a paused
-// event seek (+step) shows the first replayed move rather than skipping
-// straight to the second; normal playback advances on the following frame.
+// The authored snapshot, or the clock-derived frame of a successful replay.
+// An exact step boundary keeps the outgoing move, so a paused seek just past
+// a boundary shows that move instead of skipping to the next.
 export function worldFrameAt(
   build: WorldBuild,
   reachedEventIndex: number,
@@ -253,10 +254,8 @@ function pruneExpired<T extends { t: number; pinned?: boolean }>(
   return overlays.filter((overlay) => overlay.pinned || time - overlay.t < lifetime);
 }
 
-// Repeating the same visual key only restates that visual; stacking identical
-// SVG geometry has no visible benefit and lets a short script line fan out
-// into unbounded per-frame work. A pinned visual keeps its stronger lifetime
-// when a later unpinned restatement names the same key.
+// A repeated key replaces its entry instead of stacking identical geometry.
+// A pinned entry survives a later unpinned restatement.
 function mergeLatestByKey<T extends { pinned?: boolean }>(
   current: T[],
   incoming: T[],
@@ -351,14 +350,10 @@ function movePosition(
   return { positions: next, captureFlash, touched };
 }
 
-// A restored branch-entry snapshot carries pre-branch move metadata, so on its
-// own it hard-cuts: every piece the branch disturbed teleports home. Piece ids
-// are stable across moves, so each id present on both sides of the restore can
-// instead glide from where the branch left it, and a piece the branch captured
-// can fade back in via `restoredAt`. A setup inside the branch mints new ids;
-// unmatched pieces keep the hard cut. New objects only where metadata changes —
-// the branch-entry snapshot is shared with earlier history. The caller only
-// interpolates within one setup epoch; across setups, matching ids are unrelated.
+// At `ml`, pieces glide from where the branch left them (ids are stable
+// across moves) and pieces it captured fade back via `restoredAt`; unmatched
+// ids hard-cut. Only valid within one setup epoch, since a setup mints new
+// ids. Copies only changed pieces: the entry snapshot is shared history.
 function glideRestoredPositions(departed: Positions, restored: Positions, t: number): Positions {
   const next: Positions = {};
   for (const [id, piece] of Object.entries(restored)) {
@@ -382,9 +377,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   const checkAt = (state: Chess.GameState, t: number): BoardCheck | null =>
     state.check ? { sq: state.check, t } : null;
 
-  // The working snapshot. Every stored snapshot is a shallow copy of it, and
-  // its fields (highlights, arrows, mind, positions) are rebound rather than
-  // mutated so earlier snapshots keep their references.
+  // The working snapshot. Stored snapshots are shallow copies, so its fields
+  // are rebound, never mutated.
   let w: WorldSnapshot = {
     positions: initialSetup.positions,
     chessState: initialSetup.chessState,
@@ -395,6 +389,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     check: checkAt(initialSetup.chessState, 0),
     mind: null,
     revealedAt: Number.NEGATIVE_INFINITY,
+    branchDepth: 0,
   };
   let setupEpoch = -1;
 
@@ -414,10 +409,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   };
   let visualEndTime = events[events.length - 1]?.t ?? 0;
 
-  // Takes the event rather than its fields so no pair of arguments can be
-  // swapped. A caller that also invalidates the event uses `reject`; the
-  // structural br/ml mismatches deliberately do not — see
-  // `WorldBuild.rejectedEventIndexes`.
+  // Errors that invalidate the event go through `reject`; unmatched br/ml
+  // only note (see `WorldBuild.rejectedEventIndexes`).
   const noteError = (event: ParsedEvent, error: string) => {
     scriptErrors.push({ t: event.t, error, line: event.line, raw: event.raw });
   };
@@ -468,9 +461,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     }
   };
 
-  // The two array-backed overlay kinds, each with its own lifetime.
-  // BOARD_OVERLAY_LIFETIME.captureFlash is deliberately absent: `lastCapture`
-  // is a scalar renderer-only fade window, not a pinnable overlay list.
+  // `lastCapture` is a renderer-only fade, not a list, so captureFlash is not
+  // pruned here.
   const pruneOverlays = (t: number) => {
     w.highlights = pruneExpired(w.highlights, t, BOARD_OVERLAY_LIFETIME.highlight);
     w.arrows = pruneExpired(w.arrows, t, BOARD_OVERLAY_LIFETIME.arrow);
@@ -507,14 +499,14 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
       return;
     }
 
-    // Resume both the authored walk and future replay templates from the last
-    // replayed move, even when a setup preceded this replay.
+    // Both the walk and later templates resume from the last replayed move,
+    // even after a setup.
     replayState = replayFrames[moveCount - 1].state;
     const sequence: ReplaySequence = {
       start: event.t, end, step, moveCount, line: event.line,
     };
-    // Only the terminal frame becomes authored history. In-flight frames are
-    // selected on demand; another rp never reruns chess or copies the prefix.
+    // Only the terminal frame becomes history; in-flight frames are selected
+    // on demand by worldFrameAt.
     w = replaySnapshot(replayState, sequence);
     replaySequences.set(eventIndex, sequence);
     visualEndTime = Math.max(visualEndTime, end);
@@ -524,9 +516,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
 
   for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
     const event = events[eventIndex];
-    // Capacity describes visuals that are live at this event, not historical
-    // entries whose fade window already ended. Prune before applying the event
-    // so an expired full arrow budget cannot reject the first fresh arrow.
+    // Prune before applying so expired arrows do not count against the budget.
     pruneOverlays(event.t);
     if ('error' in event) {
       scriptErrors.push(event);
@@ -581,7 +571,10 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           break;
         }
         case 'branch':
+          // The entry snapshot keeps the outer depth, so restoring it at
+          // the matching `ml` restores the depth too.
           branchStack.push({ entry: { ...w }, setupEpoch, event });
+          w.branchDepth = branchStack.length;
           break;
         case 'mainline': {
           const branch = branchStack.pop();
@@ -593,9 +586,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
             w = { ...branch.entry };
             setupEpoch = branch.setupEpoch;
             if (sameSetup) w.positions = glideRestoredPositions(departed, w.positions, event.t);
-            // Restoring an older branch-entry snapshot can reintroduce
-            // overlays already expired at this mainline event. Earlier
-            // snapshots keep their history for backward scrubbing.
+            // The restored entry can carry overlays already expired here.
             pruneOverlays(event.t);
           }
           break;
@@ -617,8 +608,8 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
           applyReplay(eventIndex, event);
           break;
         case 'ask':
-          // Not board state: the card is read off the events by activeAskAt.
-          // Its countdown still belongs to the recording, so it holds the tail.
+          // Not board state (activeAskAt reads the events), but its countdown
+          // extends the recording.
           visualEndTime = Math.max(visualEndTime, event.t + event.seconds);
           break;
         case 'move': {

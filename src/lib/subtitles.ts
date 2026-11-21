@@ -1,6 +1,6 @@
 import { MAX_SUBTITLE_TIMESTAMP_SECONDS } from './playback';
 
-type SubtitleCue = {
+export type SubtitleCue = {
   start: number;
   end: number;
   text: string;
@@ -164,9 +164,8 @@ export function getActiveSubtitle(cues: SubtitleCue[], time: number): SubtitleCu
   for (let i = lo - 1; i >= 0; i--) {
     const cue = cues[i];
     if (cue.end > time && time >= cue.start) return cue;
-    // No earlier cue can still be active once the whole preceding prefix has
-    // ended. This keeps overlapping-cue semantics without rescanning history
-    // on every playback frame in the common non-overlapping case.
+    // Once the whole preceding prefix has ended, no earlier cue can be active;
+    // this keeps overlap semantics without rescanning history every frame.
     if (i === 0 || endPrefixes[i - 1] <= time) break;
   }
   return null;

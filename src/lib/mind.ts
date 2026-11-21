@@ -1,6 +1,5 @@
-// Mind's-eye domain state and playback-clock-derived visibility. Keeping this
-// pure and UI-independent lets the snapshot walk own the world while Board
-// remains only its renderer.
+// Mind's-eye state and its clock-derived visibility. Pure, so the snapshot walk
+// owns the state and Board only renders it.
 
 import { clamp01, timedProgress } from './animation';
 
@@ -22,9 +21,8 @@ const FORGET_SECONDS = 3;
 const SINK_SECONDS = 0.6;
 const REVEAL_SECONDS = 0.45;
 
-// How deep the void is right now. `mind` sinks it and `reveal` lifts it on
-// the playback clock, so scrubbing to the same time always produces the same
-// frame instead of depending on wall-time CSS transitions.
+// How deep the void is, on the playback clock rather than a CSS transition,
+// so the same time always renders the same frame.
 export function mindSink(mind: MindWorld | null, revealedAt: number, time: number): number {
   if (mind) return timedProgress(time - mind.since, SINK_SECONDS);
   // Never in mind mode: revealedAt is -Infinity, so the age saturates and the
@@ -32,14 +30,12 @@ export function mindSink(mind: MindWorld | null, revealedAt: number, time: numbe
   return 1 - timedProgress(time - revealedAt, SINK_SECONDS);
 }
 
-// Pieces return slightly faster than the void lifts, preserving the authored
-// reveal overlap while keeping the whole effect clock-derived.
+// Pieces return slightly faster than the void lifts (REVEAL < SINK seconds).
 export function mindRevealStrength(revealedAt: number, time: number): number {
   return timedProgress(time - revealedAt, REVEAL_SECONDS);
 }
 
-// What is actively rehearsed stays fully visible. Everything else follows the
-// linear forgetting curve so the effect remains legible rather than snapping.
+// Rehearsed squares stay fully visible; others fade linearly after FRESH_SECONDS.
 export function mindPieceStrength(frame: MindFrame, square: string, time: number): number {
   if (frame.rehearsed.has(square)) return 1;
   const touched = frame.touches.get(square);
