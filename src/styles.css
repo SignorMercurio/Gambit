@@ -1739,8 +1739,10 @@ button.insert-item:hover { background: var(--tonal-white-08); }
    pointer activity or keyboard focus re-arms the chrome (App toggles
    .app--idle). A focused control must never become visually hidden. */
 .app--idle { cursor: none; }
-/* Offline render (src/lib/renderMode.ts): frames are grabbed at clock times, not
-   wall time, so a wall-clock CSS transition would land on an arbitrary step. */
+/* Offline render (src/lib/renderMode.ts): no transport in the frame, and no
+   wall-clock transitions. Frames are grabbed at clock times, not wall time, so
+   a transition would land on an arbitrary step. */
+.app--render .controls { visibility: hidden; }
 .app--render, .app--render *, .app--render *::before, .app--render *::after { transition: none !important; }
 .app--idle .controls { opacity: 0; pointer-events: none; }
 .app--idle .controls:focus-within { opacity: 1; pointer-events: auto; }

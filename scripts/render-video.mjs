@@ -183,7 +183,8 @@ try {
     'gambit:draft:start-fen': opt.fen ?? '',
     'gambit:draft:board-orientation': 'white',
     'gambit:draft:present-pgn': '0',
-    'gambit:draft:move-sound': opt['no-sfx'] ? '0' : '1',
+    // The page stays silent; `seek` reports the landings and they are mixed below.
+    'gambit:draft:move-sound': '0',
   };
   if (!opt.fen) delete drafts['gambit:draft:start-fen'];
   await page.send('Page.enable');
@@ -236,7 +237,8 @@ try {
   const started = Date.now();
   for (let i = 0; i < frames; i++) {
     const t = i / fps;
-    if (await page.evaluate(`window.gambitRender.seek(${t})`)) clickTimes.push(t);
+    const landed = await page.evaluate(`window.gambitRender.seek(${t})`);
+    if (landed && !opt['no-sfx']) clickTimes.push(t);
     const { data } = await page.send('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, clip });
     if (!encoder.stdin.write(Buffer.from(data, 'base64'))) {
       await new Promise((r) => encoder.stdin.once('drain', r));

@@ -4,14 +4,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { load, worldWithEvents } from './support.mjs';
 
-const { lastEventIndexAt } = await load('/src/lib/timeline.ts');
-const { worldFrameAt } = await load('/src/lib/world.ts');
+const { worldFrameAtTime } = await load('/src/lib/world.ts');
 const { moveSoundEnabled, moveSoundKey, shouldPlayMoveSound } = await load('/src/lib/moveSound.ts');
 
 const soundScript = '[1] e4\n[2] e5\n[3] hl e4\n[4] rs\n[5] Nf3';
 const sound = worldWithEvents(soundScript);
 const soundKeyAt = ({ events, world }, t) =>
-  moveSoundKey(worldFrameAt(world, lastEventIndexAt(events, t), t).snapshot.lastMove);
+  moveSoundKey(worldFrameAtTime(world, events, t).snapshot.lastMove);
 
 test('the key names the move on the board, not the event behind it', async () => {
   assert.equal(soundKeyAt(sound, 0), null, 'a board before its first move names no move');

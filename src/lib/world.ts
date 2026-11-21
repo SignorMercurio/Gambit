@@ -4,6 +4,7 @@
 
 import * as Chess from './chess';
 import type { MindWorld } from './mind';
+import { lastEventIndexAt } from './timeline';
 import type { ErrorEvent, MoveAnnotation, ParsedEvent, TimelineEvent } from './timeline';
 import { isValidScriptTimestamp } from './playback';
 
@@ -166,6 +167,15 @@ const REPLAY_FRAME_CACHE = new WeakMap<WorldBuild, {
   index: number;
   frame: WorldFrame;
 }>();
+
+// The frame a time shows: the one rule the board and the offline render share.
+export function worldFrameAtTime(
+  build: WorldBuild,
+  events: TimelineEvent[],
+  time: number,
+): WorldFrame {
+  return worldFrameAt(build, lastEventIndexAt(events, time), time);
+}
 
 // The authored snapshot, or the clock-derived frame of a successful replay.
 // An exact step boundary keeps the outgoing move, so a paused seek just past

@@ -123,7 +123,7 @@ export default function App() {
   // `moveSoundEnabled`, not `=== '1'`, keeps a junk draft at the default ON.
   const [moveSoundRaw, setMoveSoundDraft] = useDraftText(DRAFT_KEYS.moveSound, '1');
   const moveSoundOn = moveSoundEnabled(moveSoundRaw);
-  const [chromeHidden, setChromeHidden] = useState(RENDER_MODE);
+  const [chromeHidden, setChromeHidden] = useState(false);
   const chromeHiddenRef = useLatest(chromeHidden);
   const scriptTextRef = useLatest(scriptText);
   // Landing reads the transport state at release, not pointer-down: playback
@@ -159,10 +159,10 @@ export default function App() {
     clock.set((t) => Math.min(t, duration));
   }, [clock, duration]);
 
-  const durationRef = useLatest(duration);
+  const renderSourceRef = useLatest({ events, worldBuild, duration });
   useEffect(
-    () => (RENDER_MODE ? installRenderHandle(clock, () => durationRef.current) : undefined),
-    [clock, durationRef],
+    () => (RENDER_MODE ? installRenderHandle(clock, () => renderSourceRef.current) : undefined),
+    [clock, renderSourceRef],
   );
 
   const latestScriptReadRef = useRef(0);
@@ -414,8 +414,6 @@ export default function App() {
   // on play/pause. `arm` sets state only when hidden, so a stream of
   // pointermoves never re-renders App.
   useEffect(() => {
-    // A render keeps the chrome hidden from its first frame.
-    if (RENDER_MODE) return;
     if (!present) {
       setChromeHidden(false);
       return;

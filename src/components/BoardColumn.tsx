@@ -12,14 +12,9 @@ import { useClockTime, type Clock } from '../lib/clock';
 import { moveSoundKey, useMoveSound } from '../lib/moveSound';
 import { timelineTicks } from '../lib/playback';
 import { formatSubtitleText, getActiveSubtitle, type SubtitleCue } from '../lib/subtitles';
-import {
-  activeAskAt,
-  fmtTime,
-  lastEventIndexAt,
-  type TimelineEvent,
-} from '../lib/timeline';
+import { activeAskAt, fmtTime, type TimelineEvent } from '../lib/timeline';
 import { markerColors, markerForms, markerKindFor } from '../lib/tokens';
-import { worldFrameAt, type WorldBuild } from '../lib/world';
+import { worldFrameAtTime, type WorldBuild } from '../lib/world';
 
 type PlayState = 'play' | 'pause' | 'replay';
 
@@ -107,7 +102,7 @@ export function BoardColumn(p: BoardColumnProps) {
   const time = useClockTime(clock);
 
   // A successful `rp` selects one of its mainline frames by the clock.
-  const worldFrame = worldFrameAt(p.worldBuild, lastEventIndexAt(events, time), time);
+  const worldFrame = worldFrameAtTime(p.worldBuild, events, time);
   const world = worldFrame.snapshot;
 
   // Keyed by the drawn frame, not the event behind it, so every landing sounds

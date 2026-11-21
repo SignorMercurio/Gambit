@@ -93,15 +93,20 @@ Rules live in [src/lib/moveSound.ts](../src/lib/moveSound.ts) and
 ## Offline Video Render
 
 - `?render` ([src/lib/renderMode.ts](../src/lib/renderMode.ts)) opens present mode
-  with its chrome hidden and installs `window.gambitRender`; it never starts the
+  with its transport hidden and installs `window.gambitRender`; it never starts the
   rAF playback loop. The grabber (`scripts/render-video.mjs`) only chooses the time:
   `seek(t)` sets the clock and resolves after two frames, so the screenshot is the
   same script + FEN + time frame live playback shows.
-- Wall-clock CSS transitions are off under `.app--render`: frames are taken at clock
-  times, and a transition would land on whatever step the grab happened to hit.
-- Move clicks go to a sink (`setMoveSoundSink`) instead of the speakers. `seek`
-  returns how many clicks its frame produced, and the grabber mixes the sample at
-  that frame's time at the same 0.5 volume, so the click rule stays the one in
-  `moveSound.ts`.
+- `.app--render` owns what a render changes on screen: the transport is hidden and
+  wall-clock CSS transitions are off, since frames are taken at clock times and a
+  transition would land on whatever step the grab happened to hit.
+- The two-frame wait is measured, not assumed: one frame renders about 10% faster
+  and never showed a stale frame, but left more frames a few levels off the
+  two-frame result.
+- The page plays no click (the grabber seeds the mute draft). `seek` returns whether
+  its frame lands a move, from `moveSoundKey` and `shouldPlayMoveSound`, the rule
+  `useMoveSound` applies, and the grabber mixes the sample at that frame's time at
+  the same 0.5 volume. Enforced by
+  `seek reports a landing by the live click rule` (`test/render-mode.test.mjs`).
 - Drafts are the only input path: the grabber seeds them with an init script that
   runs before the app, because a loaded app flushes its own drafts on unload.
