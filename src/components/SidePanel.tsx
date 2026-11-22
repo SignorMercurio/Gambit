@@ -2,10 +2,10 @@
 // with the errors band under whichever page is open.
 //
 // Clock-free: a controlled textarea compares its whole value on every render,
-// so the panel takes the reached event index rather than the time, and the
-// pages and errors band are memoized. Only the insert menu's label follows the
-// clock, by subscribing to it itself. Callback props must be stable, or the
-// memos do nothing.
+// so the panel takes the reached event index rather than the time and is
+// memoized as a whole. Only the insert menu's label follows the clock, by
+// subscribing to it itself. Callback props must be stable, or the memo does
+// nothing.
 
 import { memo, useRef, type ChangeEvent, type KeyboardEvent } from 'react';
 import type { BoardOrientation } from '../lib/boardOrientation';
@@ -87,9 +87,13 @@ function ImportButton({
 
 type LineError = { line: number; error: string };
 
-type PanelProps = {
+type SidePanelProps = {
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
+
+  // Insert menu
+  onInsert: (body: string) => void;
+  clock: Clock;
 
   // Script page
   scriptView: ScriptView;
@@ -136,17 +140,7 @@ type PanelProps = {
   onErrorsExpanded: (expanded: boolean) => void;
 };
 
-// The insert menu's props stay out of the pages' memoized props.
-type SidePanelProps = PanelProps & {
-  onInsert: (body: string) => void;
-  clock: Clock;
-};
-
-export const SidePanel = memo(function SidePanel({
-  onInsert,
-  clock,
-  ...p
-}: SidePanelProps) {
+export const SidePanel = memo(function SidePanel(p: SidePanelProps) {
   const onTabKeyDown = (e: KeyboardEvent) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
@@ -204,7 +198,7 @@ export const SidePanel = memo(function SidePanel({
           <>
             <ScriptPage {...p} />
             {/* Insertion reuses the board gesture's commit path. */}
-            {p.scriptView === 'moves' && <InsertMenu onInsert={onInsert} clock={clock} />}
+            {p.scriptView === 'moves' && <InsertMenu onInsert={p.onInsert} clock={p.clock} />}
           </>
         ) : (
           <SetupPage {...p} />
@@ -215,7 +209,7 @@ export const SidePanel = memo(function SidePanel({
   );
 });
 
-const ScriptPage = memo(function ScriptPage(p: PanelProps) {
+function ScriptPage(p: SidePanelProps) {
   const { undoText } = p;
   return (
     <>
@@ -293,9 +287,9 @@ const ScriptPage = memo(function ScriptPage(p: PanelProps) {
       )}
     </>
   );
-});
+}
 
-const SetupPage = memo(function SetupPage(p: PanelProps) {
+function SetupPage(p: SidePanelProps) {
   const { narration } = p;
   return (
     <>
@@ -392,10 +386,10 @@ const SetupPage = memo(function SetupPage(p: PanelProps) {
       </section>
     </>
   );
-});
+}
 
 // Rows key by index, not `tag`: one SRT line can raise two errors.
-const ErrorsBand = memo(function ErrorsBand(p: PanelProps) {
+function ErrorsBand(p: SidePanelProps) {
   const rows: { tag: string; text: string; id?: string }[] = [];
   if (p.fenError) rows.push({ tag: 'FEN', text: p.fenError, id: fenErrorId });
   if (p.narrationError) rows.push({ tag: 'AUD', text: p.narrationError, id: narrationErrorId });
@@ -433,4 +427,4 @@ const ErrorsBand = memo(function ErrorsBand(p: PanelProps) {
       )}
     </div>
   );
-});
+}

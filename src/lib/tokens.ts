@@ -36,7 +36,6 @@ export const markerKindFor = (
   errorLines: ReadonlySet<number>,
 ): MarkerKind => (errorLines.has(line) ? 'err' : kind);
 
-
 // Pin shape by kind, decodable in grayscale (DESIGN.md "Event-kind markers");
 // `.marker` keys off `data-form`. Kinds sharing a `markerColors` entry never
 // share a form, except mind/reveal (test/commands.test.mjs).

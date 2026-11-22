@@ -410,13 +410,16 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
   const hasReplay = events.some((event) => event.kind === 'replay');
   const replaySequences = new Map<number, ReplaySequence>();
   const replayFrames: ReplayFrame[] = [];
-  let replayState: ReplayState = {
+  // Where replayed moves start from: the position a setup leaves, with its
+  // check clocked in move ordinals like every template after it.
+  const replayOrigin = (): ReplayState => ({
     positions: w.positions,
     chessState: w.chessState,
-    lastMove: w.lastMove,
-    lastCapture: w.lastCapture,
-    check: w.check,
-  };
+    lastMove: null,
+    lastCapture: null,
+    check: checkAt(w.chessState, replayFrames.length),
+  });
+  let replayState = replayOrigin();
   let visualEndTime = events[events.length - 1]?.t ?? 0;
 
   // Errors that invalidate the event go through `reject`; unmatched br/ml
@@ -458,17 +461,9 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
     setupEpoch = eventIndex;
     // Reset the sketch, not the mind phase clock.
     if (w.mind) w.mind = { since: w.mind.since, touches: new Map(), held: new Set() };
-    if (hasReplay && branchStack.length === 0) {
-      // A setup changes the origin of subsequent moves, but adds no replay
-      // frame: a trailing reset is an explanation pause, not the replay end.
-      replayState = {
-        positions: w.positions,
-        chessState: w.chessState,
-        lastMove: w.lastMove,
-        lastCapture: w.lastCapture,
-        check: w.check && { sq: w.check.sq, t: replayFrames.length },
-      };
-    }
+    // A setup changes the origin of subsequent moves, but adds no replay
+    // frame: a trailing reset is an explanation pause, not the replay end.
+    if (hasReplay && branchStack.length === 0) replayState = replayOrigin();
   };
 
   // `lastCapture` is a renderer-only fade, not a list, so captureFlash is not
@@ -646,7 +641,7 @@ export function buildWorld(events: TimelineEvent[], initialSetup: BoardSetup): W
             replayState = {
               positions: replayMove.positions,
               chessState: w.chessState,
-              check: w.check && { sq: w.check.sq, t: ordinal },
+              check: checkAt(w.chessState, ordinal),
               lastMove: lastMoveAt(move, ordinal, event.annotation),
               lastCapture: replayMove.captureFlash
                 ? { ...replayMove.captureFlash, id: String(event.line) }

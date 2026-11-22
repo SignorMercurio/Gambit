@@ -8,9 +8,12 @@
 // could not show, and leaving the view drops the open flag.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CommandEntry } from '../lib/commands';
 import { useClockValue, type Clock } from '../lib/clock';
-import { AUTHORED_ELSEWHERE_COMMANDS, INSERTABLE_COMMANDS } from '../lib/commands';
+import {
+  AUTHORED_ELSEWHERE_COMMANDS,
+  INSERTABLE_COMMANDS,
+  type CommandEntry,
+} from '../lib/commands';
 import { fmtTime } from '../lib/timeline';
 import { markerColors } from '../lib/tokens';
 import { useLatest } from './useLatest';
@@ -36,7 +39,7 @@ function CommandFace({ command }: { command: CommandEntry }) {
 
 type InsertMenuProps = {
   onInsert: (body: string) => void;
-  // Where the line will land, already formatted.
+  // Read for the trigger's "Insert at" label.
   clock: Clock;
 };
 

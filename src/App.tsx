@@ -13,7 +13,7 @@ import { moveSoundEnabled } from './lib/moveSound';
 import { getSubtitleEnd, parseSrt } from './lib/subtitles';
 import { TEXT_ENTRY_SELECTOR } from './components/InsertMenu';
 import { PresentationMoves } from './components/PresentationMoves';
-import { SidePanel, type PanelTab } from './components/SidePanel';
+import { SidePanel, type PanelTab, type ScriptView } from './components/SidePanel';
 import { useBoardExport, type BoardExportState } from './components/useBoardExport';
 import { useNarration } from './components/useNarration';
 import {
@@ -29,7 +29,6 @@ import { buildWorld, setupFromFen, worldFrameAt } from './lib/world';
 import { landBetween, playbackDuration } from './lib/playback';
 import { RENDER_MODE, installRenderHandle } from './lib/renderMode';
 
-
 const EXPORT_LABELS: Record<BoardExportState['status'], string> = {
   idle: 'Export PNG',
   exporting: 'Exporting…',
@@ -42,8 +41,6 @@ const EXPORT_GLYPHS: Record<BoardExportState['status'], string> = {
   success: '✓',
   error: '!',
 };
-
-
 
 const DRAFT_KEYS = {
   script: 'gambit:draft:script',
@@ -92,6 +89,29 @@ function useDraftText(key: string, fallback: string) {
   return [value, setValue] as const;
 }
 
+// Only the newest pick may commit.
+function importTextFile(
+  file: File,
+  latestRead: { current: number },
+  onRead: (text: string, fileName: string) => void,
+  setError: (message: string | null) => void,
+): void {
+  setError(null);
+  const request = ++latestRead.current;
+  if (file.size > MAX_TEXT_IMPORT_BYTES) {
+    setError(`Could not import "${file.name}": text files are limited to 1 MB.`);
+    return;
+  }
+  file.text().then(
+    (text) => {
+      if (latestRead.current === request) onRead(text, file.name);
+    },
+    () => {
+      if (latestRead.current === request) setError(`Could not read "${file.name}".`);
+    },
+  );
+}
+
 export default function App() {
   const [scriptText, setScriptText] = useDraftText(DRAFT_KEYS.script, DEFAULT_SCRIPT);
   const [scriptFileName, setScriptFileName] = useState<string | null>(null);
@@ -115,7 +135,7 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
   const [tab, setTab] = useState<PanelTab>('script');
   const [scriptViewRaw, setScriptView] = useDraftText(DRAFT_KEYS.scriptView, 'moves');
-  const scriptView: 'moves' | 'text' = scriptViewRaw === 'text' ? 'text' : 'moves';
+  const scriptView: ScriptView = scriptViewRaw === 'text' ? 'text' : 'moves';
   // Present mode is purely a view flag: the board stays script + FEN + time.
   const [present, setPresent] = useState(RENDER_MODE);
   const [presentPgnRaw, setPresentPgn] = useDraftText(DRAFT_KEYS.presentPgn, '0');
@@ -201,32 +221,6 @@ export default function App() {
     [setSubtitleText],
   );
 
-  // Only the newest pick may commit.
-  const importTextFile = useCallback(
-    (
-      file: File,
-      latestRead: { current: number },
-      onRead: (text: string, fileName: string) => void,
-      setError: (message: string | null) => void,
-    ) => {
-      setError(null);
-      const request = ++latestRead.current;
-      if (file.size > MAX_TEXT_IMPORT_BYTES) {
-        setError(`Could not import "${file.name}": text files are limited to 1 MB.`);
-        return;
-      }
-      file.text().then(
-        (text) => {
-          if (latestRead.current === request) onRead(text, file.name);
-        },
-        () => {
-          if (latestRead.current === request) setError(`Could not read "${file.name}".`);
-        },
-      );
-    },
-    [],
-  );
-
   const onImportScript = useCallback(
     (file: File) => importTextFile(
       file,
@@ -234,14 +228,13 @@ export default function App() {
       (text, fileName) => applyScript(text, { fileName }),
       setScriptImportError,
     ),
-    [importTextFile, applyScript],
+    [applyScript],
   );
 
   const onImportSubtitles = useCallback(
     (file: File) => importTextFile(file, latestSubtitleReadRef, applySubtitles, setSubtitleImportError),
-    [importTextFile, applySubtitles],
+    [applySubtitles],
   );
-
 
   const lastTickRef = useRef<number | null>(null);
   useEffect(() => {
@@ -482,7 +475,6 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [handleTransportKey]);
-
 
   const toggleMoveSound = useCallback(
     () => setMoveSoundDraft((v) => (moveSoundEnabled(v) ? '0' : '1')),
